@@ -26,10 +26,12 @@ export function ProfileEditor({
   profile,
   onClose,
   onSave,
+  onDelete,
 }: {
   profile?: Profile;
   onClose: () => void;
   onSave: (value: unknown) => Promise<void>;
+  onDelete?: () => Promise<void>;
 }) {
   const [value, setValue] = useState(() =>
     profile ? structuredClone(profile) : fresh(),
@@ -541,6 +543,28 @@ export function ProfileEditor({
         <button className="primary full" disabled={busy}>
           {busy ? "Saving…" : "Save profile"}
         </button>
+        {onDelete ? (
+          <button
+            type="button"
+            className="danger full"
+            disabled={busy}
+            onClick={async () => {
+              if (!confirm(`Delete ${value.name}? This removes its rules.`))
+                return;
+              setBusy(true);
+              try {
+                await onDelete();
+                onClose();
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "Could not delete");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Delete profile
+          </button>
+        ) : null}
       </form>
     </dialog>
   );

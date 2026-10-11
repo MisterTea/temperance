@@ -16,6 +16,7 @@ export interface Device {
     accuracy: number;
     at: number;
   };
+  location_requested?: number;
 }
 export interface History {
   id: string;
@@ -43,7 +44,25 @@ export interface Event {
   message: string;
   read: boolean;
 }
+export interface User {
+  id: string;
+  username: string;
+  password_hash: string;
+  role: "owner" | "parent";
+  session_version: number;
+  created_at: number;
+  failed_logins: number;
+  locked_until?: number;
+}
+export interface RefreshToken {
+  hash: string;
+  user_id: string;
+  client_id: string;
+  expires: number;
+}
 export interface State {
+  users?: User[];
+  refresh_tokens?: RefreshToken[];
   schema: 2;
   version: number;
   nextProfileId: number;
@@ -60,6 +79,7 @@ export interface State {
   extra_domains: Record<string, string[]>;
   retention_days: number;
   offline_grace_seconds: number;
+  gateway_seen?: number;
 }
 export const emptyState = (): State => ({
   schema: 2,

@@ -98,9 +98,13 @@ describe("authoritative policy and enrollment", () => {
   });
   it("rejects cookie writes from another origin", async () => {
     const repo = new TestRepository();
-    const login = await request(repo, "v1/login", { token: ADMIN }, undefined, {
-      Origin: "http://127.0.0.1:3000",
-    });
+    const login = await request(
+      repo,
+      "v1/setup",
+      { setup_token: ADMIN, username: "parent", password: "correct horse" },
+      undefined,
+      { Origin: "http://127.0.0.1:3000" },
+    );
     expect(login.status).toBe(200);
     const cookie = login.headers.get("set-cookie")!;
     expect(cookie).toContain("HttpOnly");

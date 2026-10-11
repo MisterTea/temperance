@@ -1,13 +1,6 @@
 import { z } from "zod";
-import {
-  bearer,
-  hash,
-  isAdmin,
-  origin,
-  secrets,
-  session,
-  validateKey,
-} from "./auth";
+import * as accounts from "./accounts";
+import { bearer, hash, origin, secrets, validateKey } from "./auth";
 import { mutate, repository, type Repository } from "./database";
 import * as service from "./service";
 import type { State } from "./model";
@@ -82,22 +75,18 @@ export async function handle(
   try {
     if (path === "healthz") return json({ ok: true });
     const write = request.method === "POST";
-    if (write && path === "v1/login") {
-      const data = z.object({ token: z.string() }).parse(await body(request));
-      if (
-        request.headers.get("origin") !== origin() ||
-        (await hash(data.token)) !== (await hash(secrets().admin))
-      )
-        throw new HTTPError(401, "Invalid sign-in");
-      const cookie = await session(secrets().admin);
-      return json({}, 200, {
-        "Set-Cookie": `temperance_session=${cookie}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600${origin().startsWith("https:") ? "; Secure" : ""}`,
-      });
-    }
     repo ??= repository();
+    if (
+      path.startsWith("v1/oauth/") ||
+      path === "v1/setup" ||
+      path === "v1/login" ||
+      path === "v1/logout"
+    )
+      return await accountRoute(request, path, repo);
     if (path.startsWith("api/")) {
-      if (!(await isAdmin(request)))
-        throw new HTTPError(401, "Administrator sign-in required");
+      const { state } = await repo.read();
+      const actor = await principal(request, state);
+      if (!actor) throw new HTTPError(401, "Parent sign-in required");
       if (
         write &&
         !bearer(request) &&
@@ -105,10 +94,17 @@ export async function handle(
       )
         throw new HTTPError(403, "Same-origin requests required");
       if (!write) {
-        const { state } = await repo.read(),
-          url = new URL(request.url),
+        const url = new URL(request.url),
           today = service.snapshot(state).day;
         if (path === "api/state") return json(service.snapshot(state));
+        if (path === "api/me")
+          return json(
+            actor === "service"
+              ? { role: "service" }
+              : accounts.publicUser(actor),
+          );
+        if (path === "api/users")
+          return json(accounts.users(state).map(accounts.publicUser));
         if (path === "api/usage")
           return json(
             service.usageSummary(
@@ -180,7 +176,7 @@ export async function handle(
               format: "temperance",
               schema: 2,
               exported_at: Math.floor(Date.now() / 1000),
-              state,
+              state: { ...state, users: undefined, refresh_tokens: undefined },
             },
             200,
             {
@@ -191,7 +187,32 @@ export async function handle(
       } else {
         const data = await body(request);
         const result = await mutate(repo, async (state) => {
+          const self =
+            actor === "service"
+              ? undefined
+              : accounts.users(state).find((u) => u.id === actor.id);
           switch (path) {
+            case "api/users": {
+              if (self && self.role !== "owner")
+                throw new HTTPError(403, "Only the owner can add parents");
+              const user = await accounts.createUser(state, data);
+              service.changed(
+                state,
+                "account",
+                `Parent ${user.username} added`,
+              );
+              return accounts.publicUser(user);
+            }
+            case "api/users/delete": {
+              const id = z.object({ id: z.string() }).parse(data).id;
+              accounts.deleteUser(state, self ?? { role: "owner", id: "" }, id);
+              service.changed(state, "account", "Parent account removed");
+              return accounts.users(state).map(accounts.publicUser);
+            }
+            case "api/password":
+              if (!self) throw new HTTPError(400, "Sign in as a parent");
+              await accounts.changePassword(state, self, data);
+              return { ok: true };
             case "api/profiles":
               return service.saveProfile(state, data);
             case "api/profiles/delete":
@@ -203,6 +224,11 @@ export async function handle(
               return service.saveDevice(state, data);
             case "api/devices/delete":
               return service.revokeDevice(
+                state,
+                z.object({ ip: z.string() }).parse(data).ip,
+              );
+            case "api/devices/locate":
+              return service.requestLocation(
                 state,
                 z.object({ ip: z.string() }).parse(data).ip,
               );
@@ -276,8 +302,15 @@ export async function handle(
     if (path === "v1/gateway/state" || path === "v1/gateway/activity") {
       if ((await hash(bearer(request))) !== (await hash(secrets().gateway)))
         throw new HTTPError(401, "Unauthorized");
-      if (!write && path.endsWith("/state"))
+      if (!write && path.endsWith("/state")) {
+        const current = (await repo.read()).state;
+        if (
+          !current.gateway_seen ||
+          Date.now() / 1000 - current.gateway_seen >= service.GATEWAY_HEARTBEAT
+        )
+          await mutate(repo, (state) => service.gatewaySeen(state));
         return json(service.gatewayState((await repo.read()).state));
+      }
       if (write && path.endsWith("/activity")) {
         const data = await body(request);
         return json(
@@ -302,11 +335,23 @@ export async function handle(
           }),
         );
       }
+      if (write && path === "v1/device/location") {
+        const data = await body(request);
+        return json(
+          await mutate(repo, async (state) => {
+            const current = await service.authenticatedDevice(state, token);
+            if (!current) throw new HTTPError(401, "Device revoked");
+            return service.reportLocation(state, current, data);
+          }),
+        );
+      }
     }
     throw new HTTPError(404, "Not found");
   } catch (error) {
     if (error instanceof HTTPError)
       return json({ error: error.message }, error.status);
+    if (error instanceof accounts.AuthError)
+      return json({ error: error.message }, 400);
     if (error instanceof z.ZodError)
       return json(
         {
@@ -323,8 +368,142 @@ export async function handle(
       )
     )
       return json({ error: error.message }, 400);
+    console.error("Temperance request failed:", error);
     return json({ error: "Service configuration or storage unavailable" }, 503);
   }
+}
+const cookieName = "temperance_session";
+function sessionCookie(value: string, maxAge: number) {
+  return `${cookieName}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${origin().startsWith("https:") ? "; Secure" : ""}`;
+}
+function cookie(request: Request) {
+  return (request.headers.get("cookie") ?? "")
+    .split(";")
+    .map((s) => s.trim())
+    .find((s) => s.startsWith(cookieName + "="))
+    ?.slice(cookieName.length + 1);
+}
+// The admin secret remains a service credential for automation and first-run setup.
+async function principal(request: Request, state: State) {
+  const token = bearer(request);
+  if (token && (await hash(token)) === (await hash(secrets().admin)))
+    return "service" as const;
+  const value = token || cookie(request);
+  return value ? accounts.verifyAccess(state, value) : undefined;
+}
+async function form(request: Request): Promise<Record<string, unknown>> {
+  if (
+    (request.headers.get("content-type") ?? "").startsWith(
+      "application/x-www-form-urlencoded",
+    )
+  )
+    return Object.fromEntries(new URLSearchParams(await request.text()));
+  return body(request);
+}
+function sameOrigin(request: Request) {
+  if (request.headers.get("origin") !== origin())
+    throw new HTTPError(403, "Same-origin requests required");
+}
+async function accountRoute(request: Request, path: string, repo: Repository) {
+  if (path === "v1/setup" && request.method === "GET") {
+    const { state } = await repo.read();
+    return json({ needs_setup: accounts.users(state).length === 0 });
+  }
+  if (request.method !== "POST") throw new HTTPError(404, "Not found");
+  if (path === "v1/logout") {
+    return json({}, 200, { "Set-Cookie": sessionCookie("", 0) });
+  }
+  const data = await form(request);
+  if (path === "v1/setup") {
+    sameOrigin(request);
+    const input = z
+      .object({
+        setup_token: z.string(),
+        username: z.string(),
+        password: z.string(),
+      })
+      .parse(data);
+    if ((await hash(input.setup_token)) !== (await hash(secrets().admin)))
+      throw new HTTPError(401, "Invalid setup token");
+    const token = await mutate(repo, async (state) => {
+      if (accounts.users(state).length)
+        throw new HTTPError(409, "Setup is already complete");
+      const user = await accounts.createUser(state, input, "owner");
+      service.changed(state, "account", `Owner ${user.username} created`);
+      return accounts.accessToken(user);
+    });
+    return json({ ok: true }, 200, {
+      "Set-Cookie": sessionCookie(token, 3600),
+    });
+  }
+  if (path === "v1/login") {
+    sameOrigin(request);
+    const input = z
+      .object({ username: z.string(), password: z.string() })
+      .parse(data);
+    const token = await mutate(repo, async (state) => {
+      const user = await accounts.authenticate(
+        state,
+        input.username,
+        input.password,
+      );
+      return user ? accounts.accessToken(user) : undefined;
+    });
+    if (!token) throw new HTTPError(401, "Invalid username or password");
+    return json({}, 200, { "Set-Cookie": sessionCookie(token, 3600) });
+  }
+  if (path === "v1/oauth/revoke") {
+    const input = z.object({ token: z.string() }).parse(data);
+    await mutate(repo, (state) => accounts.revoke(state, input.token));
+    return json({});
+  }
+  if (path === "v1/oauth/token") {
+    const grant = z
+      .discriminatedUnion("grant_type", [
+        z.object({
+          grant_type: z.literal("password"),
+          username: z.string(),
+          password: z.string(),
+          client_id: z.string().max(80).default("temperance"),
+        }),
+        z.object({
+          grant_type: z.literal("refresh_token"),
+          refresh_token: z.string(),
+        }),
+      ])
+      .safeParse(data);
+    if (!grant.success)
+      return json(
+        {
+          error: "unsupported_grant_type",
+          error_description: "Use password or refresh_token",
+        },
+        400,
+      );
+    const g = grant.data;
+    const tokens = await mutate(repo, async (state) => {
+      if (g.grant_type === "refresh_token") {
+        try {
+          return await accounts.refreshTokens(state, g.refresh_token);
+        } catch {
+          return undefined;
+        }
+      }
+      const user = await accounts.authenticate(state, g.username, g.password);
+      return user ? accounts.issueTokens(state, user, g.client_id) : undefined;
+    });
+    if (!tokens)
+      return json(
+        {
+          error: "invalid_grant",
+          error_description: "Invalid credentials or token",
+        },
+        400,
+        { Pragma: "no-cache" },
+      );
+    return json(tokens, 200, { Pragma: "no-cache" });
+  }
+  throw new HTTPError(404, "Not found");
 }
 function validateBackup(value: unknown): State {
   const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -349,6 +528,7 @@ function validateBackup(value: unknown): State {
         at: stamp,
       })
       .optional(),
+    location_requested: stamp.optional(),
   });
   const schema = z.object({
     schema: z.literal(2),

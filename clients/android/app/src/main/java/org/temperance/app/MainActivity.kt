@@ -1,4 +1,5 @@
 package org.temperance.app
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.net.VpnService
@@ -7,51 +8,79 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
-import com.wireguard.crypto.KeyPair
-import org.json.JSONObject
-import java.net.URI
 
 class MainActivity : Activity() {
     private val app get() = application as TemperanceApp
     private lateinit var status: TextView
+    private lateinit var headline: TextView
+    private lateinit var detail: TextView
+    private lateinit var enrollment: LinearLayout
+    private lateinit var enrolled: LinearLayout
     private val handler = Handler(Looper.getMainLooper())
-    private val refreshUI = object : Runnable { override fun run() { status.text = app.status; handler.postDelayed(this, 1000) } }
+    private val refreshUI = object : Runnable { override fun run() { render(); handler.postDelayed(this, 1000) } }
+
+    private fun render() {
+        status.text = app.status
+        val child = app.child
+        enrollment.visibility = if (child == null) View.VISIBLE else View.GONE
+        enrolled.visibility = if (child == null) View.GONE else View.VISIBLE
+        if (child != null) {
+            headline.text = child.headline
+            detail.text = listOfNotNull(
+                child.detail,
+                child.remainingMinutes?.let { "$it min left today" } ?: "No daily limit",
+                child.nextChange,
+                if (child.pendingRequest) "Your request is waiting for a parent." else null,
+            ).joinToString("\n")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(36, 70, 36, 36) }
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(48, 80, 48, 48) }
         layout.addView(TextView(this).apply { text = "Temperance"; textSize = 32f })
         status = TextView(this).apply { textSize = 16f }; layout.addView(status)
-        fun field(hint: String, secret: Boolean = false) = EditText(this).apply { this.hint = hint; if (secret) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD; layout.addView(this) }
-        val service = field("https://policy.example.com")
-        val code = field("Enrollment code", true)
-        val name = field("Device name")
-        layout.addView(Button(this).apply { text = "Enroll device"; setOnClickListener {
-            val serviceText = service.text.toString().trim().trimEnd('/')
-            val codeText = code.text.toString().trim(); val nameText = name.text.toString().trim()
-            app.executor.execute {
-                try {
-                    require(URI(serviceText).scheme == "https" && URI(serviceText).rawUserInfo == null && URI(serviceText).rawQuery == null && URI(serviceText).rawFragment == null && (URI(serviceText).path.isNullOrEmpty())) { "Enter an HTTPS service origin" }
-                    val previous = app.vault.load()
-                    require(previous?.has("state") != true) { "Device already enrolled" }
-                    val keys = KeyPair()
-                    val identity = JSONObject().put("service", serviceText).put("private_key", keys.privateKey.toBase64())
-                    app.vault.save(identity)
-                    val state = api(serviceText, "/v1/enroll", body = JSONObject().put("code", codeText).put("name", nameText).put("public_key", keys.publicKey.toBase64()))
-                    identity.put("state", state); app.vault.save(identity); app.status = "Enrolled. Tap Install VPN."
-                } catch(e: Exception) { app.status = e.message ?: "Enrollment failed" }
-            }
+
+        enrollment = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun field(parent: LinearLayout, hint: String, secret: Boolean = false) = EditText(this).apply {
+            this.hint = hint; if (secret) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD; parent.addView(this)
+        }
+        val service = field(enrollment, "https://policy.example.com")
+        val code = field(enrollment, "Enrollment code", true)
+        val name = field(enrollment, "Device name")
+        enrollment.addView(Button(this).apply { text = "Enroll device"; setOnClickListener {
+            val values = Triple(service.text.toString(), code.text.toString(), name.text.toString())
+            app.executor.execute { try { app.enroll(values.first, values.second, values.third) } catch (e: Exception) { app.status = e.message ?: "Enrollment failed" } }
         } })
-        layout.addView(Button(this).apply { text = "Install / start VPN"; setOnClickListener {
+        layout.addView(enrollment)
+
+        enrolled = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        headline = TextView(this).apply { textSize = 24f }; enrolled.addView(headline)
+        detail = TextView(this).apply { textSize = 16f }; enrolled.addView(detail)
+        val message = field(enrolled, "Why do you need more time?")
+        listOf(15u, 30u, 60u).forEach { minutes ->
+            enrolled.addView(Button(this).apply { text = "Ask for $minutes more minutes"; setOnClickListener {
+                val note = message.text.toString()
+                app.executor.execute { try { app.askForTime(minutes, note) } catch (e: Exception) { app.status = e.message ?: "Request failed" } }
+            } })
+        }
+        enrolled.addView(Button(this).apply { text = "Install / start VPN"; setOnClickListener {
             val intent = VpnService.prepare(this@MainActivity)
             if (intent != null) startActivityForResult(intent, 1) else startVPN()
         } })
-        layout.addView(Button(this).apply { text = "Always-on & lockdown settings"; setOnClickListener { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } })
+        enrolled.addView(Button(this).apply { text = "Allow location requests from parents"; setOnClickListener {
+            requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.POST_NOTIFICATIONS), 2)
+        } })
+        enrolled.addView(Button(this).apply { text = "Always-on & lockdown settings"; setOnClickListener { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) } })
+        layout.addView(enrolled)
         layout.addView(TextView(this).apply { text = "Enable Always-on VPN and Block connections without VPN in Android settings. For tamper resistance, a device owner must manage these settings. DNS filters cannot identify every encrypted DNS service." })
-        setContentView(layout)
+        setContentView(ScrollView(this).apply { addView(layout) })
     }
     private fun startVPN() { startForegroundService(Intent(this, SessionService::class.java)) }
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) { super.onActivityResult(requestCode, resultCode, data); if (requestCode == 1 && resultCode == RESULT_OK) startVPN() }

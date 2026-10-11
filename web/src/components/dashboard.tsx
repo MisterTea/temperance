@@ -5,6 +5,7 @@ import type { Profile } from "@/lib/policy";
 import type { History } from "@/lib/model";
 import { ProfileEditor } from "./profile-editor";
 type DashboardState = ReturnType<typeof snapshot>;
+type ParentAccount = { id: string; username: string; role: string };
 async function api<T>(path: string, data?: unknown): Promise<T> {
   const response = await fetch(path, {
     cache: "no-store",
@@ -20,10 +21,21 @@ async function api<T>(path: string, data?: unknown): Promise<T> {
   if (!response.ok) throw new Error(result.error ?? "Request failed");
   return result;
 }
+const ago = (at: number) => {
+  const minutes = Math.max(0, Math.round((Date.now() / 1000 - at) / 60));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)} h ago`;
+  return `${Math.round(minutes / 1440)} d ago`;
+};
+const bucketLabel = (bucket: string) => bucket.replace(/^(category|site):/, "");
 export function Dashboard() {
   const [state, setState] = useState<DashboardState>();
   const [error, setError] = useState("");
   const [signedIn, setSignedIn] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const [parents, setParents] = useState<ParentAccount[]>([]);
+  const [me, setMe] = useState<ParentAccount>();
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Profile | true>();
   const [tab, setTab] = useState("overview");
@@ -45,8 +57,13 @@ export function Dashboard() {
       setError("");
     } catch (error) {
       const text = error instanceof Error ? error.message : "Could not load";
-      if (text.includes("sign-in")) setSignedIn(false);
-      else setError(text);
+      if (text.includes("sign-in")) {
+        setSignedIn(false);
+        const setup = await api<{ needs_setup: boolean }>("/v1/setup").catch(
+          () => ({ needs_setup: false }),
+        );
+        setNeedsSetup(setup.needs_setup);
+      } else setError(text);
     } finally {
       setLoading(false);
     }
@@ -85,10 +102,21 @@ export function Dashboard() {
   useEffect(() => {
     if (tab === "history") loadHistory();
   }, [tab, loadHistory]);
+  const loadParents = useCallback(async () => {
+    try {
+      setParents(await api<ParentAccount[]>("/api/users"));
+      setMe(await api<ParentAccount>("/api/me"));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load accounts");
+    }
+  }, []);
+  useEffect(() => {
+    if (tab === "settings" && signedIn) loadParents();
+  }, [tab, signedIn, loadParents]);
   useEffect(() => {
     if (tab !== "usage" || !state) return;
     const start = new Date(state.day + "T12:00:00Z");
-    start.setUTCDate(start.getUTCDate() - period + 1);
+    start.setUTCDate(start.getUTCDate() - 2 * period + 1);
     api<typeof usage>(
       "/api/usage?" +
         new URLSearchParams({
@@ -109,25 +137,51 @@ export function Dashboard() {
           <p>Loading…</p>
         ) : (
           <form
+            aria-label={needsSetup ? "Create owner account" : "Sign in"}
             onSubmit={(e) => {
               e.preventDefault();
-              const token = new FormData(e.currentTarget).get("token");
+              const f = Object.fromEntries(new FormData(e.currentTarget));
               act(async () => {
-                await api("/v1/login", { token });
+                await api(needsSetup ? "/v1/setup" : "/v1/login", f);
+                setNeedsSetup(false);
                 await refresh();
               });
             }}
           >
+            {needsSetup ? (
+              <>
+                <p>
+                  First run: create the household owner account using the
+                  server’s setup token (<code>TEMPERANCE_ADMIN_TOKEN</code>).
+                </p>
+                <label>
+                  Setup token
+                  <input name="setup_token" type="password" required />
+                </label>
+              </>
+            ) : null}
             <label>
-              Administrator token
+              Username
               <input
-                name="token"
-                type="password"
+                name="username"
                 required
-                autoComplete="current-password"
+                autoComplete="username"
+                autoCapitalize="none"
               />
             </label>
-            <button className="primary">Sign in</button>
+            <label>
+              Password
+              <input
+                name="password"
+                type="password"
+                required
+                minLength={needsSetup ? 10 : undefined}
+                autoComplete={needsSetup ? "new-password" : "current-password"}
+              />
+            </label>
+            <button className="primary">
+              {needsSetup ? "Create account" : "Sign in"}
+            </button>
           </form>
         )}
         <p role="alert" className="error">
@@ -143,6 +197,11 @@ export function Dashboard() {
       </main>
     );
   const profileById = new Map(state.profiles.map((p) => [p.id, p]));
+  const usageStart = new Date(state.day + "T12:00:00Z");
+  usageStart.setUTCDate(usageStart.getUTCDate() - period + 1);
+  const currentUsage = usage.filter(
+    (d) => d.day >= usageStart.toISOString().slice(0, 10),
+  );
   return (
     <>
       <aside>
@@ -173,6 +232,18 @@ export function Dashboard() {
             ) : null}
           </button>
         ))}
+        <button
+          className="nav"
+          onClick={() =>
+            act(async () => {
+              await api("/v1/logout", {});
+              setSignedIn(false);
+              setState(undefined);
+            })
+          }
+        >
+          Sign out
+        </button>
         <div className="aside-footer">
           Open source · no vendor account
           <small>Your data stays in your chosen service.</small>
@@ -200,6 +271,18 @@ export function Dashboard() {
         ) : null}
         {tab === "overview" ? (
           <>
+            {state.devices.length && !state.gateway_seen ? (
+              <p className="notice warning" role="status">
+                The VPN gateway has not connected yet. Enrolled devices cannot
+                reach the internet until it does.
+              </p>
+            ) : state.gateway_seen &&
+              Date.now() / 1000 - state.gateway_seen > 180 ? (
+              <p className="notice warning" role="status">
+                VPN gateway offline since {ago(state.gateway_seen)}. Devices on
+                the family VPN have no internet access until it reconnects.
+              </p>
+            ) : null}
             <section className="stats">
               <article>
                 <span>Network activity minutes</span>
@@ -383,13 +466,31 @@ export function Dashboard() {
                     <th>Device</th>
                     <th>Profile</th>
                     <th>VPN address</th>
+                    <th>Last active</th>
+                    <th>Location</th>
                     <th>Controls</th>
                   </tr>
                 </thead>
                 <tbody>
                   {state.devices.map((d) => (
                     <tr key={d.id}>
-                      <td>{d.name}</td>
+                      <td>
+                        <input
+                          aria-label={`${d.name} name`}
+                          defaultValue={d.name}
+                          maxLength={80}
+                          className="inline-name"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          onBlur={(e) => {
+                            const name = e.target.value.trim();
+                            if (name && name !== d.name)
+                              act(() => save("/api/devices", { ...d, name }));
+                            else e.target.value = d.name;
+                          }}
+                        />
+                      </td>
                       <td>
                         <select
                           aria-label={`${d.name} profile`}
@@ -411,7 +512,33 @@ export function Dashboard() {
                         </select>
                       </td>
                       <td>{d.ip}</td>
+                      <td>{d.last_seen ? ago(d.last_seen) : "Never"}</td>
                       <td>
+                        {d.location ? (
+                          <a
+                            href={`https://www.openstreetmap.org/?mlat=${d.location.latitude}&mlon=${d.location.longitude}#map=16/${d.location.latitude}/${d.location.longitude}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            ±{Math.round(d.location.accuracy)} m ·{" "}
+                            {ago(d.location.at)}
+                          </a>
+                        ) : (
+                          <small>None shared</small>
+                        )}
+                        {d.location_requested &&
+                        Date.now() / 1000 - d.location_requested < 3600 ? (
+                          <small> · waiting for device…</small>
+                        ) : null}
+                      </td>
+                      <td>
+                        <button
+                          onClick={() =>
+                            act(() => save("/api/devices/locate", { ip: d.ip }))
+                          }
+                        >
+                          Locate
+                        </button>
                         <button
                           onClick={() =>
                             act(() =>
@@ -475,6 +602,53 @@ export function Dashboard() {
                 <option value={30}>Last 30 days</option>
               </select>
             </div>
+            <section className="comparison">
+              {state.profiles.map((p) => {
+                const cutoff = new Date(state.day + "T12:00:00Z");
+                cutoff.setUTCDate(cutoff.getUTCDate() - period + 1);
+                const boundary = cutoff.toISOString().slice(0, 10);
+                const sum = (current: boolean) => {
+                  const totals: Record<string, number> = {};
+                  for (const day of usage)
+                    if (day.day >= boundary === current)
+                      for (const [bucket, n] of Object.entries(
+                        day.profiles[p.id] ?? {},
+                      ))
+                        totals[bucket] = (totals[bucket] ?? 0) + n;
+                  return totals;
+                };
+                const now = sum(true),
+                  before = sum(false),
+                  total = now.total ?? 0,
+                  previous = before.total ?? 0;
+                const top = Object.entries(now)
+                  .filter(([bucket]) => bucket !== "total")
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 3);
+                return (
+                  <article key={p.id} aria-label={`${p.name} usage summary`}>
+                    <h3>
+                      {p.avatar} {p.name}
+                    </h3>
+                    <strong>{total} min</strong>
+                    <small>
+                      {previous
+                        ? `${total >= previous ? "▲" : "▼"} ${Math.abs(
+                            Math.round(((total - previous) / previous) * 100),
+                          )}% vs previous ${period === 1 ? "day" : `${period} days`}`
+                        : `No activity in the previous ${period === 1 ? "day" : `${period} days`}`}
+                    </small>
+                    <ol>
+                      {top.map(([bucket, n]) => (
+                        <li key={bucket}>
+                          {bucketLabel(bucket)} <span>{n} min</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </article>
+                );
+              })}
+            </section>
             <div className="table-wrap">
               <table>
                 <thead>
@@ -486,7 +660,7 @@ export function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {usage.map((day) => (
+                  {currentUsage.map((day) => (
                     <tr key={day.day}>
                       <td>{day.day}</td>
                       {state.profiles.map((p) => (
@@ -505,7 +679,7 @@ export function Dashboard() {
                 </tbody>
               </table>
             </div>
-            {usage.length === 0 ? (
+            {currentUsage.length === 0 ? (
               <div className="empty">No observed activity in this period.</div>
             ) : null}
           </>
@@ -642,13 +816,16 @@ export function Dashboard() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   const f = new FormData(e.currentTarget);
+                  const kind = f.get("kind");
                   act(() =>
                     save("/api/rewards", {
                       profile_id: Number(f.get("profile_id")),
-                      kind: f.get("kind"),
-                      minutes: Number(f.get("minutes")),
-                      bedtime: f.get("bedtime") || undefined,
-                      window_id: f.get("window_id") || undefined,
+                      kind,
+                      ...(kind === "extra_time"
+                        ? { minutes: Number(f.get("minutes")) }
+                        : kind === "late_bedtime"
+                          ? { bedtime: f.get("bedtime") || undefined }
+                          : { window_id: f.get("window_id") || undefined }),
                     }),
                   );
                 }}
@@ -714,8 +891,16 @@ export function Dashboard() {
                 <article className="row-card" key={r.id}>
                   <span>
                     {profileById.get(r.profile_id)?.name}:{" "}
-                    {r.kind.replaceAll("_", " ")}{" "}
-                    {r.minutes ? `${r.minutes}m` : (r.bedtime ?? "")}
+                    {r.kind === "extra_time"
+                      ? `${r.minutes} extra minutes`
+                      : r.kind === "late_bedtime"
+                        ? `late bedtime ${r.bedtime}`
+                        : `skip ${
+                            profileById
+                              .get(r.profile_id)
+                              ?.schedules.find((s) => s.id === r.window_id)
+                              ?.name ?? "schedule"
+                          }`}
                   </span>
                   <button
                     onClick={() =>
@@ -845,6 +1030,111 @@ export function Dashboard() {
               </form>
             </section>
             <section>
+              <h2>Family administrators</h2>
+              <p>
+                Co-parents sign in with their own username and password.
+                Passwords are stored only as salted PBKDF2 hashes.
+              </p>
+              {parents.map((u) => (
+                <article className="row-card" key={u.id}>
+                  <span>
+                    <strong>{u.username}</strong> <small>{u.role}</small>
+                  </span>
+                  {me?.role === "owner" && u.id !== me.id ? (
+                    <button
+                      onClick={() => {
+                        if (confirm(`Remove ${u.username}'s access?`))
+                          act(async () => {
+                            setParents(
+                              await api<ParentAccount[]>("/api/users/delete", {
+                                id: u.id,
+                              }),
+                            );
+                          });
+                      }}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </article>
+              ))}
+              {me?.role === "owner" ? (
+                <form
+                  aria-label="Add parent"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const target = e.currentTarget;
+                    const f = Object.fromEntries(new FormData(target));
+                    act(async () => {
+                      await api("/api/users", f);
+                      target.reset();
+                      await loadParents();
+                    });
+                  }}
+                >
+                  <div className="two">
+                    <label>
+                      Co-parent username
+                      <input
+                        name="username"
+                        required
+                        autoComplete="off"
+                        autoCapitalize="none"
+                      />
+                    </label>
+                    <label>
+                      Initial password
+                      <input
+                        name="password"
+                        type="password"
+                        minLength={10}
+                        required
+                        autoComplete="new-password"
+                      />
+                    </label>
+                  </div>
+                  <button className="secondary">Add parent</button>
+                </form>
+              ) : null}
+              {me && me.role !== "service" ? (
+                <form
+                  aria-label="Change password"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const f = Object.fromEntries(new FormData(e.currentTarget));
+                    act(async () => {
+                      await api("/api/password", f);
+                      setSignedIn(false);
+                      setState(undefined);
+                    });
+                  }}
+                >
+                  <div className="two">
+                    <label>
+                      Current password
+                      <input
+                        name="current_password"
+                        type="password"
+                        required
+                        autoComplete="current-password"
+                      />
+                    </label>
+                    <label>
+                      New password
+                      <input
+                        name="new_password"
+                        type="password"
+                        minLength={10}
+                        required
+                        autoComplete="new-password"
+                      />
+                    </label>
+                  </div>
+                  <button className="secondary">Change password</button>
+                </form>
+              ) : null}
+            </section>
+            <section>
               <h2>Portable backup</h2>
               <p>
                 Keep your policy and history independent of a hosting provider.
@@ -856,8 +1146,12 @@ export function Dashboard() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   const f = new FormData(e.currentTarget);
-                  const file = f.get("backup") as File;
+                  const input = e.currentTarget.elements.namedItem(
+                    "backup",
+                  ) as HTMLInputElement;
+                  const file = input.files?.[0];
                   act(async () => {
+                    if (!file) throw new Error("Choose a backup file");
                     await save("/api/import", {
                       confirm: f.get("confirm"),
                       backup: JSON.parse(await file.text()),
@@ -954,6 +1248,11 @@ export function Dashboard() {
           profile={editing === true ? undefined : editing}
           onClose={() => setEditing(undefined)}
           onSave={(value) => save("/api/profiles", value)}
+          onDelete={
+            editing === true
+              ? undefined
+              : () => save("/api/profiles/delete", { id: editing.id })
+          }
         />
       ) : null}
     </>

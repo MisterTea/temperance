@@ -1,0 +1,784 @@
+// @vitest-environment jsdom
+// @vitest-environment-options {"url":"http://127.0.0.1:3000/"}
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Dashboard } from "../src/components/dashboard";
+import { TestRepository } from "../src/lib/database";
+import { handle } from "../src/lib/http";
+
+const ORIGIN = "http://127.0.0.1:3000";
+const ADMIN = "a".repeat(48),
+  GATEWAY = "g".repeat(48);
+const OWNER = { username: "robin", password: "kitchen-table-42" };
+const key = (seed: number) =>
+  btoa(String.fromCharCode(...Array.from({ length: 32 }, (_, n) => n + seed)));
+
+let repo: TestRepository;
+let cookie = "";
+
+/** Routes the dashboard's fetch calls to the real API handler, like a browser would. */
+async function browserFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const url = new URL(String(input), ORIGIN);
+  const headers = new Headers(init.headers);
+  if (cookie) headers.set("Cookie", cookie);
+  if (init.method === "POST") headers.set("Origin", ORIGIN);
+  const response = await handle(
+    new Request(url, { method: init.method, headers, body: init.body }),
+    url.pathname.slice(1),
+    repo,
+  );
+  const set = response.headers.get("set-cookie");
+  if (set) {
+    const pair = set.split(";")[0];
+    cookie = pair.endsWith("=") ? "" : pair;
+  }
+  return response;
+}
+
+async function api(path: string, body?: unknown, token?: string) {
+  const response = await handle(
+    new Request(`${ORIGIN}/${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: ORIGIN,
+        ...(token ? { Authorization: "Bearer " + token } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+    path,
+    repo,
+  );
+  return response.json();
+}
+
+/** A household with an owner, two profiles, an enrolled phone, usage, history and a request. */
+async function seedHousehold() {
+  await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+  await api(
+    "api/profiles",
+    {
+      name: "Alex",
+      avatar: "🦊",
+      limit: 90,
+      bedtime: { start: "21:00", end: "07:00", days: [0, 1, 2, 3, 4, 5, 6] },
+      schedules: [
+        {
+          id: "homework",
+          name: "Homework",
+          mode: "focus",
+          start: "16:00",
+          end: "17:00",
+          days: [1, 2, 3, 4, 5],
+          allow: [],
+          allowed_categories: ["education"],
+        },
+      ],
+    },
+    ADMIN,
+  );
+  await api("api/profiles", { name: "Sam" }, ADMIN);
+  const { code } = await api("api/enrollment", { profile_id: 1 }, ADMIN);
+  const phone = await api("v1/enroll", {
+    code,
+    name: "Alex phone",
+    public_key: key(1),
+  });
+  const now = Math.floor(Date.now() / 1000);
+  await api(
+    "v1/gateway/activity",
+    {
+      activity: [
+        ...Array.from({ length: 30 }, (_, n) => ({
+          device_id: phone.device_id,
+          minute: Math.floor(now / 60) - n,
+          buckets: ["total", "category:video", "site:youtube.com"],
+        })),
+        ...Array.from({ length: 20 }, (_, n) => ({
+          device_id: phone.device_id,
+          minute: Math.floor(now / 60) - 7 * 1440 + 20 - n,
+          buckets: ["total"],
+        })),
+      ],
+      history: [
+        {
+          id: "h1",
+          device_id: phone.device_id,
+          at: now - 60,
+          domain: "games.example",
+          blocked: true,
+          reason: "gaming",
+          category: "gaming",
+        },
+        {
+          id: "h2",
+          device_id: phone.device_id,
+          at: now - 30,
+          domain: "school.example",
+          blocked: false,
+          reason: "allowed",
+          category: "education",
+        },
+      ],
+    },
+    GATEWAY,
+  );
+  await api(
+    "v1/device/requests",
+    { minutes: 20, message: "Finishing a project" },
+    phone.token,
+  );
+  return phone;
+}
+
+async function signIn() {
+  await browserFetch("/v1/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(OWNER),
+  });
+}
+
+async function openDashboard() {
+  const user = userEvent.setup();
+  render(<Dashboard />);
+  await screen.findByRole("heading", { name: "Your family's digital day." });
+  return user;
+}
+
+const tab = (user: ReturnType<typeof userEvent.setup>, name: string) =>
+  user.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
+
+const state = async () => (await repo.read()).state;
+
+beforeEach(() => {
+  vi.setSystemTime(new Date("2026-10-11T18:00:00Z"));
+  Object.assign(process.env, {
+    TEMPERANCE_ADMIN_TOKEN: ADMIN,
+    TEMPERANCE_GATEWAY_TOKEN: GATEWAY,
+    TEMPERANCE_VPN_ENDPOINT: "192.0.2.1:51820",
+    TEMPERANCE_VPN_PUBLIC_KEY: key(0),
+    TEMPERANCE_TIMEZONE: "America/Chicago",
+    TEMPERANCE_PUBLIC_URL: ORIGIN,
+  });
+  repo = new TestRepository();
+  cookie = "";
+  vi.stubGlobal("fetch", browserFetch);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+});
+
+describe("sign-in", () => {
+  it("creates the owner account on first run", async () => {
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    const form = await screen.findByRole("form", {
+      name: "Create owner account",
+    });
+    await user.type(within(form).getByLabelText("Setup token"), "wrong");
+    await user.type(within(form).getByLabelText("Username"), OWNER.username);
+    await user.type(within(form).getByLabelText("Password"), OWNER.password);
+    await user.click(within(form).getByRole("button"));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).not.toBe(""),
+    );
+    expect((await state()).users ?? []).toHaveLength(0);
+
+    await user.clear(within(form).getByLabelText("Setup token"));
+    await user.type(within(form).getByLabelText("Setup token"), ADMIN);
+    await user.click(within(form).getByRole("button"));
+    await screen.findByText(
+      "Welcome home. Add a profile, then enroll a device.",
+    );
+    expect((await state()).users?.[0].username).toBe("robin");
+  });
+
+  it("rejects a wrong password, then signs in and out", async () => {
+    await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+    cookie = "";
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    const form = await screen.findByRole("form", { name: "Sign in" });
+    await user.type(within(form).getByLabelText("Username"), OWNER.username);
+    await user.type(within(form).getByLabelText("Password"), "nope-nope-nope");
+    await user.click(within(form).getByRole("button", { name: "Sign in" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/invalid/i),
+    );
+    await user.clear(within(form).getByLabelText("Password"));
+    await user.type(within(form).getByLabelText("Password"), OWNER.password);
+    await user.click(within(form).getByRole("button", { name: "Sign in" }));
+    await screen.findByRole("heading", { name: "Your family's digital day." });
+
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    await screen.findByRole("form", { name: "Sign in" });
+    expect(cookie).toBe("");
+  });
+});
+
+describe("overview", () => {
+  it("pauses the family and profiles, and warns when the gateway is missing", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    expect(screen.getByRole("status").textContent).toMatch(
+      /gateway has not connected yet/,
+    );
+    const alex = screen
+      .getByRole("heading", { name: "Alex" })
+      .closest("article")!;
+    expect(alex.textContent).toContain("30");
+    expect(alex.textContent).toContain("Bedtime 21:00–07:00");
+
+    await user.click(screen.getByRole("button", { name: "Pause family" }));
+    await screen.findByRole("button", { name: "Resume family" });
+    expect((await state()).paused).toBe(true);
+    await user.click(
+      within(alex as HTMLElement).getByRole("button", { name: "Pause" }),
+    );
+    await waitFor(async () =>
+      expect((await state()).profiles[0].paused).toBe(true),
+    );
+
+    await user.click(
+      within(alex as HTMLElement).getByRole("button", { name: "Reward" }),
+    );
+    await screen.findByRole("heading", { name: "Send a reward" });
+  });
+
+  it("shows when a gateway went offline", async () => {
+    await seedHousehold();
+    await api("v1/gateway/state", undefined, GATEWAY);
+    vi.setSystemTime(new Date("2026-10-11T18:10:00Z"));
+    await signIn();
+    await openDashboard();
+    expect(screen.getByRole("status").textContent).toMatch(
+      /offline since 10 min ago/,
+    );
+  });
+});
+
+describe("profile editor", () => {
+  it("creates a profile with every rule type", async () => {
+    await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+    await signIn();
+    const user = await openDashboard();
+    await user.click(screen.getByRole("button", { name: "+ Add profile" }));
+    const dialog = screen.getByRole("dialog");
+    const d = within(dialog);
+    await user.type(d.getByLabelText("Name"), "Riley");
+    await user.clear(d.getByLabelText("Avatar"));
+    await user.type(d.getByLabelText("Avatar"), "🐢");
+    await user.selectOptions(d.getByLabelText("Filter preset"), "teen");
+    await user.clear(d.getByLabelText(/Daily network-minute limit/));
+    await user.type(d.getByLabelText(/Daily network-minute limit/), "120");
+    await user.type(d.getByLabelText("Sat limit"), "180");
+    await user.type(d.getByLabelText("Sun limit"), "1");
+    await user.clear(d.getByLabelText("Sun limit"));
+    await user.click(d.getByRole("checkbox", { name: "Social media" }));
+    await user.click(d.getByRole("checkbox", { name: "Gaming" }));
+    await user.click(d.getByRole("checkbox", { name: "Gaming" }));
+    await user.click(d.getByRole("checkbox", { name: /SafeSearch/ }));
+    await user.click(d.getByRole("checkbox", { name: /YouTube restricted/ }));
+    await user.click(d.getByRole("checkbox", { name: /Allow-list only/ }));
+    await user.click(d.getByRole("checkbox", { name: /Unmanaged profile/ }));
+    await user.click(d.getByRole("checkbox", { name: /Unmanaged profile/ }));
+    const bedtime = within(d.getByRole("group", { name: "Bedtime" }));
+    fireEvent.change(bedtime.getByLabelText("Starts"), {
+      target: { value: "21:30" },
+    });
+    fireEvent.change(bedtime.getByLabelText("Ends"), {
+      target: { value: "06:45" },
+    });
+    await user.click(bedtime.getByRole("checkbox", { name: "Fri" }));
+    await user.click(bedtime.getByRole("checkbox", { name: "Fri" }));
+    await user.click(bedtime.getByRole("checkbox", { name: "Sat" }));
+
+    const windows = within(
+      d.getByRole("group", { name: "Off Time & Focus Time" }),
+    );
+    await user.click(windows.getByRole("button", { name: "+ Add schedule" }));
+    await user.click(windows.getByRole("button", { name: "+ Add schedule" }));
+    await user.click(
+      windows.getAllByRole("button", { name: "Remove window" })[1],
+    );
+    await user.clear(windows.getByLabelText("Window name"));
+    await user.type(windows.getByLabelText("Window name"), "Study");
+    await user.type(
+      windows.getByLabelText("Allowed learning domains"),
+      "khanacademy.org",
+    );
+    await user.click(windows.getByRole("checkbox", { name: "News" }));
+    await user.click(windows.getByRole("checkbox", { name: "Education" }));
+    await user.click(windows.getAllByRole("checkbox", { name: "Sun" })[0]);
+    await user.click(windows.getAllByRole("checkbox", { name: "Mon" })[0]);
+    fireEvent.change(windows.getByLabelText("start"), {
+      target: { value: "15:30" },
+    });
+    await user.selectOptions(windows.getByLabelText("Mode"), "off");
+    expect(windows.queryByLabelText("Allowed learning domains")).toBeNull();
+
+    const budgets = within(d.getByRole("group", { name: "Category budgets" }));
+    await user.clear(budgets.getByLabelText("Video & streaming"));
+    await user.type(budgets.getByLabelText("Video & streaming"), "45");
+    const sites = within(d.getByRole("group", { name: "Site/app budgets" }));
+    await user.click(sites.getByRole("button", { name: "Add site" }));
+    await user.type(sites.getByLabelText("Add a site budget"), "roblox.com");
+    await user.click(sites.getByRole("button", { name: "Add site" }));
+    await user.type(sites.getByLabelText("Add a site budget"), "tiktok.com");
+    await user.click(sites.getByRole("button", { name: "Add site" }));
+    await user.clear(sites.getByLabelText("roblox.com"));
+    await user.type(sites.getByLabelText("roblox.com"), "20");
+    await user.click(
+      sites.getByRole("button", { name: "Remove tiktok.com budget" }),
+    );
+    await user.type(
+      d.getByLabelText("Always allowed domains"),
+      "school.example",
+    );
+    await user.type(d.getByLabelText("Blocked domains"), "bad.example{enter} ");
+    await user.type(d.getByLabelText(/Unmanaged domains/), "bank.example");
+    await user.click(d.getByRole("button", { name: "Save profile" }));
+
+    await screen.findByRole("heading", { name: "Riley" });
+    const saved = (await state()).profiles[0];
+    expect(saved).toMatchObject({
+      name: "Riley",
+      avatar: "🐢",
+      filter_level: "teen",
+      limit: 120,
+      weekday_limits: { 6: 180 },
+      categories: ["social"],
+      safe_search: false,
+      youtube_restricted: false,
+      allow_only: true,
+      managed: true,
+      category_limits: { video: 45 },
+      site_limits: { "roblox.com": 20 },
+      allow: ["school.example"],
+      deny: ["bad.example"],
+      unmanaged: ["bank.example"],
+    });
+    expect(saved.bedtime).toEqual({
+      start: "21:30",
+      end: "06:45",
+      days: [0, 1, 2, 3, 4, 5],
+    });
+    expect(saved.schedules[0]).toMatchObject({
+      name: "Study",
+      mode: "off",
+      start: "15:30",
+      days: [2, 3, 4, 5, 0],
+      allow: ["khanacademy.org"],
+      allowed_categories: ["news"],
+    });
+  });
+
+  it("reports save errors, closes, and deletes profiles", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    const alex = screen
+      .getByRole("heading", { name: "Alex" })
+      .closest("article")!;
+    await user.click(
+      within(alex as HTMLElement).getByRole("button", { name: "Edit rules" }),
+    );
+    let dialog = within(screen.getByRole("dialog"));
+    expect(
+      dialog.getByRole("heading", { name: "Edit family rules" }),
+    ).toBeTruthy();
+    await user.click(dialog.getByRole("button", { name: "Delete profile" }));
+    expect(dialog.getByRole("alert").textContent).toMatch(/Reassign or revoke/);
+    await user.click(dialog.getByRole("button", { name: "Close editor" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    const sam = screen
+      .getByRole("heading", { name: "Sam" })
+      .closest("article")!;
+    await user.click(
+      within(sam as HTMLElement).getByRole("button", { name: "Edit rules" }),
+    );
+    dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Delete profile" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await user.click(dialog.getByRole("button", { name: "Delete profile" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Sam" })).toBeNull(),
+    );
+    expect((await state()).profiles.map((p) => p.name)).toEqual(["Alex"]);
+
+    await user.click(
+      within(alex as HTMLElement).getByRole("button", { name: "Edit rules" }),
+    );
+    dialog = within(screen.getByRole("dialog"));
+    cookie = "";
+    await user.click(dialog.getByRole("button", { name: "Save profile" }));
+    await waitFor(() =>
+      expect(dialog.getByRole("alert").textContent).toMatch(/sign-in/i),
+    );
+  });
+});
+
+describe("devices", () => {
+  it("enrolls, renames, reassigns, pauses, locates and revokes", async () => {
+    const phone = await seedHousehold();
+    await api(
+      "v1/gateway/activity",
+      { active_devices: [phone.device_id] },
+      GATEWAY,
+    );
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Devices");
+    await user.selectOptions(screen.getByLabelText("Family profile"), "2");
+    await user.click(
+      screen.getByRole("button", { name: "Create enrollment code" }),
+    );
+    const code = await screen.findByLabelText(/Enter this code/);
+    expect((code as HTMLInputElement).value.length).toBeGreaterThan(20);
+    expect((await state()).codes[0].profile_id).toBe(2);
+
+    const row = screen
+      .getByRole("textbox", { name: "Alex phone name" })
+      .closest("tr")!;
+    const r = within(row as HTMLElement);
+    expect(row.textContent).toContain("just now");
+    expect(row.textContent).toContain("None shared");
+    const name = r.getByRole("textbox", { name: "Alex phone name" });
+    await user.clear(name);
+    await user.tab();
+    expect((name as HTMLInputElement).value).toBe("Alex phone");
+    await user.clear(name);
+    await user.type(name, "Alex tablet{enter}");
+    await waitFor(async () =>
+      expect((await state()).devices[0].name).toBe("Alex tablet"),
+    );
+
+    await user.selectOptions(screen.getByLabelText("Alex tablet profile"), "2");
+    await waitFor(async () =>
+      expect((await state()).devices[0].profile_id).toBe(2),
+    );
+    const row2 = within(
+      screen
+        .getByRole("textbox", { name: "Alex tablet name" })
+        .closest("tr") as HTMLElement,
+    );
+    await user.click(row2.getByRole("button", { name: "Pause" }));
+    await row2.findByRole("button", { name: "Resume" });
+    await user.click(row2.getByRole("button", { name: "Set unmanaged" }));
+    await row2.findByRole("button", { name: "Manage" });
+
+    await user.click(row2.getByRole("button", { name: "Locate" }));
+    await row2.findByText(/waiting for device/);
+    await api(
+      "v1/device/location",
+      { latitude: 41.88, longitude: -87.63, accuracy: 18.4 },
+      phone.token,
+    );
+    await tab(user, "Overview");
+    await tab(user, "Devices");
+    // The dashboard picks up the answer on its next poll.
+    const row3 = within(
+      screen
+        .getByRole("textbox", { name: "Alex tablet name" })
+        .closest("tr") as HTMLElement,
+    );
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    await user.click(row3.getByRole("button", { name: "Revoke" }));
+    expect((await state()).devices[0].revoked).toBe(false);
+    await user.click(row3.getByRole("button", { name: "Revoke" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("textbox", { name: "Alex tablet name" }),
+      ).toBeNull(),
+    );
+    expect((await state()).devices[0].location?.accuracy).toBe(18.4);
+  });
+
+  it("links to a shared location", async () => {
+    const phone = await seedHousehold();
+    await api("api/devices/locate", { ip: "10.77.0.2" }, ADMIN);
+    await api(
+      "v1/device/location",
+      { latitude: 41.88, longitude: -87.63, accuracy: 18.4 },
+      phone.token,
+    );
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Devices");
+    const link = screen.getByRole("link", { name: /±18 m/ });
+    expect(link.getAttribute("href")).toContain("mlat=41.88&mlon=-87.63");
+    expect(link.textContent).toContain("just now");
+  });
+});
+
+describe("usage and history", () => {
+  it("compares usage with the previous period and lists top categories", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Usage");
+    const alex = await screen.findByRole("article", {
+      name: "Alex usage summary",
+    });
+    await waitFor(() => expect(alex.textContent).toContain("30 min"));
+    expect(alex.textContent).toContain("▲ 50% vs previous 7 days");
+    expect(alex.textContent).toMatch(/video\s*30 min/);
+    expect(
+      screen.getByRole("article", { name: "Sam usage summary" }).textContent,
+    ).toContain("No activity in the previous 7 days");
+    expect(screen.getByRole("table").textContent).toContain(
+      "category:video: 30m",
+    );
+
+    await user.selectOptions(screen.getByLabelText("Usage period"), "1");
+    await waitFor(() =>
+      expect(alex.textContent).toContain("No activity in the previous day"),
+    );
+    await user.selectOptions(screen.getByLabelText("Usage period"), "30");
+    await waitFor(() => expect(alex.textContent).toContain("50 min"));
+  });
+
+  it("filters history, exports CSV, and turns a decision into a rule", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "History");
+    await screen.findByText("games.example");
+    expect(screen.getByText("school.example")).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText("Decision"), "true");
+    await waitFor(() =>
+      expect(screen.queryByText("school.example")).toBeNull(),
+    );
+    await user.selectOptions(screen.getByLabelText("Profile"), "1");
+    const csv = screen.getByRole("link", { name: "Export CSV" });
+    expect(csv.getAttribute("href")).toContain("format=csv");
+    expect(csv.getAttribute("href")).toContain("profile_id=1");
+    expect(csv.getAttribute("href")).toContain("blocked=true");
+
+    const row = screen.getByText("games.example").closest("tr")!;
+    await user.click(
+      within(row as HTMLElement).getByRole("button", { name: "allow" }),
+    );
+    await waitFor(async () =>
+      expect((await state()).profiles[0].allow).toEqual(["games.example"]),
+    );
+    await user.click(
+      within(row as HTMLElement).getByRole("button", { name: "unmanaged" }),
+    );
+    await waitFor(async () => {
+      const p = (await state()).profiles[0];
+      expect(p.allow).toEqual([]);
+      expect(p.unmanaged).toEqual(["games.example"]);
+    });
+
+    fireEvent.change(screen.getByLabelText("Date"), {
+      target: { value: "2026-10-01" },
+    });
+    await screen.findByText("No recorded domain requests for these filters.");
+  });
+});
+
+describe("requests and rewards", () => {
+  it("sends and cancels rewards, answers requests, and clears notifications", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    expect(
+      screen.getByRole("button", { name: /^Requests/ }).querySelector(".dot"),
+    ).toBeTruthy();
+    await tab(user, "Requests");
+    await user.selectOptions(screen.getByLabelText("Reward"), "skip_window");
+    await user.click(screen.getByRole("button", { name: "Send reward" }));
+    await screen.findByText("Choose a schedule to skip");
+    await user.selectOptions(screen.getByLabelText("Schedule"), "homework");
+    await user.click(screen.getByRole("button", { name: "Send reward" }));
+    await screen.findByText(/Alex: skip Homework/);
+
+    await user.selectOptions(screen.getByLabelText("Reward"), "late_bedtime");
+    fireEvent.change(screen.getByLabelText("New bedtime"), {
+      target: { value: "22:15" },
+    });
+    await user.click(screen.getByRole("button", { name: "Send reward" }));
+    await screen.findByText(/late bedtime 22:15/);
+    await user.click(
+      screen.getAllByRole("button", { name: "Cancel reward" })[0],
+    );
+    await waitFor(() => expect(screen.queryByText(/skip Homework/)).toBeNull());
+    expect((await state()).rewards[0]).not.toHaveProperty("minutes");
+
+    expect(screen.getByText("Finishing a project")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await screen.findByText("approved");
+    expect((await state()).rewards.some((r) => r.minutes === 20)).toBe(true);
+    expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
+
+    expect(screen.getAllByText(/● /).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Mark all read" }));
+    await waitFor(() => expect(screen.queryAllByText(/● /)).toHaveLength(0));
+  });
+
+  it("declines requests", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Requests");
+    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await screen.findByText("denied");
+  });
+});
+
+describe("settings", () => {
+  it("saves household settings, imports feeds and deletes history", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Settings");
+    await user.clear(screen.getByLabelText("History retention (days)"));
+    await user.type(screen.getByLabelText("History retention (days)"), "14");
+    await user.clear(screen.getByLabelText(/offline grace/));
+    await user.type(screen.getByLabelText(/offline grace/), "2");
+    await user.selectOptions(
+      screen.getByLabelText("Home/default profile"),
+      "2",
+    );
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(async () =>
+      expect(await state()).toMatchObject({
+        retention_days: 14,
+        offline_grace_seconds: 7200,
+        home_profile_id: 2,
+      }),
+    );
+
+    await user.selectOptions(screen.getByLabelText("Category"), "ads");
+    await user.type(
+      screen.getByLabelText("Domains"),
+      "ads.example\ntracker.example",
+    );
+    await user.click(screen.getByRole("button", { name: "Import feed" }));
+    await waitFor(async () =>
+      expect((await state()).extra_domains.ads).toEqual([
+        "ads.example",
+        "tracker.example",
+      ]),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete history" }));
+    await waitFor(async () => expect((await state()).history).toHaveLength(0));
+  });
+
+  it("restores a backup file", async () => {
+    await seedHousehold();
+    const backup = await api("api/export", undefined, ADMIN);
+    await api("api/profiles", { name: "Temporary" }, ADMIN);
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Settings");
+    const file = new File([JSON.stringify(backup)], "backup.json", {
+      type: "application/json",
+    });
+    await user.upload(screen.getByLabelText("Restore backup"), file);
+    await user.type(screen.getByLabelText(/Type RESTORE/), "RESTORE");
+    // jsdom never marks a required file input as satisfied, so submit directly.
+    fireEvent.submit(
+      screen.getByRole("button", { name: "Restore backup" }).closest("form")!,
+    );
+    await waitFor(async () =>
+      expect((await state()).profiles.map((p) => p.name)).toEqual([
+        "Alex",
+        "Sam",
+      ]),
+    );
+    expect(
+      screen
+        .getByRole("link", { name: "Download backup" })
+        .getAttribute("href"),
+    ).toBe("/api/export");
+  });
+
+  it("manages co-parents and changes the password", async () => {
+    await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Settings");
+    await screen.findByText("robin");
+    const add = screen.getByRole("form", { name: "Add parent" });
+    await user.type(within(add).getByLabelText("Co-parent username"), "jordan");
+    await user.type(within(add).getByLabelText("Initial password"), "short");
+    await user.click(within(add).getByRole("button", { name: "Add parent" }));
+    // Browser validation blocks the short password.
+    expect((await state()).users).toHaveLength(1);
+    await user.clear(within(add).getByLabelText("Initial password"));
+    await user.type(
+      within(add).getByLabelText("Initial password"),
+      "second-parent-pass",
+    );
+    await user.click(within(add).getByRole("button", { name: "Add parent" }));
+    const jordan = await screen.findByText("jordan");
+    expect((await state()).users).toHaveLength(2);
+
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    const card = jordan.closest("article") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Remove" }));
+    expect((await state()).users).toHaveLength(2);
+    await user.click(within(card).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(screen.queryByText("jordan")).toBeNull());
+
+    const change = screen.getByRole("form", { name: "Change password" });
+    await user.type(
+      within(change).getByLabelText("Current password"),
+      "not-my-password",
+    );
+    await user.type(
+      within(change).getByLabelText("New password"),
+      "brand-new-password",
+    );
+    await user.click(
+      within(change).getByRole("button", { name: "Change password" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/password/i),
+    );
+    await user.clear(within(change).getByLabelText("Current password"));
+    await user.type(
+      within(change).getByLabelText("Current password"),
+      OWNER.password,
+    );
+    await user.click(
+      within(change).getByRole("button", { name: "Change password" }),
+    );
+    await screen.findByRole("form", { name: "Sign in" });
+  });
+
+  it("shows a parent account without owner controls", async () => {
+    await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+    await api(
+      "api/users",
+      { username: "jordan", password: "second-parent-pass" },
+      ADMIN,
+    );
+    cookie = "";
+    await browserFetch("/v1/login", {
+      method: "POST",
+      body: JSON.stringify({
+        username: "jordan",
+        password: "second-parent-pass",
+      }),
+    });
+    const user = await openDashboard();
+    await tab(user, "Settings");
+    await screen.findByText("jordan");
+    expect(screen.queryByRole("form", { name: "Add parent" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+    expect(screen.getByRole("form", { name: "Change password" })).toBeTruthy();
+  });
+});

@@ -34,58 +34,6 @@ export function bearer(request: Request) {
   const auth = request.headers.get("authorization") ?? "";
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
 }
-async function hmac(secret: string) {
-  return crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
-}
-export async function session(secret: string) {
-  const expiry = String(Math.floor(Date.now() / 1000) + 3600);
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    await hmac(secret),
-    new TextEncoder().encode(expiry),
-  );
-  return (
-    expiry +
-    "." +
-    [...new Uint8Array(signature)]
-      .map((n) => n.toString(16).padStart(2, "0"))
-      .join("")
-  );
-}
-export async function isAdmin(request: Request) {
-  const { admin } = secrets();
-  if (bearer(request) && (await hash(bearer(request))) === (await hash(admin)))
-    return true;
-  const cookie = (request.headers.get("cookie") ?? "")
-    .split(";")
-    .map((s) => s.trim())
-    .find((s) => s.startsWith("temperance_session="))
-    ?.slice(19);
-  if (!cookie) return false;
-  const [expiry, signature] = cookie.split(".");
-  if (
-    !expiry ||
-    !signature ||
-    !/^[a-f0-9]{64}$/.test(signature) ||
-    Number(expiry) <= Date.now() / 1000
-  )
-    return false;
-  const bytes = Uint8Array.from(signature.match(/../g)!, (n) =>
-    parseInt(n, 16),
-  );
-  return crypto.subtle.verify(
-    "HMAC",
-    await hmac(admin),
-    bytes,
-    new TextEncoder().encode(expiry),
-  );
-}
 export function origin() {
   const value = process.env.TEMPERANCE_PUBLIC_URL;
   if (!value) throw new Error("Configure TEMPERANCE_PUBLIC_URL");

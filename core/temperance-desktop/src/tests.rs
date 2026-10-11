@@ -1,0 +1,345 @@
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::path::Path;
+use std::rc::Rc;
+
+use temperance_core::HttpRequest;
+
+use crate::app::{form_value, write_private, App, Transport, TunnelControl};
+
+const SERVER_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+const HOST: &str = "127.0.0.1:4000";
+
+type Replies = Rc<RefCell<VecDeque<Result<(u16, String), String>>>>;
+
+#[derive(Clone, Default)]
+struct Fake {
+    replies: Replies,
+    sent: Rc<RefCell<Vec<HttpRequest>>>,
+}
+impl Transport for Fake {
+    fn send(&self, request: &HttpRequest) -> Result<(u16, String), String> {
+        self.sent.borrow_mut().push(request.clone());
+        self.replies
+            .borrow_mut()
+            .pop_front()
+            .unwrap_or(Err("no reply".into()))
+    }
+}
+#[derive(Clone, Default)]
+struct FakeTunnel {
+    up: Rc<RefCell<bool>>,
+    fail: bool,
+}
+impl TunnelControl for FakeTunnel {
+    fn up(&self, config: &Path) -> Result<(), String> {
+        assert!(config.ends_with("temperance.conf"));
+        if self.fail {
+            return Err("WireGuard: denied".into());
+        }
+        *self.up.borrow_mut() = true;
+        Ok(())
+    }
+    fn is_up(&self) -> bool {
+        *self.up.borrow()
+    }
+}
+
+fn state(version: u32, reason: &str, requests: &str) -> String {
+    format!(
+        r#"{{"token":"tok","device_id":"dev","version":{version},"policy":{{"name":"Alex","limit":60,"used":5,"timezone":"UTC"}},
+        "tunnel":{{"address":"10.77.0.2/32","address_v6":"fd77::2/128","dns":"10.77.0.1","endpoint":"192.0.2.1:51820","public_key":"{SERVER_KEY}"}},
+        "status":{{"reason":"{reason}","remaining_minutes":55}},"requests":[{requests}]}}"#
+    )
+}
+
+fn post(app: &mut App<Fake, FakeTunnel>, path: &str, fields: &str) -> u16 {
+    let body = format!("nonce=n0nce&{fields}");
+    app.handle(
+        "POST",
+        path,
+        HOST,
+        HOST,
+        Some(&format!("http://{HOST}")),
+        &body,
+    )
+    .status
+}
+
+fn app() -> (App<Fake, FakeTunnel>, Fake, FakeTunnel, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Fake::default();
+    let tunnel = FakeTunnel::default();
+    let app = App::new(
+        dir.path().join("data"),
+        "n0nce".into(),
+        fake.clone(),
+        tunnel.clone(),
+    )
+    .unwrap();
+    (app, fake, tunnel, dir)
+}
+
+#[test]
+fn enrolls_connects_refreshes_and_requests_time() {
+    let (mut app, fake, tunnel, dir) = app();
+    assert!(app.render().contains("Enroll this device"));
+    fake.replies
+        .borrow_mut()
+        .push_back(Ok((200, state(1, "allowed", ""))));
+    assert_eq!(
+        post(
+            &mut app,
+            "/enroll",
+            "service=https%3A%2F%2Ffamily.example&code=abc&name=Laptop"
+        ),
+        303
+    );
+    assert_eq!(
+        app.status,
+        "Ready. Rules are enforced by your family's gateway."
+    );
+    let sent = fake.sent.borrow()[0].clone();
+    assert_eq!(sent.url, "https://family.example/v1/enroll");
+    assert!(!sent.body.unwrap().contains("private"));
+
+    let conf = std::fs::read_to_string(dir.path().join("data/temperance.conf")).unwrap();
+    assert!(conf.contains("AllowedIPs = 0.0.0.0/0, ::/0"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(dir.path().join("data/identity.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    let page = app.handle("GET", "/", HOST, HOST, None, "").body;
+    assert!(page.contains("You&#39;re online"));
+    assert!(page.contains("55 min left today"));
+    assert!(page.contains("Ask for more time"));
+
+    fake.replies
+        .borrow_mut()
+        .push_back(Ok((200, state(2, "allowed", ""))));
+    assert_eq!(post(&mut app, "/connect", ""), 303);
+    assert!(*tunnel.up.borrow());
+    assert!(app.connected);
+
+    fake.replies.borrow_mut().extend([
+        Ok((
+            200,
+            r#"{"id":"r","minutes":15,"message":"","status":"pending","at":1}"#.to_string(),
+        )),
+        Ok((
+            200,
+            state(
+                3,
+                "daily limit",
+                r#"{"id":"r","minutes":15,"status":"pending","at":1}"#,
+            ),
+        )),
+    ]);
+    assert_eq!(
+        post(&mut app, "/request", "minutes=15&message=homework"),
+        303
+    );
+    assert_eq!(app.status, "Request sent to your parents.");
+    assert!(app.render().contains("waiting for a parent"));
+
+    fake.replies
+        .borrow_mut()
+        .push_back(Ok((401, r#"{"error":"Invalid or revoked device"}"#.into())));
+    post(&mut app, "/refresh", "");
+    assert_eq!(app.status, "Invalid or revoked device");
+
+    let reloaded = App::new(
+        dir.path().join("data"),
+        "x".into(),
+        Fake::default(),
+        FakeTunnel::default(),
+    )
+    .unwrap();
+    assert_eq!(reloaded.identity.unwrap().state.unwrap().version, 3);
+}
+
+#[test]
+fn rejects_cross_origin_wrong_host_and_bad_input() {
+    let (mut app, fake, _tunnel, _dir) = app();
+    assert_eq!(
+        app.handle("GET", "/", "evil.test", HOST, None, "").status,
+        403
+    );
+    assert_eq!(
+        app.handle(
+            "POST",
+            "/enroll",
+            HOST,
+            HOST,
+            Some("http://evil.test"),
+            "nonce=n0nce"
+        )
+        .status,
+        403
+    );
+    assert_eq!(
+        app.handle(
+            "POST",
+            "/enroll",
+            HOST,
+            HOST,
+            Some(&format!("http://{HOST}")),
+            "nonce=wrong"
+        )
+        .status,
+        403
+    );
+    assert_eq!(
+        app.handle("GET", "/missing", HOST, HOST, None, "").status,
+        404
+    );
+    assert_eq!(post(&mut app, "/missing", ""), 404);
+    post(
+        &mut app,
+        "/enroll",
+        "service=http%3A%2F%2Finsecure.example&code=a&name=b",
+    );
+    assert_eq!(app.status, "Enter an HTTPS service origin");
+    post(&mut app, "/connect", "");
+    assert_eq!(app.status, "Enroll first");
+    post(&mut app, "/request", "minutes=15");
+    assert_eq!(app.status, "Enroll first");
+    fake.replies.borrow_mut().push_back(Err("timeout".into()));
+    post(
+        &mut app,
+        "/enroll",
+        "service=https%3A%2F%2Ff.example&code=a&name=b",
+    );
+    assert!(app.status.starts_with("Cannot reach policy service"));
+    assert!(app.identity.is_none());
+
+    fake.replies
+        .borrow_mut()
+        .push_back(Ok((200, state(1, "allowed", ""))));
+    post(
+        &mut app,
+        "/enroll",
+        "service=https%3A%2F%2Ff.example&code=a&name=b",
+    );
+    post(
+        &mut app,
+        "/enroll",
+        "service=https%3A%2F%2Ff.example&code=a&name=b",
+    );
+    assert_eq!(app.status, "Already enrolled");
+    post(&mut app, "/request", "minutes=lots");
+    assert_eq!(app.status, "Choose how many minutes");
+    let html = app.render();
+    assert!(!html.contains("<script"));
+}
+
+#[test]
+fn tunnel_failures_and_provisioning_changes_are_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Fake::default();
+    let tunnel = FakeTunnel {
+        fail: true,
+        ..FakeTunnel::default()
+    };
+    let mut app = App::new(
+        dir.path().to_path_buf(),
+        "n0nce".into(),
+        fake.clone(),
+        tunnel,
+    )
+    .unwrap();
+    fake.replies.borrow_mut().extend([
+        Ok((200, state(1, "allowed", ""))),
+        Ok((200, state(1, "allowed", ""))),
+    ]);
+    post(
+        &mut app,
+        "/enroll",
+        "service=https%3A%2F%2Ff.example&code=a&name=b",
+    );
+    post(&mut app, "/connect", "");
+    assert_eq!(app.status, "WireGuard: denied");
+    app.connected = true;
+    fake.replies.borrow_mut().push_back(Ok((
+        200,
+        state(2, "allowed", "").replace("192.0.2.1", "198.51.100.7"),
+    )));
+    post(&mut app, "/refresh", "");
+    assert!(app.status.contains("Tunnel provisioning changed"));
+}
+
+#[test]
+fn helpers_parse_forms_escape_and_write_atomically() {
+    assert_eq!(form_value("a=1&name=J%C3%BCrgen+K", "name"), "Jürgen K");
+    assert_eq!(form_value("a=1", "missing"), "");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("file.json");
+    write_private(&path, "one").unwrap();
+    write_private(&path, "two").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "two");
+    let (mut app, _, _, _dir) = app();
+    app.status = "<b>bad</b>".into();
+    assert!(app.render().contains("&lt;b&gt;bad&lt;/b&gt;"));
+    std::fs::create_dir_all(&app.dir).unwrap();
+    std::fs::write(app.dir.join("identity.json"), "{").unwrap();
+    assert!(App::new(
+        app.dir.clone(),
+        "n".into(),
+        Fake::default(),
+        FakeTunnel::default()
+    )
+    .is_err());
+}
+
+#[test]
+fn shows_alerts_and_declines_location_requests() {
+    let (mut app, fake, _tunnel, _dir) = app();
+    fake.replies.borrow_mut().push_back(Ok((
+        200,
+        state(
+            1,
+            "allowed",
+            r#"{"id":"r","minutes":20,"status":"pending","at":1}"#,
+        ),
+    )));
+    post(
+        &mut app,
+        "/enroll",
+        "service=https%3A%2F%2Ffamily.example&code=abc&name=Laptop",
+    );
+    let asked = state(
+        2,
+        "allowed",
+        r#"{"id":"r","minutes":20,"status":"approved","at":1}"#,
+    )
+    .replace(r#""requests""#, r#""location_requested":true,"requests""#);
+    fake.replies
+        .borrow_mut()
+        .extend([Ok((200, asked)), Ok((200, r#"{"ok":true}"#.to_string()))]);
+    assert_eq!(post(&mut app, "/refresh", ""), 303);
+    let sent = fake.sent.borrow().last().unwrap().clone();
+    assert_eq!(sent.url, "https://family.example/v1/device/location");
+    assert!(sent.body.unwrap().contains("cannot share its location"));
+    assert!(app
+        .render()
+        .contains("Your request for 20 minutes was approved"));
+
+    fake.replies.borrow_mut().extend([
+        Ok((
+            200,
+            state(3, "allowed", "")
+                .replace(r#""requests""#, r#""location_requested":true,"requests""#),
+        )),
+        Ok((
+            400,
+            r#"{"error":"No location request is pending"}"#.to_string(),
+        )),
+    ]);
+    post(&mut app, "/refresh", "");
+    assert_eq!(app.status, "No location request is pending");
+}

@@ -1,0 +1,12 @@
+/*
+!/web
+!/specs
+/web/node_modules
+/web/.next
+/web/.open-next
+/web/.wrangler
+/web/coverage
+/web/test-results
+/web/playwright-report
+/web/.env*
+!/web/.env.example

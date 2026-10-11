@@ -7,60 +7,95 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
 }
 @MainActor final class Client: ObservableObject {
     @Published var status = "Enroll to install your family's VPN."
-    @Published var state: DeviceState?
+    @Published var child: ChildStatus?
     @Published var busy = false
+    private var connected = false
     private var manager: NETunnelProviderManager?
     private let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
+    let location = LocationResponder()
     init() {
-        do { state = try Vault.load()?.state } catch { status = error.localizedDescription }
+        do { if let state = try Vault.load()?.state { child = try childStatus(state: state, now: now()) } }
+        catch { status = error.localizedDescription }
     }
-    func request(service: URL, path: String, token: String? = nil, body: [String: String]? = nil) async throws -> DeviceState {
-        var request = URLRequest(url: service.appendingPathComponent(path))
-        request.timeoutInterval = 15
-        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        if let body { request.httpMethod = "POST"; request.httpBody = try JSONSerialization.data(withJSONObject: body); request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        let (data, response) = try await session.data(for: request)
-        guard let response = response as? HTTPURLResponse, response.statusCode == 200,
-              response.url?.host == service.host, response.url?.scheme == "https" else { throw ClientError.message("Policy service rejected this request") }
-        return try JSONDecoder().decode(DeviceState.self, from: data)
+    private func now() -> Int64 { Int64(Date().timeIntervalSince1970) }
+    /// Sends a request built by the shared Rust core over the platform's HTTPS stack.
+    func send(_ request: HttpRequest) async throws -> (UInt16, String) {
+        guard let url = URL(string: request.url) else { throw ClientError.message("Invalid request URL") }
+        var urlRequest = URLRequest(url: url)
+        urlRequest.timeoutInterval = 15
+        urlRequest.httpMethod = request.method
+        for header in request.headers { urlRequest.setValue(header.value, forHTTPHeaderField: header.name) }
+        urlRequest.httpBody = request.body.map { Data($0.utf8) }
+        let (data, response) = try await session.data(for: urlRequest)
+        guard let response = response as? HTTPURLResponse, response.url?.host == url.host, response.url?.scheme == "https" else {
+            throw ClientError.message("Policy service rejected this request")
+        }
+        return (UInt16(clamping: response.statusCode), String(decoding: data, as: UTF8.self))
     }
     func enroll(service: String, code: String, name: String) async {
         busy = true; defer { busy = false }
         do {
-            guard let url = URL(string: service), url.scheme == "https", url.host != nil, url.user == nil,
-                  url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/" else { throw ClientError.message("Enter an HTTPS service origin") }
             guard try Vault.load()?.state == nil else { throw ClientError.message("Device already enrolled") }
-            let privateKey = PrivateKey()
-            var identity = Identity(service: url, privateKey: privateKey.base64Key, state: nil)
-            try Vault.save(identity)
-            identity.state = try await request(service: url, path: "v1/enroll", body: ["code": code, "name": name, "public_key": privateKey.publicKey.base64Key])
+            let origin = try validateService(raw: service)
+            let keys = generateKeypair()
+            let (statusCode, body) = try await send(try enrollRequest(service: origin, code: code, name: name, publicKey: keys.publicKey))
+            let identity = try enrolledIdentity(service: origin, keys: keys, status: statusCode, body: body)
             _ = try tunnelConfiguration(identity)
-            try Vault.save(identity); state = identity.state; status = "Enrolled. Install VPN to connect."
+            try Vault.save(identity)
+            child = try childStatus(state: identity.state!, now: now())
+            status = "Enrolled. Install VPN to connect."
         } catch { status = error.localizedDescription }
     }
     func refresh() async {
         do {
-            guard var identity = try Vault.load(), let token = identity.state?.token else { return }
-            var latest = try await request(service: identity.service, path: "v1/device/state", token: token)
-            latest.token = token; identity.state = latest; try Vault.save(identity)
-            state = latest; status = "Policy \(latest.version) · \(latest.policy.used) network activity minutes"
+            guard let identity = try Vault.load(), identity.state != nil else { return }
+            let (statusCode, body) = try await send(try stateRequest(identity: identity))
+            let latest = try parseDeviceState(status: statusCode, body: body)
+            let alerts = childAlerts(previous: identity.state, current: latest, now: now())
+            let next = try refreshedIdentity(identity: identity, latest: latest, connected: connected)
+            try Vault.save(next)
+            child = try childStatus(state: next.state!, now: now())
+            status = "Policy \(next.state!.version)"
+            alerts.forEach(ChildNotifier.post)
+            if latest.locationRequested { try await shareLocation(next) }
         } catch { status = "Policy refresh unavailable; existing VPN remains configured." }
+    }
+    private func shareLocation(_ identity: Identity) async throws {
+        let (fix, reason) = await location.currentLocation()
+        let request = if let fix {
+            try locationRequest(identity: identity, latitude: fix.coordinate.latitude, longitude: fix.coordinate.longitude, accuracyMeters: max(0, fix.horizontalAccuracy))
+        } else {
+            try locationUnavailableRequest(identity: identity, reason: reason)
+        }
+        let (statusCode, body) = try await send(request)
+        try parseOk(status: statusCode, body: body)
+        ChildNotifier.post("A parent viewed this device's location")
+    }
+    func askForTime(minutes: UInt32, message: String) async {
+        busy = true; defer { busy = false }
+        do {
+            guard let identity = try Vault.load() else { throw ClientError.message("Enroll first") }
+            let (statusCode, body) = try await send(try timeRequest(identity: identity, minutes: minutes, message: message))
+            _ = try parseTimeRequest(status: statusCode, body: body)
+            await refresh()
+            status = "Request sent to your parents."
+        } catch { status = error.localizedDescription }
     }
     func install() async {
         busy = true; defer { busy = false }
         do {
-            guard let identity = try Vault.load(), identity.state != nil else { throw ClientError.message("Enroll first") }
+            guard let identity = try Vault.load(), let state = identity.state else { throw ClientError.message("Enroll first") }
             let identifier = Bundle.main.object(forInfoDictionaryKey: "TunnelBundleIdentifier") as! String
             let managers = try await NETunnelProviderManager.loadAllFromPreferences()
             let manager = managers.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == identifier } ?? NETunnelProviderManager()
             let config = NETunnelProviderProtocol()
-            config.providerBundleIdentifier = identifier; config.serverAddress = identity.state!.tunnel.endpoint
+            config.providerBundleIdentifier = identifier; config.serverAddress = state.tunnel.endpoint
             config.includeAllNetworks = true; config.excludeLocalNetworks = false
             manager.protocolConfiguration = config; manager.localizedDescription = "Temperance Family VPN"; manager.isEnabled = true
             let rule = NEOnDemandRuleConnect(); rule.interfaceTypeMatch = .any
             manager.onDemandRules = [rule]; manager.isOnDemandEnabled = true
             try await manager.saveToPreferences(); try await manager.loadFromPreferences()
-            try manager.connection.startVPNTunnel(); self.manager = manager
+            try manager.connection.startVPNTunnel(); self.manager = manager; connected = true
             status = "VPN installed. Connection status appears in system VPN settings."
         } catch { status = error.localizedDescription }
     }
@@ -70,18 +105,34 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
     @State private var service = ""
     @State private var code = ""
     @State private var name = ""
+    @State private var note = ""
     var body: some Scene {
         WindowGroup {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Temperance").font(.largeTitle).bold()
-                    Text("Your family's rules, wherever you go.").foregroundStyle(.secondary)
-                    Text(client.status).accessibilityIdentifier("status")
-                    if let state = client.state {
-                        Text("\(state.policy.name) · Policy \(state.version)")
-                        Text(state.policy.paused ? "Access paused by your family" : "\(state.policy.used) observed network minutes · \(state.policy.limit == 0 ? "unlimited" : "\(state.policy.limit) minute budget")")
+                    Text(client.status).foregroundStyle(.secondary).accessibilityIdentifier("status")
+                    if let child = client.child {
+                        Text(child.headline).font(.title2).bold()
+                        Text(child.detail)
+                        Text(child.remainingMinutes.map { "\($0) min left today" } ?? "No daily limit")
+                        if let next = child.nextChange { Text(next).foregroundStyle(.secondary) }
+                        if child.pendingRequest {
+                            Text("Your request for more time is waiting for a parent.")
+                        } else if child.canRequestTime {
+                            TextField("Why do you need more time?", text: $note)
+                            HStack {
+                                ForEach([15, 30, 60] as [UInt32], id: \.self) { minutes in
+                                    Button("+\(minutes) min") { Task { await client.askForTime(minutes: minutes, message: note) } }
+                                }
+                            }
+                        }
                         Button("Install / start VPN") { Task { await client.install() } }.buttonStyle(.borderedProminent)
                         Button("Refresh policy") { Task { await client.refresh() } }
+                        Button("Allow alerts and parent location requests") {
+                            ChildNotifier.requestPermission()
+                            client.location.requestPermission()
+                        }
                     } else {
                         TextField("https://policy.example.com", text: $service)
                         SecureField("Enrollment code", text: $code)

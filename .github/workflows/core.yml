@@ -1,0 +1,64 @@
+name: Rust core and desktop
+on: [push, pull_request]
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: core
+jobs:
+  check:
+    name: fmt, clippy, tests and coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests (shared golden policy cases included) with 80% line gate
+        run: cargo llvm-cov --workspace --fail-under-lines 80 --lcov --output-path lcov.info
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage
+          path: core/lcov.info
+
+  desktop:
+    name: Desktop ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, artifact: temperance-linux-amd64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, artifact: temperance-linux-arm64 }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, artifact: temperance-windows-amd64.exe }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc, artifact: temperance-windows-arm64.exe, cross: true }
+          - { os: macos-latest, target: aarch64-apple-darwin, artifact: temperance-macos-arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: ${{ matrix.target }}
+      - if: ${{ !matrix.cross }}
+        run: cargo test --workspace
+      - run: cargo build --release -p temperance-desktop --target ${{ matrix.target }}
+      - shell: bash
+        run: |
+          src=target/${{ matrix.target }}/release/temperance
+          [[ "${{ matrix.target }}" == *windows* ]] && src="$src.exe"
+          mkdir -p ../build && cp "$src" "../build/${{ matrix.artifact }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build/${{ matrix.artifact }}

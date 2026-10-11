@@ -14,7 +14,9 @@ Temperance now includes a central authenticated Next.js policy service, a Linux 
 - [Circle research and feature-parity audit](docs/research/circle-feature-audit.md)
 - [Architecture, API, and enforcement limits](docs/architecture.md)
 
-The mobile apps embed WireGuard; the Apple apps use native SwiftUI/Network Extension. Linux and Windows use compiled Go applications with a localhost browser UI and official OS WireGuard tooling. Apple VPN builds require your signing team and entitlements for installation. Android debug APKs are test artifacts. Unmanaged-device VPN removal and comprehensive encrypted-DNS/content filtering remain limitations. The repository includes CI build artifacts and an isolated Linux integration test with real encrypted traffic; it does not provision a public server or publish app-store releases automatically.
+All five clients share one Rust business-logic layer, [`core/temperance-core`](core): the enrollment/refresh protocol, key generation, tunnel validation, the policy engine, the child status view, child alerts, time requests and location answers. It is linked natively into the Rust desktop app (Linux, Windows, macOS) and compiled through UniFFI into an XCFramework with Swift bindings (iOS, macOS) and Android `.so` libraries with Kotlin bindings. Platform code only provides HTTPS, secure storage, VPN APIs and UI. The mobile apps embed WireGuard; the Apple apps use native SwiftUI/Network Extension. Linux and Windows use the Rust app with a localhost browser UI and official OS WireGuard tooling.
+
+Parents sign in with a username and password (salted PBKDF2 hashes; co-parents get their own accounts), and native or scripted clients can use the OAuth 2.0 password and refresh-token grants. The policy service stores data in SQLite, PostgreSQL, or libSQL/Turso, selected by `TEMPERANCE_DATABASE_URL`. Apple VPN builds require your signing team and entitlements for installation. Android debug APKs are test artifacts. Unmanaged-device VPN removal and comprehensive encrypted-DNS/content filtering remain limitations. The repository includes CI build artifacts and an isolated Linux integration test with real encrypted traffic; it does not provision a public server or publish app-store releases automatically.
 
 ## Standalone DNS mode
 
@@ -78,20 +80,24 @@ DNS filtering cannot terminate existing connections or stop access through cache
 ## Development
 
 ```sh
-python3 -m unittest discover -s tests -v
-node --check temperance/static/app.js
+coverage run -m unittest discover -s tests && coverage report   # Python gateway (80% gate)
+(cd web && npm run test:coverage)                                # policy service + dashboard (80% gate)
+(cd web && npm run build && npx playwright test)                 # feature/UX + layout audits
+(cd core && cargo llvm-cov --workspace --fail-under-lines 80)    # Rust core + desktop
 ```
 
-Tests use temporary SQLite databases and a deterministic local DNS upstream, covering policy precedence, timezones, minute budgets, persistence, retention, malformed packets, UDP/TCP forwarding, and the administration API. No router configuration or live external DNS is required for tests.
+GitHub Actions run all of these, Playwright on both SQLite and PostgreSQL, Rust desktop builds for Linux/Windows/macOS (x64 and arm64), the Android APK and the unsigned macOS/iOS apps.
+
+Python tests use temporary SQLite databases and a deterministic local DNS upstream, covering policy precedence, timezones, minute budgets, persistence, retention, malformed packets, UDP/TCP forwarding, and the administration API. No router configuration or live external DNS is required for tests.
 
 Architecture: `store.py` owns SQLite and policy decisions; `dns.py` implements wire forwarding; `server.py` hosts the API and static dashboard. The frontend is plain HTML/CSS/JavaScript, served from the package. All runtime code uses Python's standard library.
 
 ## Next milestones
 
-1. Authenticated remote administration and profile/history management.
-2. Curated, updateable category lists and per-category budgets.
-3. Router integrations for discovery and enforceable network pauses.
-4. Accurate foreground usage agents and managed-device enrollment.
-5. IPv6 internet forwarding, comprehensive filter feeds, and operational metrics.
+1. Home routing for TVs/consoles that cannot run the VPN app.
+2. Captive-portal and VPN-permission diagnostics in the clients.
+3. Push/e-mail delivery of parent notifications.
+4. IPv6 internet forwarding and operational metrics.
+5. Physical-device acceptance testing and signed store releases.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).

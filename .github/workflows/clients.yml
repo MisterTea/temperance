@@ -1,33 +1,10 @@
-name: VPN clients and integration
+name: Mobile and Apple clients and VPN integration
 on: [push, pull_request]
 permissions:
   contents: read
 jobs:
-  desktop:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            binary: temperance-linux-amd64
-          - os: windows-latest
-            binary: temperance-windows-amd64.exe
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: clients/desktop
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.27.1'
-          cache: false
-      - run: go test ./...
-      - run: go build -trimpath -o ${{ matrix.binary }} .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-${{ matrix.os }}
-          path: clients/desktop/${{ matrix.binary }}
   android:
+    name: Android APK (Rust core via cargo-ndk + UniFFI Kotlin)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,12 +12,28 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android, i686-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: android
+      - run: cargo install cargo-ndk --locked
+      - run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
       - run: clients/android/gradlew -p clients/android assembleDebug
+      - name: APK bundles the core for every ABI
+        run: |
+          for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+            unzip -l clients/android/app/build/outputs/apk/debug/app-debug.apk | grep "lib/$abi/libtemperance_core.so"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
           path: clients/android/app/build/outputs/apk/debug/app-debug.apk
+
   apple:
+    name: macOS and iOS apps (Rust core XCFramework + UniFFI Swift)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,10 +41,18 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: apple
       - run: brew install xcodegen
       - run: clients/apple/bootstrap.sh
       - run: xcodebuild -project clients/apple/Temperance.xcodeproj -scheme TemperanceMac -derivedDataPath build/apple CODE_SIGNING_ALLOWED=NO build
       - run: xcodebuild -project clients/apple/Temperance.xcodeproj -scheme TemperanceIOS -destination 'generic/platform=iOS' -derivedDataPath build/apple-ios CODE_SIGNING_ALLOWED=NO build
+
   vpn-integration:
     runs-on: ubuntu-latest
     steps:

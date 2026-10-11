@@ -7,12 +7,22 @@ Each application enrolls a locally generated WireGuard public key through the po
 | macOS 13+ | Native SwiftUI app + WireGuardKit Network Extension | `apple/bootstrap.sh`, Xcode `TemperanceMac` |
 | iOS 16+ | Native SwiftUI app + WireGuardKit Network Extension | Same project, Xcode `TemperanceIOS` |
 | Android 8+ | Kotlin app + embedded official WireGuard GoBackend + foreground session service | `cd android && ./gradlew assembleDebug` |
-| Linux | Go application with localhost browser UI + `wg-quick` | `desktop/build.sh`, `desktop/install-linux.sh` |
-| Windows | Go application with localhost browser UI + WireGuard tunnel service | `desktop/build.sh`, elevated `desktop/install-windows.ps1` |
+| Linux | Rust application with localhost browser UI + `wg-quick` | `desktop/build.sh`, `desktop/install-linux.sh` |
+| Windows | Rust application with localhost browser UI + WireGuard tunnel service | `desktop/build.sh`, elevated `desktop/install-windows.ps1` |
+
+## Shared Rust core
+
+Client business logic lives once in [`core/temperance-core`](../core/temperance-core): HTTPS-origin validation, WireGuard key generation, enrollment/refresh/time-request protocol (request building and response parsing), identity persistence format, full-tunnel config validation, the policy engine (verified against the same `specs/policy-cases.json` golden cases as the TypeScript service and Python gateway), and the child-facing status view ("Bedtime starts in 30 min", remaining minutes, ask-for-time eligibility).
+
+- **Linux / Windows / macOS desktop**: `core/temperance-desktop` links the crate natively.
+- **iOS / macOS apps**: `core/build-bindings.sh apple` builds `clients/apple/Core/TemperanceCoreFFI.xcframework` (device, simulator, macOS universal) and UniFFI Swift bindings; `apple/bootstrap.sh` runs it.
+- **Android**: `core/build-bindings.sh android` builds `jniLibs` for arm64-v8a, armeabi-v7a, x86_64, x86 with `cargo-ndk` and generates Kotlin bindings; Gradle's `preBuild` runs it (set `TEMPERANCE_SKIP_RUST=1` to use prebuilt libraries).
+
+Platform code only supplies the native HTTPS transport, keychain/keystore storage, VPN APIs, and UI. Requirements: Rust (via rustup) with the mobile targets, `cargo-ndk` and `ANDROID_NDK_HOME` for Android, Xcode for Apple. Run `cargo test --workspace` in `core/` for unit, golden, and desktop tests.
 
 ## macOS / iOS
 
-Install Xcode, Go, Python 3, and XcodeGen. Run `clients/apple/bootstrap.sh`. The script fetches a pinned WireGuardKit revision and applies two small compatibility fixes (Swift manifest tools version and a missing C system-types include), recorded in `patch-dependency.py`. The Go bridge build applies upstream's Darwin continuous-time runtime patch in an isolated build copy; it never modifies your installed Go toolchain.
+Install Xcode, Go, Rust (rustup with the Apple targets), Python 3, and XcodeGen. Run `clients/apple/bootstrap.sh`; it also builds the shared Rust core XCFramework. The script fetches a pinned WireGuardKit revision and applies two small compatibility fixes (Swift manifest tools version and a missing C system-types include), recorded in `patch-dependency.py`. The Go bridge build applies upstream's Darwin continuous-time runtime patch in an isolated build copy; it never modifies your installed Go toolchain.
 
 Open `Temperance.xcodeproj`. Configure your Apple Developer team on both app/extension targets, enable Network Extensions and shared Keychain groups for the chosen bundle identifiers, and build the corresponding scheme. Set `DEVELOPMENT_TEAM` on the `xcodebuild` command line for CI signing. The shared Keychain group must match `$(AppIdentifierPrefix)org.temperance.shared`; private keys and device tokens use device-only Keychain storage shared with the tunnel extension. If you change identifiers, update the provider bundle ID and entitlements together.
 
@@ -37,7 +47,7 @@ Install the APK, enroll with your HTTPS service origin and one-use code, and tap
 
 ## Linux / Windows
 
-Build with Go 1.23+ using `clients/desktop/build.sh`. Binaries for amd64/arm64 Linux and Windows go to `build/`. Installers use these local build outputs, never an unverified remote binary.
+Build with Rust using `clients/desktop/build.sh` (cross targets use `cargo-zigbuild`; override with `TARGETS="rust-target:os:arch ..."`). Binaries for amd64/arm64 Linux and Windows go to `build/`. Installers use these local build outputs, never an unverified remote binary. Children can see their status and send an "ask for more time" request from the desktop UI.
 
 On Linux, `sudo clients/desktop/install-linux.sh` installs distribution WireGuard tools and the app. Launch `sudo temperance-desktop --data /var/lib/temperance-client` and open its printed localhost URL in your normal browser. Enroll, then Install / start VPN. After connection, `sudo systemctl enable temperance-vpn` persists the tunnel at boot. The app must keep running for its status polling; gateway enforcement continues without it. To reset/remove a tunnel, an administrator stops the installed unit or runs `wg-quick down /var/lib/temperance-client/temperance.conf` and deletes/reset the private identity deliberately.
 

@@ -12,13 +12,17 @@ packages:
     path: Vendor/wireguard-apple
 targetTemplates:
   BaseApp:
-    sources: [App]
+    sources: [App, Core/Sources]
     dependencies:
       - package: WireGuardKit
+      - framework: Core/TemperanceCoreFFI.xcframework
+        embed: false
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Temperance
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: Your parents can ask where this device is. Temperance shares one location only when they ask, and tells you when it does.
+        INFOPLIST_KEY_NSLocationUsageDescription: Your parents can ask where this device is. Temperance shares one location only when they ask, and tells you when it does.
         INFOPLIST_KEY_KeychainAccessGroup: $(AppIdentifierPrefix)org.temperance.shared
         CODE_SIGN_ENTITLEMENTS: App/App.entitlements
     preBuildScripts:
@@ -29,8 +33,11 @@ targetTemplates:
     sources:
       - path: Tunnel
       - path: App/Identity.swift
+      - path: Core/Sources
     dependencies:
       - package: WireGuardKit
+      - framework: Core/TemperanceCoreFFI.xcframework
+        embed: false
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

@@ -24,6 +24,7 @@ const publicDevice = (d: Device) => ({
   managed: d.managed,
   last_seen: d.last_seen,
   location: d.location,
+  location_requested: d.location_requested,
 });
 export function prune(state: State, at = now()) {
   const cutoff = localTime(at - state.retention_days * 86400, timezone()).day;
@@ -93,6 +94,7 @@ export function snapshot(state: State, at = now()) {
     home_profile_id: state.home_profile_id,
     retention_days: state.retention_days,
     offline_grace_seconds: state.offline_grace_seconds,
+    gateway_seen: state.gateway_seen,
     total: profiles.reduce((sum, p) => sum + p.used, 0),
     blocked: profiles.filter((p) => p.access_reason !== "allowed").length,
     recent: state.history.slice(-100).reverse(),
@@ -112,7 +114,7 @@ function event(state: State, kind: string, message: string) {
     read: false,
   });
 }
-function changed(state: State, kind: string, message: string) {
+export function changed(state: State, kind: string, message: string) {
   state.version++;
   event(state, kind, message);
   prune(state);
@@ -222,7 +224,53 @@ export function clientState(state: State, device: Device, at = now()) {
       observed_at: at,
     },
     requests: state.requests.filter((r) => r.device_id === device.id),
+    location_requested: locationPending(device, at),
   };
+}
+const LOCATION_REQUEST_TTL = 3600;
+const locationPending = (device: Device, at = now()) =>
+  !!device.location_requested &&
+  at - device.location_requested < LOCATION_REQUEST_TTL;
+export function requestLocation(state: State, ip: string) {
+  const device = state.devices.find((d) => d.ip === ip && !d.revoked);
+  if (!device) throw new Error("Device does not exist");
+  device.location_requested = now();
+  event(state, "location", `Location requested from ${device.name}`);
+  return snapshot(state);
+}
+const locationInput = z.union([
+  z.object({
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    accuracy: z.number().nonnegative().max(1e6),
+  }),
+  z.object({ unavailable: z.string().trim().min(1).max(120) }),
+]);
+export function reportLocation(state: State, device: Device, input: unknown) {
+  const data = locationInput.parse(input);
+  if (!locationPending(device))
+    throw new Error("No location request is pending");
+  delete device.location_requested;
+  if ("unavailable" in data) {
+    event(
+      state,
+      "location",
+      `${device.name} could not share its location: ${data.unavailable}`,
+    );
+    return { ok: true };
+  }
+  device.location = { ...data, at: now() };
+  event(state, "location", `${device.name} shared its location`);
+  return { ok: true };
+}
+export const GATEWAY_HEARTBEAT = 60;
+export function gatewaySeen(state: State, at = now()) {
+  if (state.gateway_seen && at - state.gateway_seen < GATEWAY_HEARTBEAT)
+    return false;
+  if (state.gateway_seen && at - state.gateway_seen > 5 * GATEWAY_HEARTBEAT)
+    event(state, "gateway", "VPN gateway reconnected");
+  state.gateway_seen = at;
+  return true;
 }
 export async function authenticatedDevice(state: State, token: string) {
   const tokenHash = await hash(token);
@@ -392,7 +440,14 @@ export function reward(state: State, input: unknown) {
   )
     throw new Error("Choose a schedule to skip");
   const value = {
-    ...data,
+    profile_id: data.profile_id,
+    kind: data.kind,
+    scope: data.scope,
+    ...(data.kind === "extra_time"
+      ? { minutes: data.minutes }
+      : data.kind === "late_bedtime"
+        ? { bedtime: data.bedtime }
+        : { window_id: data.window_id }),
     id: data.id ?? crypto.randomUUID(),
     day: localTime(now(), timezone()).day,
   };

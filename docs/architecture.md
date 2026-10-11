@@ -15,7 +15,9 @@ flowchart LR
 
 The canonical Next.js policy service in `web/` is authoritative. The older Python control plane is migration/reference code. Clients generate private keys locally; only public keys are enrolled. An administrator creates a random enrollment code for one profile. It expires after 10 minutes and is consumed atomically with enrollment. The response contains a scoped device token, assigned tunnel addresses, gateway public key, endpoint, policy version, and current policy. Device tokens are stored as hashes at the service. Codes and keys are never embedded in repository configuration.
 
-An instance manages one household and one WireGuard gateway, with up to 253 lifetime IPv4 assignments. Revoked addresses are not reused. Deploy separate instances for separate households. Profile/device changes increment the monotonic policy version. Device tokens only read that device's state; gateway and administrator tokens have distinct privileges. Admin browser sessions use expiring HMAC-authenticated HttpOnly/SameSite cookies. Bearer tokens support trusted admin API clients. Deploy the control plane behind HTTPS; it does not implement its own certificate issuance.
+An instance manages one household and one WireGuard gateway, with up to 253 lifetime IPv4 assignments. Revoked addresses are not reused. Deploy separate instances for separate households. Profile/device changes increment the monotonic policy version. Device tokens only read that device's state; gateway and administrator tokens have distinct privileges.
+
+Parents sign in with a username and password. Passwords are never stored: each is a salted PBKDF2-HMAC-SHA256 hash (600,000 iterations, WebCrypto, so it runs on Node, Vercel, and Cloudflare). Ten consecutive failures lock an account for 15 minutes. Browser sessions and OAuth access tokens are the same HMAC-signed, one-hour token bound to the account's session version, so a password change or account removal revokes them; refresh tokens are random, stored only as SHA-256 hashes, and rotated on every use. The owner adds co-parents. `TEMPERANCE_ADMIN_TOKEN` creates the first owner and remains a bearer credential for automation. Deploy the control plane behind HTTPS; it does not implement its own certificate issuance.
 
 The gateway polls the authenticated state every 5 seconds, updates its DNS policies, reconciles WireGuard peers, and atomically replaces its two dedicated nftables tables. It never flushes unrelated firewall tables. Every enrolled peer receives an exact `/32` AllowedIPs association at the WireGuard server; WireGuard enforces the peer/source-IP binding. Client routes capture IPv4 and IPv6, but this gateway currently drops all IPv6 traffic. An existing host firewall can still deny traffic that Temperance permits: configure its forwarding rules deliberately.
 
@@ -33,8 +35,16 @@ All JSON writes are bounded to 64 KiB. Production URLs must use HTTPS. Clients v
 
 | Method | Path | Credential | Purpose |
 | --- | --- | --- | --- |
-| POST | `/v1/login` | Admin token in body + matching Origin | One-hour browser session |
-| GET | `/api/state` | Admin | Dashboard configuration and usage |
+| GET | `/v1/setup` | None | `{needs_setup}` before the first owner exists |
+| POST | `/v1/setup` | `TEMPERANCE_ADMIN_TOKEN` as `setup_token` + matching Origin | Create the owner account (once) |
+| POST | `/v1/login` | Username + password + matching Origin | One-hour HttpOnly browser session |
+| POST | `/v1/logout` | None | Clear the browser session |
+| POST | `/v1/oauth/token` | `grant_type=password` (username/password) or `refresh_token` | OAuth 2.0 bearer access token (1 h) + rotating refresh token (30 d) |
+| POST | `/v1/oauth/revoke` | Refresh token | Revoke a refresh token |
+| GET | `/api/me`, `/api/users` | Parent | Current account; family administrators |
+| POST | `/api/users`, `/api/users/delete` | Owner | Add / remove co-parents |
+| POST | `/api/password` | Parent | Change own password (signs out other sessions) |
+| GET | `/api/state` | Parent | Dashboard configuration and usage |
 | POST | `/api/profiles` | Admin | Create/update policy, increment revision |
 | POST | `/api/devices` | Admin | Assign/change device profile |
 | POST | `/api/devices/delete` | Admin | Revoke enrolled peer and token |
@@ -52,10 +62,10 @@ The service retains usage minutes for 30 days. Version-two gateways batch domain
 ## Verification
 
 ```sh
-python3 -m unittest discover -s tests -v
-(cd clients/desktop && go test -race ./...)
-node --check temperance/static/app.js
-node --check temperance/static/login.js
+coverage run -m unittest discover -s tests && coverage report   # Python, >=80% gate
+(cd web && npm run test:coverage)                                # TypeScript, >=80% gate
+(cd web && npm run build && npx playwright test)                 # Feature/UX + layout audits
+(cd core && cargo llvm-cov --workspace --fail-under-lines 80)    # Rust core + desktop
 ```
 
 The Linux network integration test must run only inside its disposable Docker VM/container. It creates network namespaces, real WireGuard interfaces, and dedicated nftables rules; it never modifies the workstation's network configuration:

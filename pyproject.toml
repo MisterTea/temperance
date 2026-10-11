@@ -22,3 +22,11 @@ include = ["temperance*"]
 
 [tool.setuptools.package-data]
 temperance = ["static/*"]
+
+[tool.coverage.run]
+source = ["temperance"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true

@@ -8,5 +8,9 @@ services:
     ports: ["127.0.0.1:8788:3000"]
     read_only: true
     tmpfs: ["/tmp"]
+    # Used when TEMPERANCE_DATABASE_URL=sqlite:/data/temperance.sqlite3
+    volumes: ["policy-data:/data"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+volumes:
+  policy-data:
