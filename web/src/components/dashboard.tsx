@@ -459,13 +459,63 @@ export function Dashboard() {
                 </label>
               ) : null}
             </section>
+            <section>
+              <h2>Add a home-network device</h2>
+              <p>
+                For TVs, consoles and speakers that cannot run the app. Reserve
+                its address in your router, then run the gateway on your home
+                network as its DNS server (and router, for time limits and
+                pause).
+              </p>
+              <form
+                className="enrollment"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const form = e.currentTarget,
+                    data = new FormData(form);
+                  act(async () => {
+                    await save("/api/devices/home", {
+                      name: data.get("name"),
+                      ip: data.get("ip"),
+                      profile_id: Number(data.get("profile_id")),
+                    });
+                    form.reset();
+                  });
+                }}
+              >
+                <label>
+                  Device name
+                  <input name="name" required maxLength={80} />
+                </label>
+                <label>
+                  Home-network IPv4 address
+                  <input
+                    name="ip"
+                    required
+                    inputMode="decimal"
+                    placeholder="192.168.1.50"
+                  />
+                </label>
+                <label>
+                  Home device profile
+                  <select name="profile_id" required>
+                    {state.profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="primary">Add home device</button>
+              </form>
+            </section>
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
                     <th>Device</th>
                     <th>Profile</th>
-                    <th>VPN address</th>
+                    <th>Address</th>
                     <th>Last active</th>
                     <th>Location</th>
                     <th>Controls</th>
@@ -511,10 +561,32 @@ export function Dashboard() {
                           ))}
                         </select>
                       </td>
-                      <td>{d.ip}</td>
-                      <td>{d.last_seen ? ago(d.last_seen) : "Never"}</td>
                       <td>
-                        {d.location ? (
+                        {d.ip}
+                        <small>
+                          {d.kind === "home" ? "Home network" : "VPN"}
+                        </small>
+                      </td>
+                      <td>
+                        {d.last_seen ? ago(d.last_seen) : "Never"}
+                        {d.diagnostics?.issues.length ? (
+                          <ul
+                            className="issues"
+                            aria-label={`${d.name} health`}
+                          >
+                            {d.diagnostics.issues.map((i) => (
+                              <li key={i.code} className={i.severity}>
+                                {i.message}
+                                {i.action ? <small>{i.action}</small> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </td>
+                      <td>
+                        {d.kind === "home" ? (
+                          <small>Not available</small>
+                        ) : d.location ? (
                           <a
                             href={`https://www.openstreetmap.org/?mlat=${d.location.latitude}&mlon=${d.location.longitude}#map=16/${d.location.latitude}/${d.location.longitude}`}
                             target="_blank"
@@ -532,13 +604,17 @@ export function Dashboard() {
                         ) : null}
                       </td>
                       <td>
-                        <button
-                          onClick={() =>
-                            act(() => save("/api/devices/locate", { ip: d.ip }))
-                          }
-                        >
-                          Locate
-                        </button>
+                        {d.kind === "home" ? null : (
+                          <button
+                            onClick={() =>
+                              act(() =>
+                                save("/api/devices/locate", { ip: d.ip }),
+                              )
+                            }
+                          >
+                            Locate
+                          </button>
+                        )}
                         <button
                           onClick={() =>
                             act(() =>
@@ -564,7 +640,9 @@ export function Dashboard() {
                           onClick={() => {
                             if (
                               confirm(
-                                `Revoke ${d.name}'s VPN and device token?`,
+                                d.kind === "home"
+                                  ? `Stop managing ${d.name}?`
+                                  : `Revoke ${d.name}'s VPN and device token?`,
                               )
                             )
                               act(() =>
@@ -572,7 +650,7 @@ export function Dashboard() {
                               );
                           }}
                         >
-                          Revoke
+                          {d.kind === "home" ? "Remove" : "Revoke"}
                         </button>
                       </td>
                     </tr>

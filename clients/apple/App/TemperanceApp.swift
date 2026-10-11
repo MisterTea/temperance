@@ -1,5 +1,6 @@
 import SwiftUI
 import NetworkExtension
+import UserNotifications
 import WireGuardKit
 
 final class NoRedirect: NSObject, URLSessionTaskDelegate {
@@ -9,6 +10,8 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
     @Published var status = "Enroll to install your family's VPN."
     @Published var child: ChildStatus?
     @Published var busy = false
+    @Published var health: [Diagnostic] = []
+    private var reported: [String]?
     private var connected = false
     private var manager: NETunnelProviderManager?
     private let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
@@ -58,7 +61,31 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
             status = "Policy \(next.state!.version)"
             alerts.forEach(ChildNotifier.post)
             if latest.locationRequested { try await shareLocation(next) }
-        } catch { status = "Policy refresh unavailable; existing VPN remains configured." }
+            await checkHealth(next, policyReachable: true)
+        } catch {
+            status = "Policy refresh unavailable; existing VPN remains configured."
+            if let identity = try? Vault.load() { await checkHealth(identity, policyReachable: false) }
+        }
+    }
+    /// Gathers platform facts; the shared core decides what they mean. Reports changes to parents.
+    private func checkHealth(_ identity: Identity, policyReachable: Bool) async {
+        let identifier = Bundle.main.object(forInfoDictionaryKey: "TunnelBundleIdentifier") as? String
+        let managers = (try? await NETunnelProviderManager.loadAllFromPreferences()) ?? []
+        let manager = managers.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == identifier }
+        let notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        let facts = DeviceFacts(
+            vpnPermission: manager?.isEnabled ?? false,
+            tunnelUp: manager?.connection.status == .connected,
+            secondsSinceHandshake: nil,
+            connectivity: nil,
+            policyReachable: policyReachable,
+            notificationsAllowed: notifications == .notDetermined ? nil : notifications == .authorized || notifications == .provisional,
+            locationAllowed: location.allowed,
+            portalSignInUntil: nil)
+        health = diagnose(facts: facts, now: now())
+        let codes = health.map(\.code)
+        guard policyReachable, codes != reported, let request = try? diagnosticsRequest(identity: identity, diagnostics: health) else { return }
+        if let (statusCode, body) = try? await send(request), (try? parseOk(status: statusCode, body: body)) != nil { reported = codes }
     }
     private func shareLocation(_ identity: Identity) async throws {
         let (fix, reason) = await location.currentLocation()
@@ -117,6 +144,12 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
                         Text(child.detail)
                         Text(child.remainingMinutes.map { "\($0) min left today" } ?? "No daily limit")
                         if let next = child.nextChange { Text(next).foregroundStyle(.secondary) }
+                        ForEach(client.health, id: \.code) { issue in
+                            VStack(alignment: .leading) {
+                                Text(issue.message).bold()
+                                Text(issue.action).font(.callout).foregroundStyle(.secondary)
+                            }.accessibilityElement(children: .combine)
+                        }
                         if child.pendingRequest {
                             Text("Your request for more time is waiting for a parent.")
                         } else if child.canRequestTime {

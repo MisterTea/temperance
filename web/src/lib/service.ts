@@ -17,6 +17,7 @@ import {
 const now = () => Math.floor(Date.now() / 1000);
 const publicDevice = (d: Device) => ({
   id: d.id,
+  kind: d.kind ?? ("vpn" as const),
   ip: d.ip,
   name: d.name,
   profile_id: d.profile_id,
@@ -25,6 +26,7 @@ const publicDevice = (d: Device) => ({
   last_seen: d.last_seen,
   location: d.location,
   location_requested: d.location_requested,
+  diagnostics: d.diagnostics,
 });
 export function prune(state: State, at = now()) {
   const cutoff = localTime(at - state.retention_days * 86400, timezone()).day;
@@ -154,8 +156,51 @@ export async function issueCode(state: State, id: number) {
   prune(state);
   return { code, expires_in: 600 };
 }
+export function isHomeAddress(ip: string) {
+  const parts = ip.split(".");
+  if (
+    parts.length !== 4 ||
+    parts.some((p) => !/^\d{1,3}$/.test(p) || Number(p) > 255)
+  )
+    return false;
+  const [a, b, c, d] = parts.map(Number);
+  if (d === 0 || d === 255 || (a === 10 && b === 77 && c === 0)) return false;
+  return (
+    a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+  );
+}
+const homeInput = z.object({
+  name: z.string().trim().min(1).max(80),
+  ip: z
+    .string()
+    .trim()
+    .refine(
+      isHomeAddress,
+      "Use the device's private home-network IPv4 address",
+    ),
+  profile_id: z.number().int().positive(),
+});
+export function addHomeDevice(state: State, input: unknown) {
+  const data = homeInput.parse(input);
+  profile(state, data.profile_id);
+  if (state.devices.some((d) => d.ip === data.ip && !d.revoked))
+    throw new Error("A device already uses that address");
+  state.devices = state.devices.filter((d) => d.ip !== data.ip);
+  state.devices.push({
+    id: crypto.randomUUID(),
+    kind: "home",
+    ...data,
+    public_key: "",
+    token_hash: "",
+    revoked: false,
+    paused: false,
+    managed: true,
+  });
+  changed(state, "new_device", `${data.name} added on the home network`);
+  return snapshot(state);
+}
 const deviceInput = z.object({
-  ip: z.string().regex(/^10\.77\.0\.(?:\d{1,3})$/),
+  ip: z.string().regex(/^(?:\d{1,3}\.){3}\d{1,3}$/),
   name: z.string().trim().min(1).max(80),
   profile_id: z.number().int().positive(),
   paused: z.boolean().optional(),
@@ -167,6 +212,7 @@ export function saveDevice(state: State, input: unknown) {
   const device = state.devices.find((d) => d.ip === data.ip && !d.revoked);
   if (!device) throw new Error("Enroll a VPN device first");
   Object.assign(device, data);
+  if (device.kind === "home") delete device.location_requested;
   changed(state, "device", `Device ${device.name} updated`);
   return snapshot(state);
 }
@@ -234,6 +280,8 @@ const locationPending = (device: Device, at = now()) =>
 export function requestLocation(state: State, ip: string) {
   const device = state.devices.find((d) => d.ip === ip && !d.revoked);
   if (!device) throw new Error("Device does not exist");
+  if (device.kind === "home")
+    throw new Error("Home devices cannot share a location");
   device.location_requested = now();
   event(state, "location", `Location requested from ${device.name}`);
   return snapshot(state);
@@ -261,6 +309,26 @@ export function reportLocation(state: State, device: Device, input: unknown) {
   }
   device.location = { ...data, at: now() };
   event(state, "location", `${device.name} shared its location`);
+  return { ok: true };
+}
+const issueSchema = z.object({
+  code: z.string().regex(/^[a-z_]{1,40}$/),
+  severity: z.enum(["error", "warning", "info"]),
+  message: z.string().trim().min(1).max(120),
+  action: z.string().trim().max(200).default(""),
+});
+const diagnosticsInput = z.object({ issues: z.array(issueSchema).max(10) });
+export function reportDiagnostics(
+  state: State,
+  device: Device,
+  input: unknown,
+) {
+  const { issues } = diagnosticsInput.parse(input);
+  const before = new Set(device.diagnostics?.issues.map((i) => i.code));
+  for (const issue of issues)
+    if (issue.severity !== "info" && !before.has(issue.code))
+      event(state, "device_health", `${device.name}: ${issue.message}`);
+  device.diagnostics = { at: now(), issues };
   return { ok: true };
 }
 export const GATEWAY_HEARTBEAT = 60;
@@ -320,11 +388,20 @@ export function gatewayState(state: State, at = now()) {
     policy_schema: 2,
     offline_grace_seconds: state.offline_grace_seconds,
     peers: state.devices
-      .filter((d) => !d.revoked)
+      .filter((d) => !d.revoked && d.kind !== "home")
       .map((d) => ({
         id: d.id,
         ip: d.ip,
         public_key: d.public_key,
+        profile_id: d.profile_id,
+        paused: d.paused,
+        managed: d.managed,
+      })),
+    lan_devices: state.devices
+      .filter((d) => !d.revoked && d.kind === "home")
+      .map((d) => ({
+        id: d.id,
+        ip: d.ip,
         profile_id: d.profile_id,
         paused: d.paused,
         managed: d.managed,

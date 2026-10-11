@@ -479,15 +479,41 @@ legend {
   font-size: 13px;
   margin-bottom: 24px;
 }
+.issues {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-width: 260px;
+  font-size: 12px;
+}
+.issues li {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 3px solid var(--muted);
+  overflow-wrap: anywhere;
+}
+.issues li.error {
+  border-color: #a04934;
+  color: #a04934;
+}
+.issues li.warning {
+  border-color: #c88a2c;
+}
+.issues small {
+  margin-top: 2px;
+}
 .danger {
   background: white;
   color: #a04934;
   border: 1px solid #e8c3b8;
 }
 .inline-name {
-  min-width: 0;
+  min-width: 9em;
   width: 100%;
   max-width: 220px;
+}
+td select {
+  min-width: 8em;
 }
 .comparison {
   display: grid;

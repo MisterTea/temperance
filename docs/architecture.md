@@ -47,11 +47,16 @@ All JSON writes are bounded to 64 KiB. Production URLs must use HTTPS. Clients v
 | GET | `/api/state` | Parent | Dashboard configuration and usage |
 | POST | `/api/profiles` | Admin | Create/update policy, increment revision |
 | POST | `/api/devices` | Admin | Assign/change device profile |
-| POST | `/api/devices/delete` | Admin | Revoke enrolled peer and token |
+| POST | `/api/devices/delete` | Admin | Revoke enrolled peer and token, or remove a home-network device |
+| POST | `/api/devices/home` | Admin | `{name,ip,profile_id}` → register a TV/console by its reserved LAN IPv4 |
+| POST | `/api/devices/locate` | Admin | Ask a consenting device for its location once |
 | POST | `/api/enrollment` | Admin | `{profile_id}` → short-lived one-use code |
 | POST | `/v1/enroll` | Enrollment code | `{code,name,public_key}` → device token/state |
 | GET | `/v1/device/state` | Device bearer | Its own policy and VPN provisioning |
-| GET | `/v1/gateway/state` | Gateway bearer | Policies and active peers |
+| POST | `/v1/device/requests` | Device bearer | Ask parents for more time |
+| POST | `/v1/device/location` | Device bearer | Answer a pending location request |
+| POST | `/v1/device/diagnostics` | Device bearer | `{issues:[{code,severity,message,action}]}` → device health on the dashboard |
+| GET | `/v1/gateway/state` | Gateway bearer | Policies, VPN `peers`, and home-network `lan_devices` |
 | POST | `/v1/gateway/activity` | Gateway bearer | `{active_devices:[device_id]}` → minute accounting |
 | GET | `/healthz` | None | Liveness only |
 

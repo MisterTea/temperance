@@ -12,28 +12,81 @@ use temperance_core::HttpRequest;
 
 use app::{App, Transport, TunnelControl};
 
-struct Https(ureq::Agent);
+/// HTTPS-only agent for the policy service, plus a plain-HTTP agent used only for
+/// the captive-portal probe.
+struct Https {
+    policy: ureq::Agent,
+    probe: ureq::Agent,
+}
+
+fn run(
+    agent: &ureq::Agent,
+    request: &HttpRequest,
+    limit: u64,
+) -> Result<(u16, Option<String>, String), String> {
+    let mut builder = ureq::http::Request::builder()
+        .method(request.method.as_str())
+        .uri(&request.url);
+    for header in &request.headers {
+        builder = builder.header(&header.name, &header.value);
+    }
+    let req = builder
+        .body(request.body.clone().unwrap_or_default())
+        .map_err(|e| e.to_string())?;
+    let mut response = agent.run(req).map_err(|e| e.to_string())?;
+    let status = response.status().as_u16();
+    let location = response
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let body = response
+        .body_mut()
+        .with_config()
+        .limit(limit)
+        .read_to_string()
+        .unwrap_or_default();
+    Ok((status, location, body))
+}
 
 impl Transport for Https {
     fn send(&self, request: &HttpRequest) -> Result<(u16, String), String> {
-        let mut builder = ureq::http::Request::builder()
-            .method(request.method.as_str())
-            .uri(&request.url);
-        for header in &request.headers {
-            builder = builder.header(&header.name, &header.value);
-        }
-        let req = builder
-            .body(request.body.clone().unwrap_or_default())
-            .map_err(|e| e.to_string())?;
-        let mut response = self.0.run(req).map_err(|e| e.to_string())?;
-        let status = response.status().as_u16();
-        let body = response
-            .body_mut()
-            .with_config()
-            .limit(1 << 20)
-            .read_to_string()
-            .map_err(|e| e.to_string())?;
-        Ok((status, body))
+        run(&self.policy, request, 1 << 20).map(|(status, _, body)| (status, body))
+    }
+    fn probe(&self, request: &HttpRequest) -> Result<(u16, Option<String>, String), String> {
+        run(&self.probe, request, 64 << 10)
+    }
+}
+
+fn agent(timeout: u64, https_only: bool) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(timeout)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .https_only(https_only)
+        .build()
+        .into()
+}
+
+fn wireguard_tool(name: &str) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(std::env::var("ProgramFiles").unwrap_or_default())
+            .join("WireGuard")
+            .join(name)
+    } else {
+        PathBuf::from(name)
+    }
+}
+
+fn command_result(output: std::io::Result<std::process::Output>) -> Result<(), String> {
+    let output = output.map_err(|e| format!("WireGuard: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "WireGuard: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
     }
 }
 
@@ -56,27 +109,50 @@ impl TunnelControl for WireGuard {
         }
     }
     fn up(&self, config: &Path) -> Result<(), String> {
-        let output = if cfg!(windows) {
-            let program = PathBuf::from(std::env::var("ProgramFiles").unwrap_or_default())
-                .join("WireGuard")
-                .join("wireguard.exe");
-            Command::new(program)
+        command_result(if cfg!(windows) {
+            Command::new(wireguard_tool("wireguard.exe"))
                 .arg("/installtunnelservice")
                 .arg(config)
                 .output()
         } else {
             Command::new("wg-quick").arg("up").arg(config).output()
-        }
-        .map_err(|e| format!("WireGuard: {e}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "WireGuard: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
+        })
     }
+    fn down(&self, config: &Path) -> Result<(), String> {
+        command_result(if cfg!(windows) {
+            Command::new(wireguard_tool("wireguard.exe"))
+                .args(["/uninstalltunnelservice", "temperance"])
+                .output()
+        } else {
+            Command::new("wg-quick").arg("down").arg(config).output()
+        })
+    }
+    fn handshake_age(&self) -> Option<u64> {
+        let output = Command::new(wireguard_tool(if cfg!(windows) { "wg.exe" } else { "wg" }))
+            .args(["show", "temperance", "latest-handshakes"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs();
+        handshake_age(&String::from_utf8_lossy(&output.stdout), now)
+    }
+}
+
+/// Parses `wg show <if> latest-handshakes` ("<peer key>\t<unix seconds>" per line).
+fn handshake_age(output: &str, now: u64) -> Option<u64> {
+    let latest: u64 = output
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1)?.parse().ok())
+        .max()?;
+    // Zero means no handshake has ever completed.
+    Some(if latest == 0 {
+        u64::MAX
+    } else {
+        now.saturating_sub(latest)
+    })
 }
 
 fn data_dir() -> PathBuf {
@@ -101,15 +177,12 @@ fn main() {
     std::fs::create_dir_all(&dir).expect("create data directory");
     let mut nonce = [0u8; 32];
     OsRng.fill_bytes(&mut nonce);
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(15)))
-        .max_redirects(0)
-        .http_status_as_error(false)
-        .https_only(true)
-        .build()
-        .into();
-    let app = App::new(dir, URL_SAFE_NO_PAD.encode(nonce), Https(agent), WireGuard)
-        .expect("load identity");
+    let transport = Https {
+        policy: agent(15, true),
+        probe: agent(5, false),
+    };
+    let app =
+        App::new(dir, URL_SAFE_NO_PAD.encode(nonce), transport, WireGuard).expect("load identity");
     let app = Arc::new(Mutex::new(app));
     let server = tiny_http::Server::http("127.0.0.1:0").expect("bind localhost");
     let host = server
@@ -120,12 +193,19 @@ fn main() {
     println!("Temperance: http://{host}");
 
     let background = Arc::clone(&app);
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(30));
-        let mut app = background.lock().unwrap();
-        if app.identity.is_some() {
-            if let Err(e) = app.refresh() {
-                app.status = format!("{e}; existing VPN remains installed");
+    std::thread::spawn(move || {
+        let mut tick = 0u64;
+        loop {
+            tick += 1;
+            std::thread::sleep(Duration::from_secs(5));
+            let mut app = background.lock().unwrap();
+            if let Err(e) = app.check_portal() {
+                app.status = e;
+            }
+            if tick % 6 == 0 && app.identity.is_some() && app.portal_until.is_none() {
+                if let Err(e) = app.refresh() {
+                    app.status = format!("{e}; existing VPN remains installed");
+                }
             }
         }
     });

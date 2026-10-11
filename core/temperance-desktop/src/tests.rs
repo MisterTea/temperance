@@ -11,10 +11,12 @@ const SERVER_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 const HOST: &str = "127.0.0.1:4000";
 
 type Replies = Rc<RefCell<VecDeque<Result<(u16, String), String>>>>;
+type Probes = Rc<RefCell<VecDeque<(u16, Option<String>, String)>>>;
 
 #[derive(Clone, Default)]
 struct Fake {
     replies: Replies,
+    probes: Probes,
     sent: Rc<RefCell<Vec<HttpRequest>>>,
 }
 impl Transport for Fake {
@@ -25,10 +27,19 @@ impl Transport for Fake {
             .pop_front()
             .unwrap_or(Err("no reply".into()))
     }
+    fn probe(&self, request: &HttpRequest) -> Result<(u16, Option<String>, String), String> {
+        assert!(request.url.starts_with("http://"));
+        self.probes
+            .borrow_mut()
+            .pop_front()
+            .ok_or_else(|| "timed out".into())
+    }
 }
 #[derive(Clone, Default)]
 struct FakeTunnel {
     up: Rc<RefCell<bool>>,
+    age: Rc<RefCell<Option<u64>>>,
+    downs: Rc<RefCell<u32>>,
     fail: bool,
 }
 impl TunnelControl for FakeTunnel {
@@ -40,8 +51,17 @@ impl TunnelControl for FakeTunnel {
         *self.up.borrow_mut() = true;
         Ok(())
     }
+    fn down(&self, config: &Path) -> Result<(), String> {
+        assert!(config.ends_with("temperance.conf"));
+        *self.downs.borrow_mut() += 1;
+        *self.up.borrow_mut() = false;
+        Ok(())
+    }
     fn is_up(&self) -> bool {
         *self.up.borrow()
+    }
+    fn handshake_age(&self) -> Option<u64> {
+        *self.age.borrow()
     }
 }
 
@@ -322,8 +342,13 @@ fn shows_alerts_and_declines_location_requests() {
         .borrow_mut()
         .extend([Ok((200, asked)), Ok((200, r#"{"ok":true}"#.to_string()))]);
     assert_eq!(post(&mut app, "/refresh", ""), 303);
-    let sent = fake.sent.borrow().last().unwrap().clone();
-    assert_eq!(sent.url, "https://family.example/v1/device/location");
+    let sent = fake
+        .sent
+        .borrow()
+        .iter()
+        .find(|r| r.url == "https://family.example/v1/device/location")
+        .cloned()
+        .unwrap();
     assert!(sent.body.unwrap().contains("cannot share its location"));
     assert!(app
         .render()
@@ -342,4 +367,183 @@ fn shows_alerts_and_declines_location_requests() {
     ]);
     post(&mut app, "/refresh", "");
     assert_eq!(app.status, "No location request is pending");
+}
+
+fn enrolled() -> (App<Fake, FakeTunnel>, Fake, FakeTunnel, tempfile::TempDir) {
+    let (mut app, fake, tunnel, dir) = app();
+    fake.replies
+        .borrow_mut()
+        .push_back(Ok((200, state(1, "allowed", ""))));
+    post(
+        &mut app,
+        "/enroll",
+        "service=https%3A%2F%2Ffamily.example&code=abc&name=Laptop",
+    );
+    (app, fake, tunnel, dir)
+}
+
+fn reports(fake: &Fake) -> Vec<serde_json::Value> {
+    fake.sent
+        .borrow()
+        .iter()
+        .filter(|r| r.url.ends_with("/v1/device/diagnostics"))
+        .map(|r| serde_json::from_str(r.body.as_deref().unwrap()).unwrap())
+        .collect()
+}
+
+#[test]
+fn reports_device_health_only_when_it_changes() {
+    let (mut app, fake, tunnel, _dir) = enrolled();
+    let ok = || Ok((200, r#"{"ok":true}"#.to_string()));
+    fake.replies
+        .borrow_mut()
+        .extend([Ok((200, state(2, "allowed", ""))), ok()]);
+    post(&mut app, "/refresh", "");
+    assert_eq!(reports(&fake)[0]["issues"][0]["code"], "tunnel_down");
+    assert!(app.render().contains("The VPN is not running"));
+
+    // Unchanged issues are not re-sent.
+    fake.replies
+        .borrow_mut()
+        .push_back(Ok((200, state(3, "allowed", ""))));
+    post(&mut app, "/refresh", "");
+    assert_eq!(reports(&fake).len(), 1);
+
+    fake.replies
+        .borrow_mut()
+        .extend([Ok((200, state(4, "allowed", ""))), ok()]);
+    post(&mut app, "/connect", "");
+    assert!(*tunnel.up.borrow());
+    assert_eq!(reports(&fake)[1]["issues"], serde_json::json!([]));
+    assert!(!app.render().contains("Device health"));
+
+    // Issues found while the service is unreachable cannot be reported.
+    *tunnel.age.borrow_mut() = Some(20);
+    fake.replies
+        .borrow_mut()
+        .push_back(Err("connection refused".into()));
+    post(&mut app, "/refresh", "");
+    assert!(app.render().contains("Cannot reach the policy service"));
+    assert_eq!(reports(&fake).len(), 2);
+
+    // A failed report is retried on the next refresh.
+    *tunnel.age.borrow_mut() = Some(600);
+    fake.replies.borrow_mut().extend([
+        Ok((200, state(5, "allowed", ""))),
+        Ok((500, "{}".into())),
+        Ok((200, state(6, "allowed", ""))),
+        ok(),
+    ]);
+    post(&mut app, "/refresh", "");
+    post(&mut app, "/refresh", "");
+    let sent = reports(&fake);
+    assert_eq!(sent.len(), 4);
+    assert_eq!(sent[3]["issues"][0]["code"], "gateway_unreachable");
+}
+
+#[test]
+fn wifi_sign_in_lowers_the_tunnel_only_while_a_portal_blocks_it() {
+    let (mut app, fake, tunnel, _dir) = enrolled();
+    fake.replies
+        .borrow_mut()
+        .push_back(Ok((200, state(2, "allowed", ""))));
+    post(&mut app, "/connect", "");
+    *tunnel.age.borrow_mut() = Some(30);
+    assert_eq!(post(&mut app, "/sign-in", ""), 303);
+    assert_eq!(
+        app.status,
+        "This network is working through the VPN; no Wi-Fi sign-in is needed."
+    );
+    assert_eq!(*tunnel.downs.borrow(), 0);
+
+    // The gateway is unreachable: offer sign-in.
+    *tunnel.age.borrow_mut() = Some(600);
+    fake.replies.borrow_mut().push_back(Err("timed out".into()));
+    post(&mut app, "/refresh", "");
+    let page = app.render();
+    assert!(page.contains("cannot reach your family&#39;s gateway"));
+    assert!(page.contains("Sign in to Wi-Fi"));
+
+    fake.probes.borrow_mut().push_back((
+        302,
+        Some("http://portal.example/login?a=1&b=2".into()),
+        String::new(),
+    ));
+    post(&mut app, "/sign-in", "");
+    assert_eq!(*tunnel.downs.borrow(), 1);
+    assert!(!*tunnel.up.borrow());
+    assert_eq!(
+        app.status,
+        "Protection is paused while you sign in to this Wi-Fi."
+    );
+    let page = app.render();
+    assert!(page.contains(r#"href="http://portal.example/login?a=1&amp;b=2""#));
+    assert!(page.contains("Protection is paused to sign in to Wi-Fi"));
+    assert!(!page.contains("The VPN is not running"));
+    assert!(!page.contains(r#"action="/sign-in""#));
+    // Pressing again does not extend the window.
+    let until = app.portal_until;
+    post(&mut app, "/sign-in", "");
+    assert_eq!(app.portal_until, until);
+
+    // Still behind the portal: stay lowered. Once online: restore immediately.
+    fake.probes
+        .borrow_mut()
+        .push_back((200, None, "<html>Accept terms</html>".into()));
+    app.check_portal().unwrap();
+    assert!(!*tunnel.up.borrow());
+    fake.probes
+        .borrow_mut()
+        .push_back((204, None, String::new()));
+    app.check_portal().unwrap();
+    assert!(*tunnel.up.borrow());
+    assert!(app.portal_until.is_none());
+    app.check_portal().unwrap();
+
+    // Parents learn about the sign-in on the next successful refresh.
+    *tunnel.age.borrow_mut() = Some(10);
+    fake.replies.borrow_mut().extend([
+        Ok((200, state(3, "allowed", ""))),
+        Ok((200, r#"{"ok":true}"#.to_string())),
+    ]);
+    post(&mut app, "/refresh", "");
+    let last = reports(&fake).pop().unwrap();
+    assert_eq!(last["issues"][0]["code"], "portal_sign_in");
+    assert_eq!(
+        last["issues"][0]["message"],
+        "Protection was recently paused to sign in to Wi-Fi"
+    );
+}
+
+#[test]
+fn wifi_sign_in_window_expires_and_restores_protection() {
+    let (mut app, fake, tunnel, _dir) = enrolled();
+    fake.replies
+        .borrow_mut()
+        .push_back(Ok((200, state(2, "allowed", ""))));
+    post(&mut app, "/connect", "");
+    *tunnel.age.borrow_mut() = Some(u64::MAX);
+    app.sign_in_to_network().unwrap();
+    assert!(!*tunnel.up.borrow());
+    assert!(app.render().contains("No internet connection"));
+    app.portal_until = Some(0);
+    app.check_portal().unwrap();
+    assert!(*tunnel.up.borrow());
+    assert!(app.portal_until.is_none());
+}
+
+#[test]
+fn platform_helpers_parse_handshakes_and_command_results() {
+    use crate::{command_result, handshake_age, wireguard_tool};
+    assert_eq!(handshake_age("key=\t1000\n", 1030), Some(30));
+    assert_eq!(handshake_age("a\t0\n", 1030), Some(u64::MAX));
+    assert_eq!(handshake_age("a\t900\nb\t1000\n", 1030), Some(30));
+    assert_eq!(handshake_age("", 1030), None);
+    assert_eq!(handshake_age("a\t2000\n", 1030), Some(0));
+    if !cfg!(windows) {
+        assert_eq!(wireguard_tool("wg"), std::path::PathBuf::from("wg"));
+        assert!(command_result(std::process::Command::new("true").output()).is_ok());
+        assert!(command_result(std::process::Command::new("false").output()).is_err());
+    }
+    assert!(command_result(Err(std::io::Error::other("missing"))).is_err());
 }

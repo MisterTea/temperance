@@ -9,6 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.VpnService
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -24,10 +27,15 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.net.ssl.HttpsURLConnection
 import uniffi.temperance_core.ChildStatus
+import uniffi.temperance_core.Connectivity
+import uniffi.temperance_core.DeviceFacts
+import uniffi.temperance_core.Diagnostic
 import uniffi.temperance_core.HttpRequest
 import uniffi.temperance_core.Identity
 import uniffi.temperance_core.childAlerts
 import uniffi.temperance_core.childStatus
+import uniffi.temperance_core.diagnose
+import uniffi.temperance_core.diagnosticsRequest
 import uniffi.temperance_core.locationRequest
 import uniffi.temperance_core.locationUnavailableRequest
 import uniffi.temperance_core.parseOk
@@ -117,7 +125,7 @@ class TemperanceApp : Application() {
     }
     fun refresh() {
         val identity = vault.load()?.takeIf { it.state != null } ?: return
-        val (code, body) = send(stateRequest(identity))
+        val (code, body) = try { send(stateRequest(identity)) } catch (e: Exception) { checkHealth(identity, false); throw e }
         val latest = parseDeviceState(code, body)
         val alerts = childAlerts(identity.state, latest, now())
         val next = refreshedIdentity(identity, latest, connected)
@@ -126,6 +134,44 @@ class TemperanceApp : Application() {
         status = "Policy ${next.state!!.version}"
         alerts.forEach(::notifyChild)
         if (latest.locationRequested) shareLocation(next)
+        checkHealth(next, true)
+    }
+
+    @Volatile var health: List<Diagnostic> = emptyList()
+    private var reported: List<String>? = null
+
+    private fun locationGranted() = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        .any { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+
+    /** Gathers platform facts; the shared core decides what they mean. Reports changes to parents. */
+    private fun checkHealth(identity: Identity, policyReachable: Boolean) {
+        val handshake = try {
+            if (connected) backend.getStatistics(tunnel).let { stats -> stats.peers().maxOfOrNull { stats.peer(it)?.latestHandshakeEpochMillis() ?: 0L } } else null
+        } catch (_: Exception) { null }
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        @Suppress("DEPRECATION") val networks = connectivity.allNetworks.mapNotNull { connectivity.getNetworkCapabilities(it) }.filter { !it.hasTransport(NetworkCapabilities.TRANSPORT_VPN) }
+        val facts = DeviceFacts(
+            vpnPermission = VpnService.prepare(this) == null,
+            tunnelUp = connected,
+            secondsSinceHandshake = handshake?.let { if (it == 0L) ULong.MAX_VALUE else ((System.currentTimeMillis() - it) / 1000).coerceAtLeast(0).toULong() },
+            connectivity = when {
+                networks.any { it.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL) } -> Connectivity.CaptivePortal(null)
+                networks.none { it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) } -> Connectivity.Offline
+                else -> null
+            },
+            policyReachable = policyReachable,
+            notificationsAllowed = getSystemService(NotificationManager::class.java).areNotificationsEnabled(),
+            locationAllowed = locationGranted(),
+            portalSignInUntil = null,
+        )
+        health = diagnose(facts, now())
+        val codes = health.map { it.code }
+        if (!policyReachable || codes == reported) return
+        try {
+            val (code, body) = send(diagnosticsRequest(identity, health))
+            parseOk(code, body)
+            reported = codes
+        } catch (_: Exception) {}
     }
 
     private fun notifyChild(message: String) {
@@ -136,9 +182,7 @@ class TemperanceApp : Application() {
 
     /** Answers a parent's one-time request with the freshest fix the OS already has. */
     private fun shareLocation(identity: Identity) {
-        val granted = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-            .any { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
-        val request = if (!granted) {
+        val request = if (!locationGranted()) {
             locationUnavailableRequest(identity, "location permission not granted")
         } else {
             val manager = getSystemService(LocationManager::class.java)

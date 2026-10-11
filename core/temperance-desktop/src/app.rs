@@ -4,16 +4,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use temperance_core::{self as core, CoreError, HttpRequest, Identity};
+use temperance_core::{self as core, Connectivity, CoreError, Diagnostic, HttpRequest, Identity};
 
 pub trait Transport {
     /// Executes a request and returns (status, body). Redirects must not be followed.
     fn send(&self, request: &HttpRequest) -> Result<(u16, String), String>;
+    /// Sends the plain-HTTP captive-portal probe; returns (status, Location header, body).
+    fn probe(&self, request: &HttpRequest) -> Result<(u16, Option<String>, String), String>;
 }
 
 pub trait TunnelControl {
     fn up(&self, config: &Path) -> Result<(), String>;
+    fn down(&self, config: &Path) -> Result<(), String>;
     fn is_up(&self) -> bool;
+    /// Seconds since the last WireGuard handshake; `None` if unknown.
+    fn handshake_age(&self) -> Option<u64>;
 }
 
 pub struct App<T: Transport, W: TunnelControl> {
@@ -24,6 +29,13 @@ pub struct App<T: Transport, W: TunnelControl> {
     pub connected: bool,
     /// Recent child alerts, newest first, shown in the local UI.
     pub alerts: Vec<String>,
+    pub diagnostics: Vec<Diagnostic>,
+    /// Deadline while the tunnel is lowered for a Wi-Fi sign-in page.
+    pub portal_until: Option<i64>,
+    portal_ended: Option<i64>,
+    connectivity: Option<Connectivity>,
+    policy_reachable: bool,
+    reported: Option<Vec<String>>,
     transport: T,
     tunnel: W,
 }
@@ -89,9 +101,101 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             identity,
             connected: false,
             alerts: vec![],
+            diagnostics: vec![],
+            portal_until: None,
+            portal_ended: None,
+            connectivity: None,
+            policy_reachable: true,
+            reported: None,
             transport,
             tunnel,
         })
+    }
+
+    fn update_diagnostics(&mut self) {
+        let facts = core::DeviceFacts {
+            vpn_permission: None,
+            tunnel_up: self.tunnel.is_up(),
+            seconds_since_handshake: self.tunnel.handshake_age(),
+            connectivity: self.connectivity.clone(),
+            policy_reachable: self.policy_reachable,
+            notifications_allowed: None,
+            location_allowed: None,
+            portal_sign_in_until: self.portal_until.or(self.portal_ended),
+        };
+        self.diagnostics = core::diagnose(facts, now());
+    }
+
+    /// Sends diagnostics to parents when the set of issues changes; failures retry next refresh.
+    fn report_diagnostics(&mut self) {
+        let codes: Vec<String> = self.diagnostics.iter().map(|d| d.code.clone()).collect();
+        if self.reported.as_ref() == Some(&codes) {
+            return;
+        }
+        let Some(identity) = self.identity.clone() else {
+            return;
+        };
+        let Ok(request) = core::diagnostics_request(identity, self.diagnostics.clone()) else {
+            return;
+        };
+        if let Ok((status, body)) = self.transport.send(&request) {
+            if core::parse_ok(status, body).is_ok() {
+                self.reported = Some(codes);
+            }
+        }
+    }
+
+    fn probe(&mut self) {
+        let (status, location, body) = self
+            .transport
+            .probe(&core::captive_portal_probe())
+            .unwrap_or((0, None, String::new()));
+        self.connectivity = Some(core::parse_captive_portal_probe(status, location, body));
+    }
+
+    /// Lowers the tunnel so a Wi-Fi sign-in page can load. Only allowed when the
+    /// tunnel cannot reach the gateway, and never for longer than the core's limit.
+    pub fn sign_in_to_network(&mut self) -> Result<(), String> {
+        if self.portal_until.is_some() {
+            return Ok(());
+        }
+        let stale = self.tunnel.is_up()
+            && self
+                .tunnel
+                .handshake_age()
+                .is_some_and(|age| age > core::diagnostics::STALE_HANDSHAKE_SECONDS);
+        if !stale {
+            return Err(
+                "This network is working through the VPN; no Wi-Fi sign-in is needed.".into(),
+            );
+        }
+        self.tunnel.down(&self.dir.join("temperance.conf"))?;
+        self.portal_until = Some(now() + core::PORTAL_SIGN_IN_SECONDS);
+        self.check_portal()
+    }
+
+    /// While signing in, restores the tunnel once the network is online or time is up.
+    pub fn check_portal(&mut self) -> Result<(), String> {
+        let Some(until) = self.portal_until else {
+            return Ok(());
+        };
+        if until > now() {
+            self.probe();
+            if self.connectivity != Some(Connectivity::Online) {
+                self.update_diagnostics();
+                return Ok(());
+            }
+        }
+        self.portal_until = None;
+        self.portal_ended = Some(now().min(until));
+        self.connectivity = None;
+        let restored = if self.tunnel.is_up() {
+            Ok(())
+        } else {
+            self.tunnel.up(&self.dir.join("temperance.conf"))
+        };
+        self.update_diagnostics();
+        restored
     }
 
     fn call(&self, request: HttpRequest) -> Result<(u16, String), CoreError> {
@@ -138,9 +242,10 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
 
     pub fn refresh(&mut self) -> Result<(), String> {
         let identity = self.identity.clone().ok_or("Enroll first")?;
-        let (status, body) = self
-            .call(core::state_request(identity.clone()).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+        let reply = self.call(core::state_request(identity.clone()).map_err(|e| e.to_string())?);
+        self.policy_reachable = reply.is_ok();
+        self.update_diagnostics();
+        let (status, body) = reply.map_err(|e| e.to_string())?;
         let latest = core::parse_device_state(status, body).map_err(|e| e.to_string())?;
         let alerts = core::child_alerts(identity.state.clone(), latest.clone(), now());
         let location_requested = latest.location_requested;
@@ -156,6 +261,7 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         if location_requested {
             self.decline_location()?;
         }
+        self.report_diagnostics();
         Ok(())
     }
 
@@ -177,6 +283,8 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             self.tunnel.up(&self.dir.join("temperance.conf"))?;
         }
         self.connected = true;
+        self.update_diagnostics();
+        self.report_diagnostics();
         Ok(())
     }
 
@@ -217,6 +325,7 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
                 ),
                 "/connect" => self.connect(),
                 "/refresh" => self.refresh(),
+                "/sign-in" => self.sign_in_to_network(),
                 "/request" => {
                     self.ask_for_time(&form_value(body, "minutes"), &form_value(body, "message"))
                 }
@@ -224,6 +333,12 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             };
             self.status = match result {
                 Ok(()) if path == "/request" => "Request sent to your parents.".into(),
+                Ok(()) if path == "/sign-in" && self.portal_until.is_some() => {
+                    "Protection is paused while you sign in to this Wi-Fi.".into()
+                }
+                Ok(()) if path == "/sign-in" => {
+                    "This network is online; protection is back on.".into()
+                }
                 Ok(()) => "Ready. Rules are enforced by your family's gateway.".into(),
                 Err(e) => e,
             };
@@ -238,6 +353,45 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             location: None,
             body: self.render(),
         }
+    }
+
+    fn health(&self, hidden: &str) -> String {
+        let items: String = self
+            .diagnostics
+            .iter()
+            .map(|d| {
+                format!(
+                    "<li><strong>{}</strong> {}</li>",
+                    escape(&d.message),
+                    escape(&d.action)
+                )
+            })
+            .collect();
+        let mut html = if items.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<ul aria-label="Device health">{items}</ul>"#)
+        };
+        if let Some(Connectivity::CaptivePortal {
+            login_url: Some(url),
+        }) = &self.connectivity
+        {
+            html += &format!(
+                r#"<p><a href="{0}" target="_blank" rel="noreferrer">Open the Wi-Fi sign-in page</a></p>"#,
+                escape(url)
+            );
+        }
+        let can_sign_in = self.portal_until.is_none()
+            && self
+                .diagnostics
+                .iter()
+                .any(|d| d.code == "gateway_unreachable" || d.code == "captive_portal");
+        if can_sign_in {
+            html += &format!(
+                r#"<form method="post" action="/sign-in">{hidden}<button class="secondary">Sign in to Wi-Fi</button></form>"#
+            );
+        }
+        html
     }
 
     pub fn render(&self) -> String {
@@ -277,8 +431,9 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
                 } else {
                     format!(r#"<ul aria-label="Alerts">{alerts}</ul>"#)
                 };
+                let health = self.health(&hidden);
                 format!(
-                    r#"<h2>{}</h2><p>{}</p>{alerts}<p class="meta">{} · {} · Policy {version} · VPN {}</p>
+                    r#"<h2>{}</h2><p>{}</p>{alerts}{health}<p class="meta">{} · {} · Policy {version} · VPN {}</p>
 <form method="post" action="/connect">{hidden}<button>Install / start VPN</button></form>
 <form method="post" action="/refresh">{hidden}<button class="secondary">Refresh policy</button></form>
 {}"#,

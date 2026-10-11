@@ -34,27 +34,43 @@ def addresses(packet):
     return result
 
 
+def clients(state):
+    """VPN peers plus home-network devices that are enforced by LAN address."""
+    return list(state.get('peers',[]))+list(state.get('lan_devices',[]))
+
+
 class GatewayStore(Store):
-    def __init__(self):
+    def __init__(self,lan_networks=()):
         super().__init__(':memory:')
         self.state=None
         self.destinations={}
         self.history=[]
+        self.lan_networks=[ipaddress.ip_network(n) for n in lan_networks]
+
+    def subject(self,ip):
+        """Return (client, profile). Unregistered home-network addresses follow the Home profile, if any."""
+        client=next((c for c in clients(self.state) if c['ip']==ip),None)
+        profiles={p['id']:p for p in self.state['profiles']}
+        if client:return client,profiles.get(client['profile_id'])
+        if any(ipaddress.ip_address(ip) in n for n in self.lan_networks):
+            return None,profiles.get(self.state.get('home_profile_id'))
+        return None,None
 
     def evaluate(self,ip,host,now=None):
         if not self.state or self.state.get('policy_schema',1)<2:return super().evaluate(ip,host,now)
         now=time.time() if now is None else now
         with self.lock:
-            peer=next((p for p in self.state['peers'] if p['ip']==ip),None)
-            p=next((p for p in self.state['profiles'] if peer and p['id']==peer['profile_id']),None)
-            if not p:return True,'unassigned VPN device'
-            if not peer.get('managed',True):reason='unmanaged'
+            client,p=self.subject(ip)
+            if not p:
+                if not client and self.lan_networks and any(ipaddress.ip_address(ip) in n for n in self.lan_networks):return False,'unmanaged'
+                return True,'unassigned VPN device'
+            if (client and not client.get('managed',True)) or not p.get('managed',True):reason='unmanaged'
             else:
                 reason=domain_reason(p,host,self.state['timezone'],now,self.state.get('paused',False),self.state.get('extra_domains'))
-                if peer.get('paused') and reason!='unmanaged':reason='device pause'
+                if client and client.get('paused') and reason!='unmanaged':reason='device pause'
             blocked=reason not in ('allowed','unmanaged')
-            if reason!='unmanaged' and p.get('filter_level')!='none':
-                self.history.append(dict(id=str(uuid.uuid4()),device_id=peer['id'],at=now,domain=host,blocked=blocked,reason=reason,category=classify(host,self.state.get('extra_domains'))))
+            if client and reason!='unmanaged' and p.get('filter_level')!='none':
+                self.history.append(dict(id=str(uuid.uuid4()),device_id=client['id'],at=now,domain=host,blocked=blocked,reason=reason,category=classify(host,self.state.get('extra_domains'))))
                 self.history=self.history[-500:]
             return blocked,reason
 
@@ -70,9 +86,9 @@ class GatewayStore(Store):
 
     def dns_override(self,ip,host,kind):
         if not self.state or self.state.get('policy_schema',1)<2:return None
-        peer=next((p for p in self.state['peers'] if p['ip']==ip),None)
-        p=next((p for p in self.state['profiles'] if peer and p['id']==peer['profile_id']),None)
+        client,p=self.subject(ip)
         if not p or not p.get('managed',True) or p.get('filter_level')=='none':return None
+        if client and not client.get('managed',True):return None
         if p.get('safe_search') and (host=='google.com' or host.startswith('www.google.') or host=='www.bing.com' or host=='duckduckgo.com'):
             return {'www.bing.com':'strict.bing.com','duckduckgo.com':'safe.duckduckgo.com'}.get(host,'forcesafesearch.google.com')
         if p.get('youtube_restricted') and host in ('youtube.com','www.youtube.com','m.youtube.com','youtubei.googleapis.com','youtube.googleapis.com','www.youtube-nocookie.com'):

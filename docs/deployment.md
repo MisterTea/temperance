@@ -16,6 +16,20 @@ TEMPERANCE_GATEWAY_TOKEN='your-token' python3 -m temperance.gateway \
   --service https://policy.example.com --uplink eth0 --dry-run
 ```
 
+## Home-network devices (TVs, consoles, speakers)
+
+Devices that cannot run the VPN app are added in the dashboard under **Devices → Add a home-network device** with the private IPv4 address you reserved for them in your router's DHCP settings. The gateway enforces them by that address when it also sits on the home LAN:
+
+```bash
+# /etc/temperance/gateway.env
+TEMPERANCE_LAN_ARGS=--lan-interface eth1 --lan-address 192.168.1.2 --lan-network 192.168.1.0/24
+```
+
+- **DNS mode** (hand out `192.168.1.2` as the DNS server in DHCP): the profile's domain rules, categories, SafeSearch/YouTube restrictions, pause, bedtime and schedules apply to name lookups, and history is recorded per device. Devices you have not registered follow the Home/default profile if one is set, otherwise their lookups are forwarded unfiltered.
+- **Router mode** (also make `192.168.1.2` the LAN's default gateway, with `net.ipv4.ip_forward=1`): additionally, forwarded traffic of registered devices is leased like VPN peers. Pause, bedtime, Off Time, daily and category/site budgets, and strict allow-lists stop packets (including existing connections), DNS on port 53 is redirected to the gateway, DNS-over-TLS is blocked, and usage minutes are counted. Temperance masquerades only registered home devices; other LAN traffic keeps your existing NAT and is not touched.
+
+Like VPN peers, home devices fail closed: if the agent stops or its cached policy expires, their internet access through the gateway stops. Remove a device in the dashboard to release it. A device can evade DNS mode with a hard-coded resolver or encrypted DNS; router mode closes plain and TLS DNS, but not DNS-over-HTTPS. The Linux integration test (`tests/integration_linux.py`) exercises router mode with real namespaces.
+
 Do not use the bootstrap script on your development workstation. Do not use the VPN subnet `10.77.0.0/24` anywhere else in the deployment. The numeric public endpoint avoids tunnel startup depending on DNS; the HTTPS hostname must resolve before enrollment. If paused clients must refresh status, serve the policy API on the gateway's HTTPS endpoint; input HTTPS is exempt from forwarding limits, while remote service traffic through the uplink is governed by the pause. Control-plane polling from the gateway host remains independent of child VPN forwarding.
 
 Back up the policy SQLite database using SQLite's online backup API (or stop the service before copying). Retain the server private key separately. Losing the database requires re-enrollment; losing the server key requires new provisioning on clients. Rotate compromised administrator/gateway tokens in their environment files and restart both processes. Revoke individual devices through the dashboard's Remove action.

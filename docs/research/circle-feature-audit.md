@@ -14,14 +14,14 @@ User complaints provide design evidence, not causality: [Reddit's feature survey
 
 | Issue supported by evidence | Temperance mitigation | Completion evidence |
 | --- | --- | --- |
-| Vendor-run VPN/account service can be retired | Self-hosted policy and VPN services; no vendor account/license dependency | Existing source; deployment/recovery audit pending |
-| Product migration can strand configuration | Versioned export/import, portable storage, migration from existing SQLite | Pending |
-| A cloud outage can disable household internet | Locally cached validated policy, offline accounting, explicit bounded outage behavior; expiring local enforcement leases still stop crashes | Pending |
-| Platform/vendor lock-in | Next.js API with persistent SQL storage, Vercel and Cloudflare build recipes, Docker/self-host option | Pending |
-| Schedule discoverability/weekend differences | Visible day selectors, named Off/Focus windows, schedule conflict preview | Pending |
-| Background traffic counted as foreground usage | Explicit network-estimate semantics, category/site attribution, transparent history and diagnostics | Existing total estimate; attribution/diagnostics pending |
-| Network interference/performance complaints | Routed WireGuard rather than ARP interception, bounded logging, gateway health/latency diagnostics | Existing routed VPN; diagnostics pending |
-| Subscription dependency | MIT code, no subscription/license gate; operator-controlled infrastructure costs | Existing license; operational guidance pending |
+| Vendor-run VPN/account service can be retired | Self-hosted policy and VPN services; no vendor account/license dependency | Done: Docker/compose, Vercel, Cloudflare and bare-metal recipes (`docs/deployment.md`); MIT license |
+| Product migration can strand configuration | Versioned export/import, portable storage, migration from existing SQLite | Done: backup/restore API + Settings UI with validation tests; legacy SQLite exporter; three storage backends behind one contract test |
+| A cloud outage can disable household internet | Locally cached validated policy, offline accounting, explicit bounded outage behavior; expiring local enforcement leases still stop crashes | Done: `PolicyCache` grace/rollback tests; gateway falls back to cached policy; offline minutes replayed within 7 days |
+| Platform/vendor lock-in | Next.js API with persistent SQL storage, Vercel and Cloudflare build recipes, Docker/self-host option | Done: SQLite, PostgreSQL and libSQL; Vercel project; OpenNext build in CI |
+| Schedule discoverability/weekend differences | Visible day selectors, named Off/Focus windows, schedule conflict preview | Done: profile editor day selectors, weekday/weekend limits, named windows, and an overlap warning (“Homework and Bedtime overlap on Mon…”) including overnight windows; `schedule-conflicts.test.ts`, component and e2e profile tests |
+| Background traffic counted as foreground usage | Explicit network-estimate semantics, category/site attribution, transparent history and diagnostics | Done: usage labelled as network minutes; category/site buckets; history explains every decision |
+| Network interference/performance complaints | Routed WireGuard rather than ARP interception, bounded logging, gateway health/latency diagnostics | Done: no ARP spoofing; gateway heartbeat banner; per-device health (tunnel, handshake, captive portal, permissions) reported to parents |
+| Subscription dependency | MIT code, no subscription/license gate; operator-controlled infrastructure costs | Done: no license gate anywhere in the code |
 
 ## Feature requirements
 
@@ -30,7 +30,7 @@ Sources: [2018 FCC Circle manual](https://fcc.report/FCC-ID/2AF7ECIRCLE3/4104775
 | ID | Capability | Status | Evidence |
 | --- | --- | --- | --- |
 | F01 | Family profiles; rename, avatar, delete, assign devices | Done | Profile editor name/avatar; "Delete profile" (refuses while devices are assigned); `dashboard.test.tsx` "profile editor", `features.spec.ts` profile test |
-| F02 | Home/default profile; unmanaged devices | Done for VPN devices | Settings "Home/default profile"; device "Set unmanaged"; service tests. Devices that cannot run the VPN app need home routing (F23) |
+| F02 | Home/default profile; unmanaged devices | Done | Settings "Home/default profile" (also applied by the gateway's DNS to unregistered home-network devices); device "Set unmanaged"; service and gateway tests |
 | F03 | Whole-family / profile / device pause | Done | Overview "Pause family", per-profile and per-device Pause; packet enforcement in the Linux integration test; e2e "household pause" |
 | F04 | Kid/Teen/Adult/None presets, editable categories | Done | Presets + 11 categories (incl. ads, proxy, malware feeds); golden cases `specs/policy-cases.json` in TS, Python and Rust |
 | F05 | Custom allow/block/unmanaged rules; one-click history actions | Done | Editor domain lists; History allow/deny/unmanaged buttons; component + e2e history tests |
@@ -49,14 +49,14 @@ Sources: [2018 FCC Circle manual](https://fcc.report/FCC-ID/2AF7ECIRCLE3/4104775
 | F18 | Child view: remaining time, next change, rule reason | Done | Shared Rust `child_status` used by desktop, Android, iOS and macOS apps |
 | F19 | Child time requests with parent approve/decline | Done (beyond Circle) | Rust `time_request` in every client; Requests tab; tests in all layers |
 | F20 | On-demand location of a consented device; child is told | Done | Devices "Locate" → device answers once (Android LocationManager, Apple CoreLocation, desktop declines) → map link with accuracy and age; child gets a notification; requests expire after 1 h; `location.test.ts`, component + e2e tests |
-| F21 | Parent notifications: requests, new device, admin added, device removed, gateway offline | Done in-app | Event feed and unread dot; gateway heartbeat banner ("offline since…") and reconnect event. Push/e-mail delivery is not implemented |
+| F21 | Parent notifications: requests, new device, admin added, device removed, gateway offline, device health | Done in-app | Event feed and unread dot; gateway heartbeat banner ("offline since…") and reconnect event; "Phone: VPN permission is turned off"-style events when a device reports a new problem. Push/e-mail delivery is not implemented |
 | F21b | Kid notifications: 15 min left, limit reached, bedtime/Off Time soon, reward received, request answered | Done | Shared Rust `child_alerts`; Android notifications, Apple local notifications, desktop alert list; Rust tests |
 | F22 | Device identification, rename, reassign, revoke, last seen | Done for VPN devices | Inline rename, profile select, Revoke, "Last active" column; component + e2e tests. LAN discovery of non-VPN devices is not implemented (no ARP spoofing by design) |
-| F23 | Home enforcement for devices that cannot install apps | Partial | Standalone DNS gateway mode exists; full home routing integration pending |
+| F23 | Home enforcement for devices that cannot install apps | Done | Devices → "Add a home-network device" (reserved LAN IPv4) → gateway `lan_devices`; gateway `--lan-*` options give DNS filtering and, as LAN router, packet leases, DNS redirection, DoT blocking and usage counters. `home-devices.test.ts`, component + e2e tests, `HomeDeviceTests`, and the privileged Linux integration test (routed, DNS-filtered, paused; other LAN devices untouched) |
 | F24 | Off-network mobile enforcement | Built; device acceptance pending | WireGuard clients for all five platforms build in CI; Linux tunnel test; physical-device testing still required |
 | F25 | Family sharing, recovery, export/import, audit | Done | Owner + co-parent accounts with own passwords; OAuth password/refresh grants; portable backup/restore; event log |
 | F26 | Unmanaged site exceptions across pause/bedtime/budgets | Done | Golden unmanaged case; Linux integration test |
-| F27 | Captive-portal handling and permission diagnostics | Pending | Not implemented |
+| F27 | Captive-portal handling and permission diagnostics | Done | Shared Rust `captive_portal_probe`/`diagnose` (100% covered). Desktop: "Sign in to Wi-Fi" lowers the tunnel only when the gateway is unreachable, for at most 5 min, restores as soon as the probe is online, and parents are told afterwards. Android: detects the OS captive-portal state, VPN/notification/location permissions and handshake age, and opens Wi-Fi sign-in. Apple: `includeAllNetworks` already exempts captive-network sign-in; the app reports VPN, notification and location permissions. Devices tab shows each device's health |
 | F28 | Privacy controls, no tracking SDKs | Done | No telemetry; retention, history deletion, export; location only on explicit request |
 | F29 | Next.js service compatible with gateway/native protocol | Done | `/v1` protocol tests; native clients use it through the Rust core |
 | F30 | Vercel and Cloudflare builds with persistent storage | Done | SQLite, PostgreSQL and libSQL backends with a shared contract test; Vercel project; OpenNext build in CI |
@@ -94,4 +94,4 @@ This is concrete progress, not a completion claim for the goal or the entire tab
 - Cache tests verify private mode-600 storage, restart, origin binding, rollback rejection, bounded grace, deduplication, quota accounting, and midnight reset. Full live service-outage/reconnect testing remains pending. Local enforcement leases are independent of cloud connectivity: a live agent can renew a cached policy within grace, but an agent crash still expires forwarding.
 - The legacy SQLite exporter preserves enrolled VPN public keys, device-token hashes, and minute totals in the versioned backup format. A source migration acceptance test and native origin-switch UX remain pending. It does not silently convert LAN/DNS-only devices to fake VPN enrollments.
 
-Remaining work: home routing for devices that cannot run the VPN app (F23), captive-portal and permission diagnostics (F27), push/e-mail delivery of parent notifications, and physical-device acceptance testing of the native VPN clients (F24).
+Remaining work: push/e-mail delivery of parent notifications, and physical-device acceptance testing of the native VPN clients (F24). Android and Apple diagnostics are verified by compilation and the shared Rust tests, not yet on physical devices.

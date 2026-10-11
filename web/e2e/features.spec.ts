@@ -144,8 +144,27 @@ test("devices enroll, are reassigned, paused, and revoked", async ({
     { latitude: 41.8781, longitude: -87.6298, accuracy: 35 },
     { Authorization: "Bearer " + device.token },
   );
+  await api(
+    request,
+    "/v1/device/diagnostics",
+    {
+      issues: [
+        {
+          code: "gateway_unreachable",
+          severity: "warning",
+          message: "The VPN cannot reach your family's gateway",
+          action:
+            "This network may block VPNs or need a sign-in page; try “Sign in to Wi-Fi”.",
+        },
+      ],
+    },
+    { Authorization: "Bearer " + device.token },
+  );
   await page.reload();
   await openTab(page, "Devices");
+  await expect(
+    row.getByRole("list", { name: `${renamed} health` }),
+  ).toContainText("cannot reach your family's gateway");
   await expect(row.getByRole("link", { name: /±35 m/ })).toHaveAttribute(
     "href",
     /openstreetmap\.org\/\?mlat=41\.8781&mlon=-87\.6298/,
@@ -164,6 +183,30 @@ test("devices enroll, are reassigned, paused, and revoked", async ({
   page.once("dialog", (d) => d.accept());
   await row.getByRole("button", { name: "Revoke" }).click();
   await expect(row).toBeHidden();
+
+  const tv = `TV ${info.project.name}`;
+  await page.getByLabel("Device name").fill(tv);
+  await page
+    .getByLabel("Home-network IPv4 address")
+    .fill(`192.168.77.${seed + 10}`);
+  await page
+    .getByLabel("Home device profile")
+    .selectOption({ label: "Kid " + info.project.name });
+  await page.getByRole("button", { name: "Add home device" }).click();
+  const tvRow = deviceRow(tv);
+  await expect(tvRow).toContainText("Home network");
+  await expect(tvRow.getByRole("button", { name: "Locate" })).toHaveCount(0);
+  await expectCleanLayout(page, "devices with a home-network device");
+  const state = await api<{ devices: { ip: string; kind: string }[] }>(
+    request,
+    "/api/state",
+  );
+  expect(
+    state.devices.find((d) => d.ip === `192.168.77.${seed + 10}`)?.kind,
+  ).toBe("home");
+  page.once("dialog", (d) => d.accept());
+  await tvRow.getByRole("button", { name: "Remove" }).click();
+  await expect(tvRow).toBeHidden();
   clean();
 });
 

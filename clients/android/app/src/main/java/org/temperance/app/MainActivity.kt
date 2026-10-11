@@ -20,6 +20,8 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var headline: TextView
     private lateinit var detail: TextView
+    private lateinit var health: TextView
+    private lateinit var signIn: Button
     private lateinit var enrollment: LinearLayout
     private lateinit var enrolled: LinearLayout
     private val handler = Handler(Looper.getMainLooper())
@@ -38,6 +40,10 @@ class MainActivity : Activity() {
                 child.nextChange,
                 if (child.pendingRequest) "Your request is waiting for a parent." else null,
             ).joinToString("\n")
+            val issues = app.health
+            health.text = issues.joinToString("\n\n") { "${it.message}\n${it.action}" }
+            health.visibility = if (issues.isEmpty()) View.GONE else View.VISIBLE
+            signIn.visibility = if (issues.any { it.code == "captive_portal" || it.code == "gateway_unreachable" }) View.VISIBLE else View.GONE
         }
     }
 
@@ -63,6 +69,10 @@ class MainActivity : Activity() {
         enrolled = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         headline = TextView(this).apply { textSize = 24f }; enrolled.addView(headline)
         detail = TextView(this).apply { textSize = 16f }; enrolled.addView(detail)
+        health = TextView(this).apply { textSize = 14f; setPadding(0, 24, 0, 24) }; enrolled.addView(health)
+        // Android opens captive-portal sign-in outside the VPN from the Wi-Fi network entry.
+        signIn = Button(this).apply { text = "Sign in to Wi-Fi"; setOnClickListener { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) } }
+        enrolled.addView(signIn)
         val message = field(enrolled, "Why do you need more time?")
         listOf(15u, 30u, 60u).forEach { minutes ->
             enrolled.addView(Button(this).apply { text = "Ask for $minutes more minutes"; setOnClickListener {

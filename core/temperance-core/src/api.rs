@@ -121,6 +121,20 @@ fn request(
     })
 }
 
+pub(crate) fn authorized(
+    method: &str,
+    identity: &Identity,
+    path: &str,
+    body: Option<String>,
+) -> Result<HttpRequest, CoreError> {
+    let token = identity
+        .state
+        .as_ref()
+        .and_then(|s| s.token.clone())
+        .ok_or_else(|| invalid("Enroll first"))?;
+    request(method, &identity.service, path, Some(&token), body)
+}
+
 #[uniffi::export]
 pub fn enroll_request(
     service: String,

@@ -155,6 +155,89 @@ describe("on-demand location", () => {
   });
 });
 
+describe("device diagnostics", () => {
+  it("stores the latest issues and notifies parents of new problems once", async () => {
+    const repo = new TestRepository(),
+      device = await enrolled(repo);
+    const portal = {
+      code: "captive_portal",
+      severity: "warning",
+      message: "This Wi-Fi needs a sign-in page",
+      action: "Choose “Sign in to Wi-Fi”.",
+    };
+    const alerts = {
+      code: "notifications_off",
+      severity: "info",
+      message: "Alerts are turned off",
+    };
+    expect(
+      (
+        await call(
+          repo,
+          "v1/device/diagnostics",
+          { issues: [portal, alerts] },
+          device.token,
+        )
+      ).body,
+    ).toEqual({ ok: true });
+    let state = (await call(repo, "api/state", undefined, ADMIN)).body;
+    expect(state.devices[0].diagnostics).toEqual({
+      at: Date.now() / 1000,
+      issues: [portal, { ...alerts, action: "" }],
+    });
+    expect(
+      state.events.filter((e: { kind: string }) => e.kind === "device_health")
+        .length,
+    ).toBe(1);
+    expect(state.events.at(-1).message).toBe(
+      "Phone: This Wi-Fi needs a sign-in page",
+    );
+    await call(
+      repo,
+      "v1/device/diagnostics",
+      { issues: [portal] },
+      device.token,
+    );
+    await call(repo, "v1/device/diagnostics", { issues: [] }, device.token);
+    state = (await call(repo, "api/state", undefined, ADMIN)).body;
+    expect(state.devices[0].diagnostics.issues).toEqual([]);
+    expect(
+      state.events.filter((e: { kind: string }) => e.kind === "device_health")
+        .length,
+    ).toBe(1);
+
+    for (const bad of [
+      { issues: [{ ...portal, code: "Bad Code" }] },
+      { issues: Array(11).fill(portal) },
+      { issues: [{ ...portal, severity: "fatal" }] },
+    ])
+      expect(
+        (await call(repo, "v1/device/diagnostics", bad, device.token)).status,
+      ).toBe(400);
+    expect(
+      (await call(repo, "v1/device/diagnostics", { issues: [] }, "nope"))
+        .status,
+    ).toBe(401);
+
+    await call(
+      repo,
+      "v1/device/diagnostics",
+      { issues: [portal] },
+      device.token,
+    );
+    const backup = (await call(repo, "api/export", undefined, ADMIN)).body;
+    const restored = await call(
+      repo,
+      "api/import",
+      { confirm: "RESTORE", backup },
+      ADMIN,
+    );
+    expect(restored.body.devices[0].diagnostics.issues[0].code).toBe(
+      "captive_portal",
+    );
+  });
+});
+
 describe("gateway heartbeat", () => {
   it("records gateway contact at most once a minute and notes reconnection", async () => {
     const repo = new TestRepository();

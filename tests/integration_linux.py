@@ -14,6 +14,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from temperance.control import ControlStore
 from temperance.gateway import firewall,apply_firewall,wg_config,sync_peers
 from temperance.dns import Resolver,UDPHandler,UDPServer
+from temperance.gateway_store import GatewayStore
 
 assert os.environ.get('TEMPERANCE_DISPOSABLE_TEST')=='1', 'Use a disposable test container'
 def run(*args,body=None):
@@ -95,8 +96,38 @@ try:
     sync_peers('temperance',state)
     assert not probe(),'revoked peer could still pass traffic'
     print('PASS: revocation removes tunnel peer',flush=True)
+    # A home device that cannot run the VPN app, routed by this gateway on the LAN.
+    run('ip','netns','add','t-home');ns('t-home','ip','link','set','lo','up')
+    run('ip','link','add','lan-test','type','veth','peer','name','lan-peer');run('ip','link','set','lan-peer','netns','t-home')
+    run('ip','addr','add','192.168.50.1/24','dev','lan-test');run('ip','link','set','lan-test','up')
+    ns('t-home','ip','addr','add','192.168.50.2/24','dev','lan-peer');ns('t-home','ip','addr','add','192.168.50.3/24','dev','lan-peer')
+    ns('t-home','ip','link','set','lan-peer','up');ns('t-home','ip','route','add','default','via','192.168.50.1')
+    # Unregistered devices are not masqueraded by Temperance; stand in for the router's own NAT.
+    ns('t-internet','ip','route','add','192.168.50.0/24','via','203.0.113.1')
+    def home_probe(source='192.168.50.2'):
+        return subprocess.run(['ip','netns','exec','t-home','curl','--silent','--fail','--max-time','2','--interface',source,'http://203.0.113.2:8080'],capture_output=True).returncode==0
+    tv={'id':'tv','ip':'192.168.50.2','profile_id':p['id'],'managed':True,'paused':False}
+    p.update(category_limits={},bucket_usage={},deny=['blocked.test'])
+    home_state={**enhanced,'peers':[],'lan_devices':[tv]}
+    lan=('lan-test','192.168.50.1')
+    home_store=GatewayStore(lan_networks=['192.168.50.0/24']);home_store.state=home_state
+    lan_dns=UDPServer(('192.168.50.1',53),UDPHandler);lan_dns.resolver=Resolver(home_store,networks=['192.168.50.0/24'])
+    threading.Thread(target=lan_dns.serve_forever,daemon=True).start()
+    script=firewall(home_state,'temperance','wan-test',lan=lan)
+    run('nft','--check','-f','-',body=script);apply_firewall(script)
+    assert home_probe(),'allowed home device was not routed'
+    code="import socket,struct;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.bind(('192.168.50.2',0));s.settimeout(2);s.sendto(struct.pack('!6H',1,256,1,0,0,0)+b'\\x07blocked\\x04test\\0\\0\\1\\0\\1',('203.0.113.2',53));assert s.recv(4096)[3]&15==3"
+    ns('t-home','python3','-c',code)
+    print('PASS: home device is routed, its DNS redirected and filtered',flush=True)
+    tv['paused']=True;apply_firewall(firewall(home_state,'temperance','wan-test',lan=lan))
+    assert not home_probe(),'paused home device leaked traffic'
+    assert home_probe('192.168.50.3'),'unregistered LAN device was blocked'
+    print('PASS: pausing a home device stops it; other LAN devices are untouched',flush=True)
+    tv['paused']=False;apply_firewall(firewall(home_state,'temperance','wan-test',lan=lan))
+    assert home_probe(),'home device resume failed'
+    lan_dns.shutdown();lan_dns.server_close()
 finally:
     if http:http.terminate();http.wait()
     if dns:dns.shutdown();dns.server_close()
-    for name in ('t-client','t-internet'):subprocess.run(['ip','netns','delete',name],capture_output=True)
-    for name in ('transport','wan-test','temperance'):subprocess.run(['ip','link','delete',name],capture_output=True)
+    for name in ('t-client','t-internet','t-home'):subprocess.run(['ip','netns','delete',name],capture_output=True)
+    for name in ('transport','wan-test','temperance','lan-test'):subprocess.run(['ip','link','delete',name],capture_output=True)

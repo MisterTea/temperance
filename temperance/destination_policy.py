@@ -4,6 +4,14 @@ import ipaddress
 import time
 from .policy import classify, domain_reason, matches
 
+TUNNEL=ipaddress.ip_network('10.77.0.0/24')
+
+
+def counter_name(ip):
+    """nftables counter for a client's total traffic; tunnel and home-network names never collide."""
+    address=ipaddress.IPv4Address(ip)
+    return f'peer_{int(address)&255}' if address in TUNNEL else f'home_{int(address)}'
+
 
 def destination_rules(state,destinations,expired=False):
     if expired or state.get('policy_schema',1)<2:return {'objects':[],'outbound':[],'inbound':[],'buckets':{}}
@@ -37,14 +45,14 @@ def destination_rules(state,destinations,expired=False):
             # Include individual tracked host and any configured site/app budget parent.
             scopes.add('site:'+host)
             scopes.update('site:'+site for site in p.get('site_limits',{}) if matches(host,site))
+        total=counter_name(ip)
         counters=[]
         for scope in sorted(scopes):
-            name='bucket_'+ip.split('.')[-1]+'_'+hashlib.sha256(scope.encode()).hexdigest()[:12]
+            name='bucket_'+total.split('_',1)[1]+'_'+hashlib.sha256(scope.encode()).hexdigest()[:12]
             if name not in buckets:
                 objects.append(f' counter {name} {{ }}')
                 buckets[name]={'device_id':peer['id'],'bucket':scope}
             counters.append(f'counter name "{name}"')
-        total='peer_'+ip.split('.')[-1]
         action=f'counter name "{total}" '+' '.join(counters)+' accept'
         outbound.append(f'  ip saddr {ip} ip daddr {address} {action}')
         inbound.append(f'  ip daddr {ip} ip saddr {address} ct state established,related {action}')

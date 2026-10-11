@@ -27,6 +27,15 @@ enum ChildNotifier {
 
     func requestPermission() { manager.requestWhenInUseAuthorization() }
 
+    /// `nil` until the child has been asked.
+    var allowed: Bool? {
+        switch manager.authorizationStatus {
+        case .notDetermined: nil
+        case .denied, .restricted: false
+        default: true
+        }
+    }
+
     /// Returns nil with a reason when no fix can be shared.
     func currentLocation() async -> (CLLocation?, String) {
         switch manager.authorizationStatus {

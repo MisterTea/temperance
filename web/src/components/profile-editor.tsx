@@ -2,6 +2,47 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { CATALOG, DAYS, type Profile } from "@/lib/policy";
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+type Span = { name: string; start: string; end: string; days: number[] };
+const WEEK = 7 * 1440;
+const clock = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+function weekIntervals(w: Span): [number, number][] {
+  if (!w.start || !w.end || w.start === w.end) return [];
+  const start = clock(w.start),
+    end = clock(w.end),
+    length = end > start ? end - start : end + 1440 - start;
+  return w.days.flatMap((day): [number, number][] => {
+    const from = day * 1440 + start,
+      to = from + length;
+    return to > WEEK
+      ? [
+          [from, WEEK],
+          [0, to - WEEK],
+        ]
+      : [[from, to]];
+  });
+}
+/** Pairs of windows that are active at the same time, with the days the overlap starts. */
+export function scheduleConflicts(spans: Span[]) {
+  const found: string[] = [];
+  spans.forEach((a, i) =>
+    spans.slice(i + 1).forEach((b) => {
+      const days = new Set<number>();
+      for (const [a0, a1] of weekIntervals(a))
+        for (const [b0, b1] of weekIntervals(b)) {
+          const from = Math.max(a0, b0);
+          if (from < Math.min(a1, b1)) days.add(Math.floor(from / 1440));
+        }
+      if (days.size)
+        found.push(
+          `${a.name} and ${b.name} overlap on ${[...days]
+            .sort()
+            .map((d) => DAY_NAMES[d])
+            .join(", ")}`,
+        );
+    }),
+  );
+  return found;
+}
 const fresh = (): Omit<Profile, "id"> => ({
   name: "",
   avatar: "◒",
@@ -38,6 +79,10 @@ export function ProfileEditor({
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const conflicts = scheduleConflicts([
+    ...value.schedules,
+    { name: "Bedtime", ...value.bedtime },
+  ]);
   const dialog = useRef<HTMLDialogElement>(null);
   const id = useId();
   useEffect(() => {
@@ -413,6 +458,12 @@ export function ProfileEditor({
               </button>
             </section>
           ))}
+          {conflicts.length ? (
+            <p className="notice warning" aria-live="polite">
+              {conflicts.join(". ")}. The stricter rule applies while both are
+              active.
+            </p>
+          ) : null}
           <button
             type="button"
             className="secondary"

@@ -208,7 +208,8 @@ class GatewayMainTests(unittest.TestCase):
             def shutdown(self): pass
             def server_close(self): pass
         uname = mock.Mock(sysname='Linux')
-        with mock.patch.object(sys, 'argv', self.argv()), mock.patch.dict('os.environ', {'TEMPERANCE_GATEWAY_TOKEN': TOKEN}), \
+        lan = ('--lan-interface', 'eth1', '--lan-address', '192.168.1.1', '--lan-network', '192.168.1.0/24')
+        with mock.patch.object(sys, 'argv', self.argv(*lan)), mock.patch.dict('os.environ', {'TEMPERANCE_GATEWAY_TOKEN': TOKEN}), \
                 mock.patch('temperance.gateway.call', fake_call), mock.patch('os.name', 'posix'), \
                 mock.patch('os.uname', return_value=uname), mock.patch('os.geteuid', return_value=0), \
                 mock.patch('temperance.gateway.apply_firewall', applied.append), \
@@ -255,6 +256,83 @@ class GatewayStoreTests(unittest.TestCase):
         self.assertEqual(store.evaluate('10.77.0.9', 'example.com'), (True, 'unassigned VPN device'))
         store.state['peers'][0]['managed'] = False
         self.assertEqual(store.evaluate('10.77.0.2', 'example.com'), (False, 'unmanaged'))
+
+
+HOME_TV = {'id': 'tv', 'ip': '192.168.1.50', 'profile_id': 1, 'managed': True, 'paused': False}
+LAN = ('eth1', '192.168.1.1')
+
+
+class HomeDeviceTests(unittest.TestCase):
+    def test_firewall_routes_dns_and_leases_home_devices(self):
+        script = gateway.firewall(state(lan_devices=[HOME_TV]), 'temperance', 'eth0', lan=LAN)
+        self.assertIn('set home { type ipv4_addr; elements = { 192.168.1.50 }; }', script)
+        self.assertIn('set home_lease { type ipv4_addr; flags timeout; timeout 15s; elements = { 192.168.1.50 }; }', script)
+        self.assertIn('iifname "eth1" ip saddr @home jump home_outbound', script)
+        self.assertIn('ip saddr 192.168.1.50 counter name "home_3232235826" accept', script)
+        self.assertIn('iifname "eth1" ip saddr { 192.168.1.50 } udp dport 53 dnat to 192.168.1.1:53', script)
+        self.assertIn('ip saddr { 192.168.1.50 } oifname "eth0" masquerade', script)
+        self.assertIn('counter peer_2 { }', script)
+
+    def test_paused_expired_and_strict_home_devices_are_not_forwarded(self):
+        paused = gateway.firewall(state(lan_devices=[{**HOME_TV, 'paused': True}]), 'temperance', 'eth0', lan=LAN)
+        self.assertIn('set home_lease { type ipv4_addr; flags timeout; timeout 15s; }', paused)
+        self.assertNotIn('ip saddr 192.168.1.50 counter', paused)
+        expired = gateway.firewall(state(lan_devices=[HOME_TV]), 'temperance', 'eth0', lan=LAN, expired=True)
+        self.assertNotIn('ip saddr 192.168.1.50 counter', expired)
+        strict = state(profiles=[profile(allow_only=True, allow=['school.test'])], lan_devices=[HOME_TV])
+        destination = {'ip': '192.168.1.50', 'address': '203.0.113.5', 'host': 'school.test', 'expires': time.time() + 60}
+        script = gateway.firewall(strict, 'temperance', 'eth0', lan=LAN, destinations=[destination])
+        self.assertIn('ip saddr 192.168.1.50 ip daddr 203.0.113.5 counter name "home_3232235826"', script)
+        self.assertNotIn('ip saddr 192.168.1.50 counter name', script)
+        unmanaged = gateway.firewall(state(lan_devices=[{**HOME_TV, 'managed': False}]), 'temperance', 'eth0', lan=LAN)
+        self.assertIn('ip saddr 192.168.1.50 accept', unmanaged)
+
+    def test_home_rules_validate_addresses_and_are_optional(self):
+        self.assertNotIn('home', gateway.firewall(state(lan_devices=[HOME_TV]), 'temperance', 'eth0'))
+        self.assertNotIn('@home', gateway.firewall(state(), 'temperance', 'eth0', lan=LAN))
+        for bad in ({**HOME_TV, 'ip': '10.77.0.9'}, {**HOME_TV, 'ip': '8.8.8.8'}):
+            with self.subTest(bad), self.assertRaises(ValueError):
+                gateway.firewall(state(lan_devices=[bad]), 'temperance', 'eth0', lan=LAN)
+        with self.assertRaises(ValueError):
+            gateway.firewall(state(lan_devices=[HOME_TV]), 'temperance', 'eth0', lan=('bad name!', '192.168.1.1'))
+
+    def test_dns_policy_for_registered_and_unregistered_lan_addresses(self):
+        store = GatewayStore(lan_networks=['192.168.1.0/24'])
+        store.state = state(profiles=[profile(deny=['blocked.test'], safe_search=True)], lan_devices=[dict(HOME_TV)])
+        self.assertEqual(store.evaluate('192.168.1.50', 'blocked.test')[0], True)
+        self.assertEqual(store.history[-1]['device_id'], 'tv')
+        self.assertEqual(store.dns_override('192.168.1.50', 'google.com', 1), 'forcesafesearch.google.com')
+        self.assertEqual(store.evaluate('192.168.1.77', 'blocked.test'), (False, 'unmanaged'))
+        self.assertIsNone(store.dns_override('192.168.1.77', 'google.com', 1))
+        self.assertEqual(store.evaluate('10.77.0.9', 'example.com'), (True, 'unassigned VPN device'))
+        store.state['home_profile_id'] = 1
+        history = len(store.history)
+        self.assertEqual(store.evaluate('192.168.1.77', 'blocked.test')[0], True)
+        self.assertEqual(len(store.history), history, 'unregistered devices have no history owner')
+        store.state['lan_devices'][0]['managed'] = False
+        self.assertEqual(store.evaluate('192.168.1.50', 'blocked.test'), (False, 'unmanaged'))
+        self.assertIsNone(store.dns_override('192.168.1.50', 'google.com', 1))
+
+    def test_activity_attributes_home_counters(self):
+        st = state(lan_devices=[HOME_TV])
+        counters = {'nftables': [{'counter': {'name': 'home_3232235826', 'bytes': 9}}, {'counter': {'name': 'peer_2', 'bytes': 0}}]}
+        with mock.patch('subprocess.run', return_value=Completed(json.dumps(counters))):
+            self.assertEqual(gateway.detailed_activity(st, []), [{'device_id': 'tv', 'minute': int(time.time() // 60), 'buckets': ['total']}])
+
+    def test_lan_arguments_are_validated_and_printed(self):
+        base = ['temperance-gateway', '--service', 'https://policy.test', '--uplink', 'eth0', '--dry-run']
+        env = {'TEMPERANCE_GATEWAY_TOKEN': TOKEN}
+        for extra in (['--lan-interface', 'eth1'], ['--lan-interface', 'eth1', '--lan-address', '10.0.0.1', '--lan-network', '192.168.1.0/24'],
+                      ['--lan-interface', 'eth1', '--lan-address', 'nope', '--lan-network', '192.168.1.0/24']):
+            with self.subTest(extra), mock.patch.object(sys, 'argv', base + extra), mock.patch.dict('os.environ', env), \
+                    mock.patch('sys.stderr', io.StringIO()), self.assertRaises(SystemExit):
+                gateway.main()
+        out = io.StringIO()
+        argv = base + ['--lan-interface', 'eth1', '--lan-address', '192.168.1.1', '--lan-network', '192.168.1.0/24']
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sys, 'argv', argv + ['--cache', tmp + '/p.json']), \
+                mock.patch.dict('os.environ', env), mock.patch('temperance.gateway.call', return_value=state(lan_devices=[HOME_TV])), redirect_stdout(out):
+            gateway.main()
+        self.assertIn('dnat to 192.168.1.1:53', out.getvalue())
 
 
 def free_port():

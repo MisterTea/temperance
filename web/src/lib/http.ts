@@ -222,6 +222,8 @@ export async function handle(
               );
             case "api/devices":
               return service.saveDevice(state, data);
+            case "api/devices/home":
+              return service.addHomeDevice(state, data);
             case "api/devices/delete":
               return service.revokeDevice(
                 state,
@@ -342,6 +344,16 @@ export async function handle(
             const current = await service.authenticatedDevice(state, token);
             if (!current) throw new HTTPError(401, "Device revoked");
             return service.reportLocation(state, current, data);
+          }),
+        );
+      }
+      if (write && path === "v1/device/diagnostics") {
+        const data = await body(request);
+        return json(
+          await mutate(repo, async (state) => {
+            const current = await service.authenticatedDevice(state, token);
+            if (!current) throw new HTTPError(401, "Device revoked");
+            return service.reportDiagnostics(state, current, data);
           }),
         );
       }
@@ -509,13 +521,10 @@ function validateBackup(value: unknown): State {
   const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     id = z.number().int().positive(),
     stamp = z.number().finite().nonnegative();
-  const device = z.object({
+  const common = {
     id: z.string().uuid(),
-    ip: z.string().regex(/^10\.77\.0\.\d{1,3}$/),
     name: z.string().min(1).max(80),
     profile_id: id,
-    public_key: z.string().transform(validateKey),
-    token_hash: z.string().regex(/^[a-f0-9]{64}$/),
     revoked: z.boolean(),
     paused: z.boolean(),
     managed: z.boolean(),
@@ -529,7 +538,39 @@ function validateBackup(value: unknown): State {
       })
       .optional(),
     location_requested: stamp.optional(),
-  });
+    diagnostics: z
+      .object({
+        at: stamp,
+        issues: z
+          .array(
+            z.object({
+              code: z.string().max(40),
+              severity: z.enum(["error", "warning", "info"]),
+              message: z.string().max(120),
+              action: z.string().max(200),
+            }),
+          )
+          .max(10),
+      })
+      .optional(),
+  };
+  // The home variant is tried first: validateKey throws rather than failing the union branch.
+  const device = z.union([
+    z.object({
+      ...common,
+      kind: z.literal("home"),
+      ip: z.string().refine(service.isHomeAddress),
+      public_key: z.literal(""),
+      token_hash: z.literal(""),
+    }),
+    z.object({
+      ...common,
+      kind: z.undefined().optional(),
+      ip: z.string().regex(/^10\.77\.0\.\d{1,3}$/),
+      public_key: z.string().transform(validateKey),
+      token_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    }),
+  ]);
   const schema = z.object({
     schema: z.literal(2),
     version: z.number().int().positive(),
@@ -628,15 +669,16 @@ function validateBackup(value: unknown): State {
   )
     throw new HTTPError(400, "Invalid profile IDs");
   const ids = new Set(s.profiles.map((p) => p.id));
+  const vpn = s.devices.filter((d) => d.kind !== "home");
   if (
     new Set(s.devices.map((d) => d.ip)).size !== s.devices.length ||
     new Set(s.devices.map((d) => d.id)).size !== s.devices.length ||
-    new Set(s.devices.map((d) => d.public_key)).size !== s.devices.length
+    new Set(vpn.map((d) => d.public_key)).size !== vpn.length
   )
     throw new HTTPError(400, "Duplicate backup devices");
   for (const d of s.devices) {
     const n = Number(d.ip.split(".").at(-1));
-    if (!ids.has(d.profile_id) || n < 2 || n > 254)
+    if (!ids.has(d.profile_id) || (d.kind !== "home" && (n < 2 || n > 254)))
       throw new HTTPError(400, "Invalid backup device");
   }
   for (const r of [...s.codes, ...s.rewards, ...s.requests])

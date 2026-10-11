@@ -12,9 +12,9 @@ from urllib.parse import urlparse
 
 from .dns import Resolver, UDPServer, UDPHandler, TCPServer, TCPHandler
 from .store import Store
-from .gateway_store import GatewayStore
+from .gateway_store import GatewayStore, clients
 from .policy import access_reason, active_windows
-from .destination_policy import destination_rules
+from .destination_policy import TUNNEL, counter_name, destination_rules
 from .policy_cache import PolicyCache
 from .control import key
 
@@ -43,20 +43,62 @@ def strict_destination_policy(state,peer):
     return (p.get('filter_level')!='none' and p.get('allow_only',False)) or any(w['mode']=='focus' for w in active_windows(p,time.time(),state['timezone']))
 
 
-def firewall(state, interface, uplink, expired=False, destinations=()):
+def counted(state,client):
+    profile=next(p for p in state['profiles'] if p['id']==client['profile_id'])
+    return not (state.get('policy_schema',1)>=2 and (not client.get('managed',True) or not profile.get('managed',True) or profile.get('filter_level')=='none'))
+
+
+def lease_set(name,addresses):
+    return f' set {name} {{ type ipv4_addr; flags timeout; timeout 15s;'+(' elements = { '+', '.join(addresses)+' };' if addresses else '')+' }'
+
+
+NO_HOME={'objects':[],'chains':[],'forward':[],'nat_post':[],'nat_pre':[]}
+
+
+def home_rules(state,lan,uplink,expired,destinations):
+    """Home-network devices that cannot run the VPN app, enforced by LAN address.
+
+    DNS filtering applies whenever the LAN uses this gateway as its resolver.
+    Packet rules (pause, bedtime, budgets, strict allow-lists) apply when the
+    gateway is also the LAN's default router."""
+    interface,address=lan
+    if not re.fullmatch(r'[a-zA-Z0-9_.-]{1,15}',interface):raise ValueError('Invalid interface name')
+    address=str(ipaddress.IPv4Address(address))
+    home=state.get('lan_devices',[])
+    ips=[str(ipaddress.IPv4Address(d['ip'])) for d in home]
+    for ip in ips:
+        if ipaddress.ip_address(ip) in TUNNEL or not ipaddress.ip_address(ip).is_private:raise ValueError('Home device outside private LAN ranges')
+    if not ips:return NO_HOME
+    live=[d['ip'] for d in home if not expired and peer_allowed(state,d)]
+    rules=destination_rules({**state,'peers':home},destinations,expired)
+    objects=[' set home { type ipv4_addr; elements = { '+', '.join(ips)+' }; }',lease_set('home_lease',live)]+rules['objects']
+    objects+=[f' counter {counter_name(ip)} {{ }}' for ip in ips]
+    outbound=[' chain home_outbound {',f'  oifname != "{uplink}" accept','  udp dport { 53, 853 } drop','  tcp dport { 53, 853 } drop']+rules['outbound']+['  ip saddr != @home_lease drop']
+    inbound=[' chain home_inbound {',f'  iifname != "{uplink}" accept']+rules['inbound']+['  ip daddr != @home_lease drop']
+    for d in home:
+        if not expired and peer_allowed(state,d) and not strict_destination_policy(state,d):
+            count=f'counter name "{counter_name(d["ip"])}" ' if counted(state,d) else ''
+            outbound.append(f'  ip saddr {d["ip"]} {count}accept')
+            inbound.append(f'  ip daddr {d["ip"]} ct state established,related {count}accept')
+    listed='{ '+', '.join(ips)+' }'
+    return {'objects':objects,'chains':outbound+['  drop',' }']+inbound+['  drop',' }'],
+            'forward':[f'  iifname "{interface}" ip saddr @home jump home_outbound',f'  oifname "{interface}" ip daddr @home jump home_inbound'],
+            'nat_post':[f'  ip saddr {listed} oifname "{uplink}" masquerade'],
+            'nat_pre':[f'  iifname "{interface}" ip saddr {listed} udp dport 53 dnat to {address}:53',f'  iifname "{interface}" ip saddr {listed} tcp dport 53 dnat to {address}:53']}
+
+
+def firewall(state, interface, uplink, expired=False, destinations=(), lan=None):
     for name in (interface,uplink):
         if not re.fullmatch(r'[a-zA-Z0-9_.-]{1,15}',name):raise ValueError('Invalid interface name')
-    profiles={p['id']:p for p in state['profiles']}
     peers=state['peers']
     live=[str(ipaddress.IPv4Address(p['ip'])) for p in peers if not expired and peer_allowed(state,p)]
     control=[str(ipaddress.IPv4Address(p['ip'])) for p in peers] if not expired else []
     rules=destination_rules(state,destinations,expired)
-    lines=['table inet temperance {',
-        ' set lease { type ipv4_addr; flags timeout; timeout 15s;'+(' elements = { '+', '.join(live)+' };' if live else '')+' }',
-        ' set control_lease { type ipv4_addr; flags timeout; timeout 15s;'+(' elements = { '+', '.join(control)+' };' if control else '')+' }']
-    lines+=rules['objects']
+    home=home_rules(state,lan,uplink,expired,destinations) if lan else NO_HOME
+    lines=['table inet temperance {',lease_set('lease',live),lease_set('control_lease',control)]
+    lines+=rules['objects']+home['objects']
     for peer in peers:
-        lines.append(f' counter peer_{int(ipaddress.IPv4Address(peer["ip"])) & 255} {{ }}')
+        lines.append(f' counter {counter_name(peer["ip"])} {{ }}')
     lines += [
         ' chain input { type filter hook input priority -10; policy accept;',
         f'  iifname "{interface}" ip daddr 10.77.0.1 udp dport 53 accept',
@@ -67,6 +109,7 @@ def firewall(state, interface, uplink, expired=False, destinations=()):
         ' chain forward { type filter hook forward priority -10; policy accept;',
         f'  iifname "{interface}" jump outbound',
         f'  oifname "{interface}" jump inbound',
+        *home['forward'],
         ' }',
         ' chain outbound {',
         '  meta nfproto ipv6 drop',
@@ -81,21 +124,21 @@ def firewall(state, interface, uplink, expired=False, destinations=()):
         ip=str(ipaddress.IPv4Address(peer['ip']))
         if ipaddress.ip_address(ip) not in ipaddress.ip_network('10.77.0.0/24'):raise ValueError('Peer outside tunnel network')
         if not expired and peer_allowed(state,peer) and not strict_destination_policy(state,peer):
-            total_counter='' if state.get('policy_schema',1)>=2 and (not peer.get('managed',True) or not profiles[peer['profile_id']].get('managed',True) or profiles[peer['profile_id']].get('filter_level')=='none') else f'counter name \"peer_{ip.split(".")[-1]}\" '
+            total_counter=f'counter name "{counter_name(ip)}" ' if counted(state,peer) else ''
             lines.append(f'  ip saddr {ip} oifname "{uplink}" {total_counter}accept')
     lines += ['  drop',' }',' chain inbound {','  meta nfproto ipv6 drop','  ip daddr != @control_lease drop']
     lines+=rules['inbound']
     lines.append('  ip daddr != @lease drop')
     for peer in peers:
         if not expired and peer_allowed(state,peer) and not strict_destination_policy(state,peer):
-            lines.append(f'  ip daddr {peer["ip"]} iifname "{uplink}" ct state established,related counter name "peer_{peer["ip"].split(".")[-1]}" accept')
-    lines+=['  drop',' }']
+            lines.append(f'  ip daddr {peer["ip"]} iifname "{uplink}" ct state established,related counter name "{counter_name(peer["ip"])}" accept')
+    lines+=['  drop',' }']+home['chains']
     lines += ['}', 'table ip temperance_nat {',
               ' chain postrouting { type nat hook postrouting priority srcnat; policy accept;',
-              f'  ip saddr 10.77.0.0/24 oifname "{uplink}" masquerade',' }',
+              f'  ip saddr 10.77.0.0/24 oifname "{uplink}" masquerade',*home['nat_post'],' }',
               ' chain prerouting { type nat hook prerouting priority dstnat; policy accept;',
               f'  iifname "{interface}" udp dport 53 dnat to 10.77.0.1:53',
-              f'  iifname "{interface}" tcp dport 53 dnat to 10.77.0.1:53',' }','}']
+              f'  iifname "{interface}" tcp dport 53 dnat to 10.77.0.1:53',*home['nat_pre'],' }','}']
     return '\n'.join(lines)+'\n'
 
 
@@ -152,15 +195,16 @@ def activity(interface,state):
 
 def detailed_activity(state,destinations):
     raw=json.loads(run(['nft','-j','list','table','inet','temperance']))['nftables']
-    mapping=destination_rules(state,destinations)['buckets']
-    peers={p['ip'].split('.')[-1]:p for p in state['peers']}
+    everyone=clients(state)
+    mapping=destination_rules({**state,'peers':everyone},destinations)['buckets']
+    totals={counter_name(c['ip']):c for c in everyone}
     active={}
     for item in raw:
         counter=item.get('counter',{})
         if counter.get('bytes',0)<=0:continue
         name=counter.get('name','')
-        if name.startswith('peer_') and name[5:] in peers:
-            active.setdefault(peers[name[5:]]['id'],set()).add('total')
+        if name in totals:
+            active.setdefault(totals[name]['id'],set()).add('total')
         elif name in mapping:
             record=mapping[name];active.setdefault(record['device_id'],set()).add(record['bucket'])
     minute=int(time.time()//60)
@@ -173,10 +217,20 @@ def main():
     parser.add_argument('--interface',default='temperance')
     parser.add_argument('--uplink',required=True)
     parser.add_argument('--cache',default='/var/lib/temperance-gateway/policy.json')
+    parser.add_argument('--lan-interface',help='Home LAN interface; enforces home devices that cannot run the VPN app')
+    parser.add_argument('--lan-address',help="This gateway's IPv4 address on the home LAN (DNS listens here)")
+    parser.add_argument('--lan-network',help='Home LAN IPv4 CIDR allowed to use the DNS resolver')
     parser.add_argument('--dry-run',action='store_true',help='Print rules without changing host networking')
     args=parser.parse_args()
     token=os.environ.get('TEMPERANCE_GATEWAY_TOKEN','')
     if len(token)<32:parser.error('Set TEMPERANCE_GATEWAY_TOKEN')
+    home=(args.lan_interface,args.lan_address,args.lan_network)
+    if any(home) and not all(home):parser.error('--lan-interface, --lan-address and --lan-network are used together')
+    try:
+        if all(home) and ipaddress.ip_address(args.lan_address) not in ipaddress.ip_network(args.lan_network):raise ValueError
+    except ValueError:parser.error('--lan-address must be inside --lan-network')
+    lan=(args.lan_interface,args.lan_address) if all(home) else None
+    def rules(st,**kw):return firewall(st,args.interface,args.uplink,lan=lan,**kw)
     url=urlparse(args.service)
     if url.scheme!='https' and url.hostname not in ('localhost','127.0.0.1'):parser.error('Remote policy service must use HTTPS')
     cache=PolicyCache(args.cache,args.service)
@@ -186,17 +240,18 @@ def main():
     except Exception:
         if not cache.usable():raise
         state=cache.effective()
-    script=firewall(state,args.interface,args.uplink)
+    script=rules(state)
     if args.dry_run:print(script);print(wg_config(state));return
     if os.name!='posix' or os.uname().sysname!='Linux' or os.geteuid()!=0:parser.error('Gateway enforcement requires root on Linux')
-    store=GatewayStore()
+    store=GatewayStore(lan_networks=[args.lan_network] if lan else ())
     import_state(store,state)
-    apply_firewall(firewall(state,args.interface,args.uplink,expired=True))
-    resolver=Resolver(store,networks=['10.77.0.0/24'],management_domains=[url.hostname])
+    apply_firewall(rules(state,expired=True))
+    resolver=Resolver(store,networks=['10.77.0.0/24']+([args.lan_network] if lan else []),management_domains=[url.hostname])
     servers=[]
-    for cls,handler in [(UDPServer,UDPHandler),(TCPServer,TCPHandler)]:
-        server=cls(('10.77.0.1',53),handler);server.resolver=resolver;servers.append(server)
-        threading.Thread(target=server.serve_forever,daemon=True).start()
+    for address in ['10.77.0.1']+([args.lan_address] if lan else []):
+        for cls,handler in [(UDPServer,UDPHandler),(TCPServer,TCPHandler)]:
+            server=cls((address,53),handler);server.resolver=resolver;servers.append(server)
+            threading.Thread(target=server.serve_forever,daemon=True).start()
     sync_peers(args.interface,state)
     apply_firewall(script)
     subprocess.run(['nft','delete','table','inet','temperance_boot'],capture_output=True)
@@ -220,7 +275,7 @@ def main():
                     store.history=[h for h in store.history if h['id'] not in reported]
                 latest=call(args.service.rstrip('/')+'/v1/gateway/state',token)
                 cache.update(latest)
-                script=firewall(latest,args.interface,args.uplink,destinations=list(store.destinations.values()))
+                script=rules(latest,destinations=list(store.destinations.values()))
                 import_state(store,latest)
                 apply_firewall(script)
                 sync_peers(args.interface,latest)
@@ -230,12 +285,12 @@ def main():
                 # Reset counters after reporting to avoid accounting the same traffic twice.
                 cached=cache.effective() if cache.state else state
                 import_state(store,cached)
-                apply_firewall(firewall(cached,args.interface,args.uplink,expired=not cache.usable(),destinations=list(store.destinations.values())))
+                apply_firewall(rules(cached,expired=not cache.usable(),destinations=list(store.destinations.values())))
                 state=cached
             time.sleep(5)
     except KeyboardInterrupt:pass
     finally:
-        apply_firewall(firewall(state,args.interface,args.uplink,expired=True))
+        apply_firewall(rules(state,expired=True))
         for server in servers:server.shutdown();server.server_close()
 
 

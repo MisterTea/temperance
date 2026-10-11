@@ -1,6 +1,8 @@
 import type { Profile, Reward, Usage } from "./policy";
 export interface Device {
   id: string;
+  /** Home devices cannot run the VPN app; the gateway enforces them by LAN address. */
+  kind?: "home";
   ip: string;
   name: string;
   profile_id: number;
@@ -17,6 +19,14 @@ export interface Device {
     at: number;
   };
   location_requested?: number;
+  /** Latest connectivity/permission issues the device reported (shared Rust `diagnose`). */
+  diagnostics?: { at: number; issues: DeviceIssue[] };
+}
+export interface DeviceIssue {
+  code: string;
+  severity: "error" | "warning" | "info";
+  message: string;
+  action: string;
 }
 export interface History {
   id: string;

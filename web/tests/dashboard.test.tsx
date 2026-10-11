@@ -305,9 +305,14 @@ describe("profile editor", () => {
     );
     await user.click(windows.getByRole("button", { name: "+ Add schedule" }));
     await user.click(windows.getByRole("button", { name: "+ Add schedule" }));
+    expect(
+      windows.getByText(/Homework and Homework overlap on Mon, Tue/)
+        .textContent,
+    ).toContain("The stricter rule applies");
     await user.click(
       windows.getAllByRole("button", { name: "Remove window" })[1],
     );
+    expect(windows.queryByText(/overlap on/)).toBeNull();
     await user.clear(windows.getByLabelText("Window name"));
     await user.type(windows.getByLabelText("Window name"), "Study");
     await user.type(
@@ -501,6 +506,70 @@ describe("devices", () => {
       ).toBeNull(),
     );
     expect((await state()).devices[0].location?.accuracy).toBe(18.4);
+  });
+
+  it("adds, labels and removes a home-network device", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Devices");
+    const add = screen.getByRole("button", { name: "Add home device" });
+    await user.type(screen.getByLabelText("Device name"), "Living room TV");
+    await user.type(
+      screen.getByLabelText("Home-network IPv4 address"),
+      "8.8.8.8",
+    );
+    await user.click(add);
+    await screen.findByText(/private home-network IPv4 address/);
+    const ip = screen.getByLabelText("Home-network IPv4 address");
+    await user.clear(ip);
+    await user.type(ip, "192.168.1.50");
+    await user.selectOptions(screen.getByLabelText("Home device profile"), "2");
+    await user.click(add);
+    const name = await screen.findByRole("textbox", {
+      name: "Living room TV name",
+    });
+    expect((ip as HTMLInputElement).value).toBe("");
+    const tv = (await state()).devices.find((d) => d.kind === "home")!;
+    expect(tv).toMatchObject({ ip: "192.168.1.50", profile_id: 2 });
+    const row = within(name.closest("tr") as HTMLElement);
+    expect(row.getByText("Home network")).toBeTruthy();
+    expect(row.getByText("Not available")).toBeTruthy();
+    expect(row.queryByRole("button", { name: "Locate" })).toBeNull();
+    await user.click(row.getByRole("button", { name: "Remove" }));
+    expect(window.confirm).toHaveBeenLastCalledWith(
+      "Stop managing Living room TV?",
+    );
+    await waitFor(async () =>
+      expect(
+        (await state()).devices.find((d) => d.kind === "home")?.revoked,
+      ).toBe(true),
+    );
+  });
+
+  it("shows device health reported by the app", async () => {
+    const phone = await seedHousehold();
+    await api(
+      "v1/device/diagnostics",
+      {
+        issues: [
+          {
+            code: "vpn_permission",
+            severity: "error",
+            message: "VPN permission is turned off",
+            action: "Open Temperance and allow the VPN connection.",
+          },
+        ],
+      },
+      phone.token,
+    );
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Devices");
+    const health = screen.getByRole("list", { name: "Alex phone health" });
+    expect(health.textContent).toContain("VPN permission is turned off");
+    expect(health.textContent).toContain("allow the VPN connection");
+    expect(health.querySelector("li")!.className).toBe("error");
   });
 
   it("links to a shared location", async () => {
