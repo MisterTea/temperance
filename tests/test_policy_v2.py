@@ -7,6 +7,7 @@ from temperance.policy import access_reason,domain_reason
 from temperance.policy_cache import PolicyCache
 from temperance.gateway import firewall
 from temperance.gateway_store import GatewayStore
+from temperance.destination_policy import destination_rules
 class PolicyV2Tests(unittest.TestCase):
     def profile(self,**values):return {'id':1,'name':'Test','managed':True,'paused':False,'filter_level':'kid','limit':0,'used':0,'allow':[],'deny':[],'unmanaged':[],'categories':[],'schedules':[],'bedtime':{'start':'','end':'','days':list(range(7))},**values}
     def state(self,p):return {'policy_schema':2,'version':1,'day':'2026-10-11','timezone':'America/Chicago','paused':False,'profiles':[p],'peers':[{'id':'device','ip':'10.77.0.2','profile_id':1,'public_key':'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=','managed':True,'paused':False}],'offline_grace_seconds':86400}
@@ -29,6 +30,16 @@ class PolicyV2Tests(unittest.TestCase):
         p=self.profile(category_limits={'video':1},bucket_usage={'category:video':1})
         destination={'ip':'10.77.0.2','address':'203.0.113.2','host':'youtube.com','expires':time.time()+60}
         script=firewall(self.state(p),'temperance','wan-test',destinations=[destination]);self.assertIn('ip saddr 10.77.0.2 ip daddr 203.0.113.2 drop',script)
+    def test_app_group_counts_shared_bucket_and_closes_every_member(self):
+        games={'id':'games','name':'Games','domains':['roblox.com','minecraft.net'],'minutes':30}
+        destinations=[{'ip':'10.77.0.2','address':'203.0.113.3','host':'roblox.com','expires':time.time()+60},
+                      {'ip':'10.77.0.2','address':'203.0.113.4','host':'minecraft.net','expires':time.time()+60}]
+        rules=destination_rules(self.state(self.profile(app_limits=[games])),destinations)
+        groups=[b for b in rules['buckets'].values() if b['bucket']=='group:games']
+        self.assertEqual(len(groups),1,'both apps share one counter')
+        script=firewall(self.state(self.profile(app_limits=[games],bucket_usage={'group:games':30})),'temperance','wan-test',destinations=destinations)
+        self.assertIn('ip saddr 10.77.0.2 ip daddr 203.0.113.3 drop',script)
+        self.assertIn('ip saddr 10.77.0.2 ip daddr 203.0.113.4 drop',script)
     def test_private_cache_survives_restart_and_fails_after_grace(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'policy.json';cache=PolicyCache(path,'https://policy.test');state=self.state(self.profile(limit=2));cache.update(state,now=1000)

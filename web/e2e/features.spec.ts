@@ -39,6 +39,13 @@ test("parent creates and edits a profile with limits, bedtime, and schedules", a
   await editor.getByLabel("Ends").fill("07:00");
   await editor.getByRole("button", { name: "+ Add schedule" }).click();
   await editor.getByLabel("Blocked domains").fill("example.org");
+  await editor.getByRole("button", { name: "+ Add app group" }).click();
+  const group = editor.getByRole("group", { name: "App group 1" });
+  await group.getByLabel("Group name").fill("Games with a long shared name");
+  await group.getByLabel("Shared minutes per day").fill("40");
+  await group
+    .getByLabel("Apps and sites in this group")
+    .fill("roblox.com\nminecraft.net");
   await expectCleanLayout(page, "profile editor filled");
   await editor.getByRole("button", { name: "Save profile" }).click();
   await expect(editor).toBeHidden();
@@ -47,6 +54,14 @@ test("parent creates and edits a profile with limits, bedtime, and schedules", a
   await expect(card).toContainText("/ 90 allowance");
   await expect(card).toContainText("Bedtime 21:00–07:00");
   await expect(card).toContainText("1 schedule windows");
+  await expect(
+    card.getByRole("list", { name: `${name} shared app limits` }),
+  ).toHaveText("Games with a long shared name 0 / 40 min");
+  await expectCleanLayout(page, "profile card with shared app limit");
+  await expect(
+    card.getByRole("list", { name: `${name} shared app limits` }),
+  ).toHaveText("Games with a long shared name 0 / 40 min");
+  await expectCleanLayout(page, "profile card with shared app limit");
 
   await card.getByRole("button", { name: "Pause" }).click();
   await expect(card.locator(".badge")).toHaveText("paused");

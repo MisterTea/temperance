@@ -173,6 +173,10 @@ fn data_dir() -> PathBuf {
 }
 
 fn main() {
+    if cfg!(target_os = "linux") {
+        eprintln!("Temperance has no Linux device app. Protect Linux computers by routing them through the gateway as home-network devices.");
+        std::process::exit(2);
+    }
     let dir = data_dir();
     std::fs::create_dir_all(&dir).expect("create data directory");
     let mut nonce = [0u8; 32];

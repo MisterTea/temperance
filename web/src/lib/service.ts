@@ -97,6 +97,7 @@ export function snapshot(state: State, at = now()) {
     retention_days: state.retention_days,
     offline_grace_seconds: state.offline_grace_seconds,
     gateway_seen: state.gateway_seen,
+    needs_onboarding: !state.setup_completed_at && state.profiles.length === 0,
     total: profiles.reduce((sum, p) => sum + p.used, 0),
     blocked: profiles.filter((p) => p.access_reason !== "allowed").length,
     recent: state.history.slice(-100).reverse(),
@@ -120,6 +121,13 @@ export function changed(state: State, kind: string, message: string) {
   state.version++;
   event(state, kind, message);
   prune(state);
+}
+export function completeSetup(state: State) {
+  if (!state.setup_completed_at) {
+    state.setup_completed_at = now();
+    changed(state, "account", "First-run setup finished");
+  }
+  return snapshot(state);
 }
 export function saveProfile(state: State, input: unknown) {
   const data = profileSchema.parse(input);
@@ -415,7 +423,7 @@ const activityInput = z.object({
       z.object({
         device_id: z.string(),
         minute: z.number().int().optional(),
-        buckets: z.array(z.string().max(300)).max(20).default(["total"]),
+        buckets: z.array(z.string().max(300)).max(40).default(["total"]),
       }),
     )
     .max(1000)
@@ -463,7 +471,10 @@ export function account(state: State, input: unknown) {
     const daily = (state.usage[day] ??= {});
     const usage = (daily[p.id] ??= {});
     for (const bucket of entry.buckets) {
-      if (bucket !== "total" && !/^(category|site):[a-z0-9.-]+$/.test(bucket))
+      if (
+        bucket !== "total" &&
+        !/^((category|site):[a-z0-9.-]+|group:[a-z0-9-]+)$/.test(bucket)
+      )
         throw new Error("Invalid usage bucket");
       const list = (usage[bucket] ??= []);
       if (!list.includes(minute)) list.push(minute);
@@ -501,7 +512,7 @@ const rewardSchema = z.object({
   window_id: z.string().optional(),
   scope: z
     .string()
-    .regex(/^(total|category:[a-z]+|site:[a-z0-9.-]+)$/)
+    .regex(/^(total|category:[a-z]+|site:[a-z0-9.-]+|group:[a-z0-9-]+)$/)
     .default("total"),
 });
 export function reward(state: State, input: unknown) {

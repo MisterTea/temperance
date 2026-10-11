@@ -1,6 +1,6 @@
 [package]
 name = "temperance-desktop"
-description = "Temperance VPN client for Linux, Windows, and macOS"
+description = "Temperance VPN client for Windows (also builds on macOS)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

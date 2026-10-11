@@ -59,9 +59,15 @@ async function api(path: string, body?: unknown, token?: string) {
   return response.json();
 }
 
+/** An owner who already finished the first-run wizard. */
+async function setupOwner() {
+  await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+  await api("api/setup/complete", {}, ADMIN);
+}
+
 /** A household with an owner, two profiles, an enrolled phone, usage, history and a request. */
 async function seedHousehold() {
-  await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+  await setupOwner();
   await api(
     "api/profiles",
     {
@@ -175,32 +181,144 @@ beforeEach(() => {
 });
 
 describe("sign-in", () => {
-  it("creates the owner account on first run", async () => {
+  it("walks a fresh install through the admin account and first rules", async () => {
     const user = userEvent.setup();
     render(<Dashboard />);
-    const form = await screen.findByRole("form", {
-      name: "Create owner account",
+    const progress = await screen.findByRole("list", {
+      name: "Setup progress",
     });
-    await user.type(within(form).getByLabelText("Setup token"), "wrong");
-    await user.type(within(form).getByLabelText("Username"), OWNER.username);
-    await user.type(within(form).getByLabelText("Password"), OWNER.password);
-    await user.click(within(form).getByRole("button"));
+    expect(within(progress).getByText("Welcome").closest("li")).toHaveProperty(
+      "ariaCurrent",
+      "step",
+    );
+    await user.click(screen.getByRole("button", { name: "Get started" }));
+
+    const account = await screen.findByRole("form", {
+      name: "Create the administrator account",
+    });
+    await user.type(within(account).getByLabelText(/^Setup token/), "wrong");
+    await user.clear(within(account).getByLabelText("Username"));
+    await user.type(within(account).getByLabelText("Username"), OWNER.username);
+    await user.type(
+      within(account).getByLabelText(/^Password/),
+      OWNER.password,
+    );
+    await user.type(
+      within(account).getByLabelText("Confirm password"),
+      "something-else-1",
+    );
+    await user.click(
+      within(account).getByRole("button", { name: "Create account" }),
+    );
+    expect(screen.getByRole("alert").textContent).toBe(
+      "The passwords do not match",
+    );
+    await user.clear(within(account).getByLabelText("Confirm password"));
+    await user.type(
+      within(account).getByLabelText("Confirm password"),
+      OWNER.password,
+    );
+    await user.click(
+      within(account).getByRole("button", { name: "Create account" }),
+    );
     await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).not.toBe(""),
+      expect(screen.getByRole("alert").textContent).toMatch(/setup token/i),
     );
     expect((await state()).users ?? []).toHaveLength(0);
 
-    await user.clear(within(form).getByLabelText("Setup token"));
-    await user.type(within(form).getByLabelText("Setup token"), ADMIN);
-    await user.click(within(form).getByRole("button"));
-    await screen.findByText(
-      "Welcome home. Add a profile, then enroll a device.",
+    await user.clear(within(account).getByLabelText(/^Setup token/));
+    await user.type(within(account).getByLabelText(/^Setup token/), ADMIN);
+    await user.click(
+      within(account).getByRole("button", { name: "Create account" }),
     );
+
+    const rules = await screen.findByRole("form", {
+      name: "Starting rules for your first family member",
+    });
     expect((await state()).users?.[0].username).toBe("robin");
+    await user.type(within(rules).getByLabelText("Their name"), "Avery");
+    await user.click(within(rules).getByLabelText(/^Teen/));
+    expect(
+      (
+        within(rules).getByLabelText(
+          /Daily screen-time limit/,
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("180");
+    await user.click(within(rules).getByLabelText("Social media"));
+    const minutes = within(rules).getByLabelText(
+      "Minutes per day for all games together",
+    );
+    await user.clear(minutes);
+    await user.type(minutes, "60");
+    const games = within(rules).getByLabelText("Games in the group");
+    await user.type(games, "{Enter}fortnite.com");
+    await user.click(within(rules).getByRole("button", { name: "Save rules" }));
+
+    await screen.findByRole("heading", { name: "Avery’s rules are ready." });
+    const avery = (await state()).profiles[0];
+    expect(avery).toMatchObject({
+      name: "Avery",
+      filter_level: "teen",
+      limit: 180,
+      categories: ["social"],
+      safe_search: true,
+      bedtime: { start: "21:00", end: "07:00" },
+    });
+    expect(avery.app_limits).toEqual([
+      {
+        id: "games",
+        name: "Games",
+        minutes: 60,
+        domains: [
+          "roblox.com",
+          "epicgames.com",
+          "steampowered.com",
+          "minecraft.net",
+          "fortnite.com",
+        ],
+      },
+    ]);
+    expect((await state()).setup_completed_at).toBeUndefined();
+
+    await user.click(screen.getByRole("button", { name: "Add a device" }));
+    await screen.findByRole("heading", { name: "Devices" });
+    expect((await state()).setup_completed_at).toBeGreaterThan(0);
+  });
+
+  it("resumes the rules step after sign-in and can be skipped", async () => {
+    await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+    await signIn();
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    await screen.findByRole("form", {
+      name: "Starting rules for your first family member",
+    });
+    await user.click(
+      within(screen.getByRole("list", { name: "Setup progress" })).getByText(
+        "Family rules",
+      ),
+    );
+    await user.click(within(screen.getByRole("form")).getByLabelText(/^Adult/));
+    expect(
+      (
+        screen.getByLabelText(
+          "Enforce SafeSearch and YouTube Restricted Mode",
+        ) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+    await user.click(screen.getByLabelText("Bedtime"));
+    expect((screen.getByLabelText("From") as HTMLInputElement).disabled).toBe(
+      true,
+    );
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+    await screen.findByRole("heading", { name: "Your family's digital day." });
+    expect((await state()).profiles).toHaveLength(0);
+    expect((await state()).setup_completed_at).toBeGreaterThan(0);
   });
 
   it("rejects a wrong password, then signs in and out", async () => {
-    await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+    await setupOwner();
     cookie = "";
     const user = userEvent.setup();
     render(<Dashboard />);
@@ -266,7 +384,7 @@ describe("overview", () => {
 
 describe("profile editor", () => {
   it("creates a profile with every rule type", async () => {
-    await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+    await setupOwner();
     await signIn();
     const user = await openDashboard();
     await user.click(screen.getByRole("button", { name: "+ Add profile" }));
@@ -343,11 +461,28 @@ describe("profile editor", () => {
     await user.click(
       sites.getByRole("button", { name: "Remove tiktok.com budget" }),
     );
+    const shared = within(d.getByRole("group", { name: "Shared app limits" }));
+    await user.click(shared.getByRole("button", { name: "+ Add app group" }));
+    await user.click(shared.getByRole("button", { name: "+ Add app group" }));
+    await user.click(
+      shared.getAllByRole("button", { name: "Remove group" })[1],
+    );
+    const group = within(shared.getByRole("group", { name: "App group 1" }));
+    await user.type(group.getByLabelText("Group name"), "Games");
+    await user.clear(group.getByLabelText("Shared minutes per day"));
+    await user.type(group.getByLabelText("Shared minutes per day"), "40");
+    await user.type(
+      group.getByLabelText("Apps and sites in this group"),
+      "roblox.com{Enter}minecraft.net, fortnite.com",
+    );
     await user.type(
       d.getByLabelText("Always allowed domains"),
       "school.example",
     );
-    await user.type(d.getByLabelText("Blocked domains"), "bad.example{enter} ");
+    await user.type(
+      d.getByLabelText("Blocked domains"),
+      "bad.example{enter}worse.example",
+    );
     await user.type(d.getByLabelText(/Unmanaged domains/), "bank.example");
     await user.click(d.getByRole("button", { name: "Save profile" }));
 
@@ -367,9 +502,24 @@ describe("profile editor", () => {
       category_limits: { video: 45 },
       site_limits: { "roblox.com": 20 },
       allow: ["school.example"],
-      deny: ["bad.example"],
+      deny: ["bad.example", "worse.example"],
       unmanaged: ["bank.example"],
     });
+    expect(saved.app_limits).toEqual([
+      {
+        id: expect.stringMatching(/^[a-z0-9-]+$/),
+        name: "Games",
+        minutes: 40,
+        domains: ["roblox.com", "minecraft.net", "fortnite.com"],
+      },
+    ]);
+    const card = screen
+      .getByRole("heading", { name: "Riley" })
+      .closest("article")!;
+    expect(
+      within(card).getByRole("list", { name: "Riley shared app limits" })
+        .textContent,
+    ).toBe("Games 0 / 40 min");
     expect(saved.bedtime).toEqual({
       start: "21:30",
       end: "06:45",
@@ -775,7 +925,7 @@ describe("settings", () => {
   });
 
   it("manages co-parents and changes the password", async () => {
-    await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+    await setupOwner();
     await signIn();
     const user = await openDashboard();
     await tab(user, "Settings");
@@ -829,7 +979,7 @@ describe("settings", () => {
   });
 
   it("shows a parent account without owner controls", async () => {
-    await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+    await setupOwner();
     await api(
       "api/users",
       { username: "jordan", password: "second-parent-pass" },

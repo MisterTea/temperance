@@ -35,8 +35,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, artifact: temperance-linux-amd64 }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, artifact: temperance-linux-arm64 }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, artifact: temperance-windows-amd64.exe }
           - { os: windows-latest, target: aarch64-pc-windows-msvc, artifact: temperance-windows-arm64.exe, cross: true }
           - { os: macos-latest, target: aarch64-apple-darwin, artifact: temperance-macos-arm64 }

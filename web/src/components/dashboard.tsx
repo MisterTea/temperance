@@ -1,26 +1,13 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import type { snapshot } from "@/lib/service";
-import type { Profile } from "@/lib/policy";
+import { dailyLimit, type Profile } from "@/lib/policy";
 import type { History } from "@/lib/model";
 import { ProfileEditor } from "./profile-editor";
+import { Onboarding } from "./onboarding";
+import { api } from "./api";
 type DashboardState = ReturnType<typeof snapshot>;
 type ParentAccount = { id: string; username: string; role: string };
-async function api<T>(path: string, data?: unknown): Promise<T> {
-  const response = await fetch(path, {
-    cache: "no-store",
-    ...(data === undefined
-      ? {}
-      : {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        }),
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? "Request failed");
-  return result;
-}
 const ago = (at: number) => {
   const minutes = Math.max(0, Math.round((Date.now() / 1000 - at) / 60));
   if (minutes < 1) return "just now";
@@ -28,12 +15,17 @@ const ago = (at: number) => {
   if (minutes < 1440) return `${Math.round(minutes / 60)} h ago`;
   return `${Math.round(minutes / 1440)} d ago`;
 };
-const bucketLabel = (bucket: string) => bucket.replace(/^(category|site):/, "");
+const bucketLabel = (bucket: string, profile?: Profile) =>
+  bucket.startsWith("group:")
+    ? ((profile?.app_limits ?? []).find((g) => "group:" + g.id === bucket)
+        ?.name ?? "App group")
+    : bucket.replace(/^(category|site):/, "");
 export function Dashboard() {
   const [state, setState] = useState<DashboardState>();
   const [error, setError] = useState("");
   const [signedIn, setSignedIn] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [onboarding, setOnboarding] = useState<boolean>();
   const [parents, setParents] = useState<ParentAccount[]>([]);
   const [me, setMe] = useState<ParentAccount>();
   const [loading, setLoading] = useState(true);
@@ -73,6 +65,9 @@ export function Dashboard() {
     const timer = setInterval(refresh, 10000);
     return () => clearInterval(timer);
   }, [refresh]);
+  useEffect(() => {
+    if (state?.needs_onboarding) setOnboarding((o) => o ?? true);
+  }, [state?.needs_onboarding]);
   const save = async (path: string, value: unknown) => {
     const next = await api<DashboardState>(path, value);
     setState(next);
@@ -127,6 +122,28 @@ export function Dashboard() {
       .then(setUsage)
       .catch((e) => setError(e.message));
   }, [tab, state, period]);
+  const finishOnboarding = (next: "devices" | "overview") => {
+    setOnboarding(false);
+    setNeedsSetup(false);
+    setTab(next);
+    refresh();
+  };
+  if (!signedIn && needsSetup && !loading)
+    return (
+      <Onboarding
+        mode="account"
+        onAccountCreated={refresh}
+        onDone={finishOnboarding}
+      />
+    );
+  if (signedIn && state && (onboarding ?? state.needs_onboarding))
+    return (
+      <Onboarding
+        mode="rules"
+        onAccountCreated={refresh}
+        onDone={finishOnboarding}
+      />
+    );
   if (!signedIn)
     return (
       <main className="sign-in">
@@ -137,29 +154,16 @@ export function Dashboard() {
           <p>Loading…</p>
         ) : (
           <form
-            aria-label={needsSetup ? "Create owner account" : "Sign in"}
+            aria-label="Sign in"
             onSubmit={(e) => {
               e.preventDefault();
               const f = Object.fromEntries(new FormData(e.currentTarget));
               act(async () => {
-                await api(needsSetup ? "/v1/setup" : "/v1/login", f);
-                setNeedsSetup(false);
+                await api("/v1/login", f);
                 await refresh();
               });
             }}
           >
-            {needsSetup ? (
-              <>
-                <p>
-                  First run: create the household owner account using the
-                  server’s setup token (<code>TEMPERANCE_ADMIN_TOKEN</code>).
-                </p>
-                <label>
-                  Setup token
-                  <input name="setup_token" type="password" required />
-                </label>
-              </>
-            ) : null}
             <label>
               Username
               <input
@@ -175,13 +179,10 @@ export function Dashboard() {
                 name="password"
                 type="password"
                 required
-                minLength={needsSetup ? 10 : undefined}
-                autoComplete={needsSetup ? "new-password" : "current-password"}
+                autoComplete="current-password"
               />
             </label>
-            <button className="primary">
-              {needsSetup ? "Create account" : "Sign in"}
-            </button>
+            <button className="primary">Sign in</button>
           </form>
         )}
         <p role="alert" className="error">
@@ -371,6 +372,29 @@ export function Dashboard() {
                       {p.unmanaged.length} unmanaged exceptions ·{" "}
                       {p.rewards.length} rewards today
                     </p>
+                    {(p.app_limits ?? []).length ? (
+                      <ul
+                        className="app-groups"
+                        aria-label={`${p.name} shared app limits`}
+                      >
+                        {p.app_limits.map((g) => (
+                          <li key={g.id}>
+                            {g.name}{" "}
+                            <span>
+                              {p.bucket_usage["group:" + g.id] ?? 0} /{" "}
+                              {dailyLimit(
+                                p,
+                                Date.now() / 1000,
+                                state.timezone,
+                                p.rewards,
+                                "group:" + g.id,
+                              )}{" "}
+                              min
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                     <div className="actions">
                       <button
                         className="secondary"
@@ -719,7 +743,7 @@ export function Dashboard() {
                     <ol>
                       {top.map(([bucket, n]) => (
                         <li key={bucket}>
-                          {bucketLabel(bucket)} <span>{n} min</span>
+                          {bucketLabel(bucket, p)} <span>{n} min</span>
                         </li>
                       ))}
                     </ol>
@@ -900,7 +924,10 @@ export function Dashboard() {
                       profile_id: Number(f.get("profile_id")),
                       kind,
                       ...(kind === "extra_time"
-                        ? { minutes: Number(f.get("minutes")) }
+                        ? {
+                            minutes: Number(f.get("minutes")),
+                            scope: f.get("scope") || "total",
+                          }
                         : kind === "late_bedtime"
                           ? { bedtime: f.get("bedtime") || undefined }
                           : { window_id: f.get("window_id") || undefined }),
@@ -940,6 +967,20 @@ export function Dashboard() {
                       max={1440}
                       defaultValue={15}
                     />
+                  </label>
+                  <label>
+                    Extra time for
+                    <select name="scope">
+                      <option value="total">Daily allowance</option>
+                      {(
+                        profileById.get(selected ?? state.profiles[0]?.id)
+                          ?.app_limits ?? []
+                      ).map((g) => (
+                        <option key={g.id} value={"group:" + g.id}>
+                          {g.name} (shared app limit)
+                        </option>
+                      ))}
+                    </select>
                   </label>
                   <label>
                     New bedtime

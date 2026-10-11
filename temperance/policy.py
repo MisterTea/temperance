@@ -40,6 +40,13 @@ def classify(host,extra=None):
             if len(d)>longest and matches(host,d):longest,category=len(d),name
     return category
 
+def group_scopes(profile,host):
+    """Shared app-group budgets that `host` draws from."""
+    return ['group:'+g['id'] for g in profile.get('app_limits',[]) if any(matches(host,d) for d in g['domains'])]
+
+def limit_scopes(profile,host,category):
+    return ['category:'+category]+['site:'+d for d in profile.get('site_limits',{}) if matches(host,d)]+group_scopes(profile,host)
+
 def rewards(profile,at,zone):
     day=local(at,zone)[0]
     return [r for r in profile.get('rewards',[]) if r['day']==day]
@@ -48,6 +55,7 @@ def daily_limit(profile,at,zone,scope='total'):
     _,_,weekday=local(at,zone)
     if scope=='total':base=profile.get('weekday_limits',{}).get(str(weekday),profile.get('limit',0))
     elif scope.startswith('category:'):base=profile.get('category_limits',{}).get(scope[9:],0)
+    elif scope.startswith('group:'):base=next((g['minutes'] for g in profile.get('app_limits',[]) if g['id']==scope[6:]),0)
     else:base=profile.get('site_limits',{}).get(scope[5:],0)
     if not base:return 0
     return min(1440,base+sum(r.get('minutes',0) for r in rewards(profile,at,zone) if r['kind']=='extra_time' and r.get('scope','total')==scope))
@@ -79,8 +87,7 @@ def domain_reason(profile,host,zone,at=None,household_paused=False,extra=None):
     focuses=[w for w in active_windows(profile,at,zone) if w['mode']=='focus']
     if any(not any(matches(host,d) for d in w['allow']) and category not in w['allowed_categories'] for w in focuses):return 'focus time'
     if profile.get('filter_level','adult')=='none':return 'allowed'
-    scopes=['category:'+category]+['site:'+d for d in profile.get('site_limits',{}) if matches(host,d)]
-    for scope in scopes:
+    for scope in limit_scopes(profile,host,category):
         limit=daily_limit(profile,at,zone,scope)
         if limit and profile.get('bucket_usage',{}).get(scope,0)>=limit:return 'limit '+scope
     if any(matches(host,d) for d in profile.get('allow',[])):return 'allowed'

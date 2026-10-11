@@ -10,7 +10,7 @@ build() { # rust-target os arch
   suffix=''; [ "$2" != windows ] || suffix='.exe'
   cp "target/$1/release/temperance$suffix" "../build/temperance-$2-$3$suffix"
 }
-for spec in ${TARGETS:-x86_64-unknown-linux-gnu:linux:amd64 aarch64-unknown-linux-gnu:linux:arm64 x86_64-pc-windows-gnu:windows:amd64}; do
+for spec in ${TARGETS:-x86_64-pc-windows-gnu:windows:amd64}; do
   IFS=:; set -- $spec; unset IFS
   build "$1" "$2" "$3"
 done

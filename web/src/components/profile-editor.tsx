@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useId, useRef, useState } from "react";
-import { CATALOG, DAYS, type Profile } from "@/lib/policy";
+import { CATALOG, DAYS, type AppLimit, type Profile } from "@/lib/policy";
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 type Span = { name: string; start: string; end: string; days: number[] };
 const WEEK = 7 * 1440;
@@ -62,7 +62,41 @@ const fresh = (): Omit<Profile, "id"> => ({
   schedules: [],
   category_limits: {},
   site_limits: {},
+  app_limits: [],
 });
+/** One domain per line (commas also work); keeps the typed text so new lines can be started. */
+export function DomainList({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string[];
+  onChange: (domains: string[]) => void;
+  placeholder?: string;
+}) {
+  const [text, setText] = useState(value.join("\n"));
+  return (
+    <label>
+      {label}
+      <textarea
+        rows={3}
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange(
+            e.target.value
+              .split(/[\s,]+/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+          );
+        }}
+      />
+    </label>
+  );
+}
 export function ProfileEditor({
   profile,
   onClose,
@@ -75,7 +109,9 @@ export function ProfileEditor({
   onDelete?: () => Promise<void>;
 }) {
   const [value, setValue] = useState(() =>
-    profile ? structuredClone(profile) : fresh(),
+    profile
+      ? { ...structuredClone(profile), app_limits: profile.app_limits ?? [] }
+      : fresh(),
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -566,27 +602,104 @@ export function ProfileEditor({
             Add site
           </button>
         </fieldset>
+        <fieldset>
+          <legend>Shared app limits</legend>
+          <p className="hint">
+            Apps in a group draw from one daily budget: 60 minutes for Games
+            means 60 minutes across all of them, not 60 each.
+          </p>
+          {value.app_limits.map((group, index) => {
+            const update = (next: Partial<AppLimit>) =>
+              field(
+                "app_limits",
+                value.app_limits.map((g, i) =>
+                  i === index ? { ...g, ...next } : g,
+                ),
+              );
+            return (
+              <div
+                key={group.id}
+                className="app-group"
+                role="group"
+                aria-label={`App group ${index + 1}`}
+              >
+                <div className="two">
+                  <label>
+                    Group name
+                    <input
+                      value={group.name}
+                      maxLength={60}
+                      required
+                      onChange={(e) => update({ name: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    Shared minutes per day
+                    <input
+                      type="number"
+                      min={1}
+                      max={1440}
+                      required
+                      value={group.minutes}
+                      onChange={(e) =>
+                        update({ minutes: Number(e.target.value) })
+                      }
+                    />
+                  </label>
+                </div>
+                <DomainList
+                  label="Apps and sites in this group"
+                  placeholder={"roblox.com\nminecraft.net"}
+                  value={group.domains}
+                  onChange={(domains) => update({ domains })}
+                />
+                <button
+                  type="button"
+                  className="quiet"
+                  onClick={() =>
+                    field(
+                      "app_limits",
+                      value.app_limits.filter((_, i) => i !== index),
+                    )
+                  }
+                >
+                  Remove {group.name || "group"}
+                </button>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            className="secondary"
+            disabled={value.app_limits.length >= 20}
+            onClick={() =>
+              field("app_limits", [
+                ...value.app_limits,
+                {
+                  id: crypto.randomUUID().slice(0, 8),
+                  name: "",
+                  domains: [],
+                  minutes: 60,
+                },
+              ])
+            }
+          >
+            + Add app group
+          </button>
+        </fieldset>
         {(["allow", "deny", "unmanaged"] as const).map((key) => (
-          <label key={key}>
-            {key === "allow"
-              ? "Always allowed domains"
-              : key === "deny"
-                ? "Blocked domains"
-                : "Unmanaged domains (bypass pauses and budgets)"}
-            <textarea
-              rows={3}
-              value={value[key].join("\n")}
-              onChange={(e) =>
-                field(
-                  key,
-                  e.target.value
-                    .split("\n")
-                    .map((s) => s.trim())
-                    .filter(Boolean),
-                )
-              }
-            />
-          </label>
+          <DomainList
+            key={key}
+            label={
+              key === "allow"
+                ? "Always allowed domains"
+                : key === "deny"
+                  ? "Blocked domains"
+                  : "Unmanaged domains (bypass pauses and budgets)"
+            }
+            value={value[key]}
+            onChange={(next) => field(key, next)}
+          />
         ))}
         <p role="alert" className="error">
           {error}

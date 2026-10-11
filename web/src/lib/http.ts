@@ -251,6 +251,8 @@ export async function handle(
               return service.answerRequest(state, data);
             case "api/settings":
               return service.settings(state, data);
+            case "api/setup/complete":
+              return service.completeSetup(state);
             case "api/feeds":
               return service.addFeed(state, data);
             case "api/events/read":
@@ -650,6 +652,7 @@ function validateBackup(value: unknown): State {
       .max(500),
     paused: z.boolean(),
     home_profile_id: id.optional(),
+    setup_completed_at: stamp.optional(),
     extra_domains: z.record(
       z.string(),
       z.array(z.string().max(253)).max(20000),

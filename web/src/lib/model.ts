@@ -90,6 +90,8 @@ export interface State {
   retention_days: number;
   offline_grace_seconds: number;
   gateway_seen?: number;
+  /** Set when the first-run wizard is finished or skipped. */
+  setup_completed_at?: number;
 }
 export const emptyState = (): State => ({
   schema: 2,

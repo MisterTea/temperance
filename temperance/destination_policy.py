@@ -2,7 +2,7 @@
 import hashlib
 import ipaddress
 import time
-from .policy import classify, domain_reason, matches
+from .policy import classify, domain_reason, group_scopes, matches
 
 TUNNEL=ipaddress.ip_network('10.77.0.0/24')
 
@@ -45,6 +45,7 @@ def destination_rules(state,destinations,expired=False):
             # Include individual tracked host and any configured site/app budget parent.
             scopes.add('site:'+host)
             scopes.update('site:'+site for site in p.get('site_limits',{}) if matches(host,site))
+            scopes.update(group_scopes(p,host))
         total=counter_name(ip)
         counters=[]
         for scope in sorted(scopes):

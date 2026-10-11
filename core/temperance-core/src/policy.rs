@@ -130,6 +130,15 @@ pub struct Reward {
     pub scope: Option<String>,
 }
 
+/// A named group of apps/sites that share one daily budget (usage bucket `group:<id>`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, uniffi::Record)]
+pub struct AppLimit {
+    pub id: String,
+    pub name: String,
+    pub domains: Vec<String>,
+    pub minutes: u32,
+}
+
 /// The effective profile a device receives in `/v1/device/state`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct Profile {
@@ -171,6 +180,8 @@ pub struct Profile {
     pub category_limits: HashMap<String, u32>,
     #[serde(default)]
     pub site_limits: HashMap<String, u32>,
+    #[serde(default)]
+    pub app_limits: Vec<AppLimit>,
     #[serde(default)]
     pub used: u32,
     #[serde(default)]
@@ -276,6 +287,11 @@ pub fn daily_limit(p: &Profile, at: i64, tz: Tz, scope: &str) -> u32 {
             .unwrap_or(&p.limit)
     } else if let Some(category) = scope.strip_prefix("category:") {
         *p.category_limits.get(category).unwrap_or(&0)
+    } else if let Some(group) = scope.strip_prefix("group:") {
+        p.app_limits
+            .iter()
+            .find(|g| g.id == group)
+            .map_or(0, |g| g.minutes)
     } else {
         *p.site_limits
             .get(scope.trim_start_matches("site:"))
@@ -372,6 +388,12 @@ pub fn domain_reason_at(
     let mut sites: Vec<&String> = p.site_limits.keys().filter(|d| matches(host, d)).collect();
     sites.sort();
     scopes.extend(sites.into_iter().map(|d| format!("site:{d}")));
+    scopes.extend(
+        p.app_limits
+            .iter()
+            .filter(|g| g.domains.iter().any(|d| matches(host, d)))
+            .map(|g| format!("group:{}", g.id)),
+    );
     for scope in scopes {
         let limit = daily_limit(p, at, tz, &scope);
         if limit > 0 && *p.bucket_usage.get(&scope).unwrap_or(&0) >= limit {

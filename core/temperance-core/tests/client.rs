@@ -364,6 +364,33 @@ fn policy_engine_edge_cases() {
         .unwrap(),
         "limit site:roblox.com"
     );
+    p.site_limits.clear();
+    p.app_limits = vec![temperance_core::AppLimit {
+        id: "games".into(),
+        name: "Games".into(),
+        domains: vec!["roblox.com".into(), "minecraft.net".into()],
+        minutes: 45,
+    }];
+    p.bucket_usage = HashMap::from([("group:games".into(), 45)]);
+    for host in ["minecraft.net", "www.roblox.com"] {
+        assert_eq!(
+            domain_reason(p.clone(), host.into(), tz.clone(), SUNDAY_1PM, false).unwrap(),
+            "limit group:games"
+        );
+    }
+    p.bucket_usage = HashMap::from([("group:games".into(), 44)]);
+    assert_eq!(
+        domain_reason(
+            p.clone(),
+            "minecraft.net".into(),
+            tz.clone(),
+            SUNDAY_1PM,
+            false
+        )
+        .unwrap(),
+        "allowed"
+    );
+    p.app_limits.clear();
     p.managed = false;
     assert_eq!(
         access_reason(p.clone(), tz.clone(), SUNDAY_1PM, true).unwrap(),
