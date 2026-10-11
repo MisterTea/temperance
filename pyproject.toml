@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "temperance-gateway"
+version = "0.1.0"
+description = "Local-first, open source family DNS controls"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "Temperance contributors"}]
+dependencies = []
+
+[project.scripts]
+temperance = "temperance.server:main"
+
+[tool.setuptools.packages.find]
+include = ["temperance*"]
+
+[tool.setuptools.package-data]
+temperance = ["static/*"]
