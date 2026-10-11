@@ -5,6 +5,14 @@ export interface Repository {
 }
 // libSQL's documented HTTP pipeline protocol keeps the service independent of
 // native SQLite binaries, filesystem persistence, and WebSocket shims.
+class DatabaseError extends Error {
+  constructor(
+    code: string,
+    public missingTable: boolean,
+  ) {
+    super("Database SQL error: " + code);
+  }
+}
 export class SQLRepository implements Repository {
   private endpoint: string;
   constructor(
@@ -53,7 +61,10 @@ export class SQLRepository implements Repository {
     const value = await response.json();
     const result = value.results?.[0];
     if (result?.type === "error")
-      throw new Error("Database SQL error: " + result.error?.code);
+      throw new DatabaseError(
+        result.error?.code ?? "unknown",
+        /no such table/i.test(result.error?.message ?? ""),
+      );
     if (result?.type !== "ok" || !result.response?.result)
       throw new Error("Invalid database response");
     return result.response.result as {
@@ -77,7 +88,7 @@ export class SQLRepository implements Repository {
         "SELECT revision,body FROM temperance_state WHERE id=1",
       );
     } catch (error) {
-      if (error instanceof Error && error.message.includes("SQLITE_ERROR")) {
+      if (error instanceof DatabaseError && error.missingTable) {
         await this.prepare();
         result = await this.execute(
           "SELECT revision,body FROM temperance_state WHERE id=1",
