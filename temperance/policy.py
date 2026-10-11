@@ -1,8 +1,7 @@
 """Version-two policy semantics shared with the Next.js service via golden tests."""
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 import time
-from .store import matches
 
 CATALOG = {
  'social':['facebook.com','instagram.com','tiktok.com','reddit.com','x.com','snapchat.com'],
@@ -18,6 +17,9 @@ CATALOG = {
  'malware':[],
 }
 PRESETS={'kid':['adult','gambling','proxy','malware'],'teen':['adult','gambling','malware'],'adult':['malware'],'none':[]}
+
+def matches(host,rule):
+    return host==rule or host.endswith('.'+rule)
 
 def local(at,zone):
     value=datetime.fromtimestamp(at,ZoneInfo(zone))

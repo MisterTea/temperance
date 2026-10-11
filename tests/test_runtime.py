@@ -1,4 +1,5 @@
 """Entry points and host-integration code exercised with mocked OS boundaries."""
+import base64
 import io
 import json
 import struct
@@ -10,9 +11,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from temperance import control, gateway, server
+from temperance import gateway
 from temperance.gateway_store import GatewayStore, addresses
-from temperance.store import Store
 
 KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='
 TOKEN = 't' * 40
@@ -71,16 +71,6 @@ class HostCommandTests(unittest.TestCase):
         self.assertTrue(scripts[0].startswith('delete table inet temperance\n'))
         self.assertNotIn('temperance_nat', scripts[0].split('\n')[0])
 
-    def test_activity_reads_counters(self):
-        st = state(peers=state()['peers'] + [{'id': 'idle', 'ip': '10.77.0.3', 'profile_id': 1, 'public_key': KEY}])
-        counters = {'nftables': [
-            {'counter': {'name': 'peer_2', 'bytes': 10}},
-            {'counter': {'name': 'peer_3', 'bytes': 0}},
-            {'table': {'name': 'temperance'}},
-        ]}
-        with mock.patch('subprocess.run', return_value=Completed(json.dumps(counters))):
-            self.assertEqual(gateway.activity('temperance', st), ['dev'])
-
     def test_detailed_activity_attributes_destination_buckets(self):
         p = profile(category_limits={'video': 30})
         st = state(profiles=[p])
@@ -115,24 +105,21 @@ class HostCommandTests(unittest.TestCase):
         self.assertEqual(seen['auth'], 'Bearer ' + TOKEN)
         self.assertEqual(json.loads(seen['body']), {'a': 1})
 
-    def test_import_state_for_legacy_and_v2_stores(self):
-        legacy = {'timezone': 'UTC', 'profiles': [{'id': 1, 'name': 'Old', 'limit': 5}],
-                  'peers': [{'ip': '10.77.0.2', 'id': 'dev', 'profile_id': 1}]}
-        store = Store(':memory:')
-        gateway.import_state(store, legacy)
-        self.assertEqual(store.db.execute('SELECT COUNT(*) FROM devices').fetchone()[0], 1)
-        v2 = GatewayStore()
-        gateway.import_state(v2, state())
-        self.assertEqual(v2.state['policy_schema'], 2)
+    def test_import_state_and_policy_format(self):
+        store = GatewayStore()
+        gateway.import_state(store, state())
+        self.assertEqual(store.state['policy_schema'], 2)
+        with mock.patch('temperance.gateway.call', return_value=state()):
+            self.assertEqual(gateway.fetch_state('https://svc/', TOKEN)['version'], 1)
+        with mock.patch('temperance.gateway.call', return_value={'timezone': 'UTC', 'profiles': [], 'peers': []}), \
+                self.assertRaisesRegex(ValueError, 'Unsupported policy format'):
+            gateway.fetch_state('https://svc', TOKEN)
 
-    def test_legacy_network_blocking(self):
-        p = {'paused': False, 'limit': 0, 'used': 0, 'bedtime': {'start': '21:00', 'end': '07:00'}}
-        night = 1760241600  # 2025-10-12 04:00 UTC
-        self.assertTrue(gateway.network_blocked(p, 'UTC', night))
-        self.assertFalse(gateway.network_blocked({**p, 'bedtime': {'start': '', 'end': ''}}, 'UTC', night))
-        self.assertTrue(gateway.network_blocked({**p, 'limit': 1, 'used': 1, 'bedtime': {'start': '', 'end': ''}}, 'UTC'))
-        legacy = {'timezone': 'UTC', 'profiles': [{'id': 1, **p, 'bedtime': {'start': '', 'end': ''}}], 'peers': []}
-        self.assertTrue(gateway.peer_allowed(legacy, {'profile_id': 1}))
+    def test_keys_and_interface_names_are_validated(self):
+        self.assertEqual(gateway.key(KEY), KEY)
+        for bad in ('not base64!', base64.b64encode(bytes(32)).decode(), base64.b64encode(b'short').decode(), None):
+            with self.subTest(bad), self.assertRaises(ValueError):
+                gateway.key(bad)
         with self.assertRaises(ValueError):
             gateway.firewall(state(), 'bad name!', 'wan')
         with self.assertRaises(ValueError):
@@ -216,7 +203,6 @@ class GatewayMainTests(unittest.TestCase):
                 mock.patch('temperance.gateway.sync_peers'), mock.patch('temperance.gateway.UDPServer', FakeServer), \
                 mock.patch('temperance.gateway.TCPServer', FakeServer), \
                 mock.patch('temperance.gateway.detailed_activity', return_value=[]), \
-                mock.patch('temperance.gateway.activity', return_value=['dev']), \
                 mock.patch('subprocess.run', return_value=Completed()), mock.patch('time.sleep', fake_sleep), \
                 redirect_stdout(io.StringIO()):
             gateway.main()
@@ -333,69 +319,6 @@ class HomeDeviceTests(unittest.TestCase):
                 mock.patch.dict('os.environ', env), mock.patch('temperance.gateway.call', return_value=state(lan_devices=[HOME_TV])), redirect_stdout(out):
             gateway.main()
         self.assertIn('dnat to 192.168.1.1:53', out.getvalue())
-
-
-def free_port():
-    import socket
-    with socket.socket() as s:
-        s.bind(('127.0.0.1', 0))
-        return s.getsockname()[1]
-
-
-class ServerMainTests(unittest.TestCase):
-    def run_main(self, *args):
-        with mock.patch.object(sys, 'argv', ['temperance', *args]), redirect_stdout(io.StringIO()) as out, \
-                mock.patch('sys.stderr', io.StringIO()) as err:
-            try:
-                server.main()
-            except SystemExit as exc:
-                return exc.code, out.getvalue() + err.getvalue()
-        return 0, out.getvalue()
-
-    def test_dns_server_starts_and_shuts_down(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            data = Path(tmp) / 'nested' / 'db.sqlite3'
-            import threading
-            ticks = iter([False, True])
-
-            class HourlyEvent(threading.Event):
-                def wait(self, timeout=None):
-                    return next(ticks) if timeout == 3600 else super().wait(timeout)
-            with mock.patch('threading.Event', HourlyEvent), mock.patch('signal.signal'):
-                code, out = self.run_main('--data', str(data), '--http-port', str(free_port()), '--dns-port', str(free_port()))
-            self.assertEqual(code, 0)
-            self.assertIn('Temperance dashboard', out)
-            self.assertEqual(data.stat().st_mode & 0o777, 0o600)
-
-    def test_argument_validation(self):
-        for args in (['--upstream', 'not-an-ip'], ['--dns-host', '0.0.0.0'], ['--allow-network', '::/0'],
-                     ['--http-port', '70000'], ['--upstream', '127.0.0.1', '--dns-port', '53', '--upstream-port', '53']):
-            with self.subTest(args):
-                self.assertEqual(self.run_main(*args)[0], 2)
-
-    def test_port_conflict_is_reported(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch('temperance.server.UDPServer', side_effect=OSError('in use')):
-            code, out = self.run_main('--data', str(Path(tmp) / 'db.sqlite3'), '--http-port', str(free_port()))
-        self.assertEqual(code, 1)
-        self.assertIn('Could not start Temperance', out)
-
-
-class ControlMainTests(unittest.TestCase):
-    def test_policy_service_main(self):
-        env = {'TEMPERANCE_ADMIN_TOKEN': 'a' * 40, 'TEMPERANCE_GATEWAY_TOKEN': 'g' * 40}
-        with tempfile.TemporaryDirectory() as tmp:
-            argv = ['c', '--port', '0', '--data', str(Path(tmp) / 'c.sqlite3'), '--vpn-endpoint', '192.0.2.1:51820', '--vpn-public-key', KEY]
-            with mock.patch.object(sys, 'argv', argv), mock.patch.dict('os.environ', env), \
-                    mock.patch('temperance.control.ThreadingHTTPServer.serve_forever', side_effect=KeyboardInterrupt), \
-                    redirect_stdout(io.StringIO()) as out:
-                control.main()
-            self.assertIn('Policy service', out.getvalue())
-            for bad_env, bad_args in (({**env, 'TEMPERANCE_ADMIN_TOKEN': 'short'}, []),
-                                      ({**env, 'TEMPERANCE_GATEWAY_TOKEN': 'a' * 40}, []),
-                                      (env, ['--public-url', 'http://example.com'])):
-                with mock.patch.object(sys, 'argv', argv + bad_args), mock.patch.dict('os.environ', bad_env), \
-                        mock.patch('sys.stderr', io.StringIO()), self.assertRaises(SystemExit):
-                    control.main()
 
 
 if __name__ == '__main__':

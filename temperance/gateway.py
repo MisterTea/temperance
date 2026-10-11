@@ -1,5 +1,6 @@
 """Linux WireGuard reconciler. Only dedicated nftables tables are modified."""
 import argparse
+import base64
 import ipaddress
 import json
 import os
@@ -11,33 +12,31 @@ from urllib.request import Request, urlopen
 from urllib.parse import urlparse
 
 from .dns import Resolver, UDPServer, UDPHandler, TCPServer, TCPHandler
-from .store import Store
 from .gateway_store import GatewayStore, clients
 from .policy import access_reason, active_windows
 from .destination_policy import TUNNEL, counter_name, destination_rules
 from .policy_cache import PolicyCache
-from .control import key
+
+POLICY_SCHEMA=2
 
 
-def network_blocked(profile, zone, now=None):
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    if 'filter_level' in profile:return access_reason(profile,zone,now)!='allowed'
-    clock=datetime.fromtimestamp(time.time() if now is None else now,ZoneInfo(zone)).strftime('%H:%M')
-    start,end=profile['bedtime']['start'],profile['bedtime']['end']
-    return profile['paused'] or (profile['limit']>0 and profile['used']>=profile['limit']) or bool(start and (start<=clock<end if start<end else clock>=start or clock<end))
+def key(value):
+    try:
+        raw=base64.b64decode(value,validate=True)
+    except (ValueError,TypeError):
+        raise ValueError('Invalid WireGuard public key') from None
+    if len(raw)!=32 or raw==bytes(32):raise ValueError('Invalid WireGuard public key')
+    return value
 
 
 def peer_allowed(state,peer):
     p=next(p for p in state['profiles'] if p['id']==peer['profile_id'])
-    if state.get('policy_schema',1)>=2:
-        if not peer.get('managed',True) or not p.get('managed',True):return True
-        return not peer.get('paused',False) and access_reason(p,state['timezone'],household_paused=state.get('paused',False))=='allowed'
-    return not network_blocked(p,state['timezone'])
+    if not peer.get('managed',True) or not p.get('managed',True):return True
+    return not peer.get('paused',False) and access_reason(p,state['timezone'],household_paused=state.get('paused',False))=='allowed'
 
 
 def strict_destination_policy(state,peer):
-    if state.get('policy_schema',1)<2 or not peer.get('managed',True):return False
+    if not peer.get('managed',True):return False
     p=next(p for p in state['profiles'] if p['id']==peer['profile_id'])
     if not p.get('managed',True):return False
     return (p.get('filter_level')!='none' and p.get('allow_only',False)) or any(w['mode']=='focus' for w in active_windows(p,time.time(),state['timezone']))
@@ -45,7 +44,7 @@ def strict_destination_policy(state,peer):
 
 def counted(state,client):
     profile=next(p for p in state['profiles'] if p['id']==client['profile_id'])
-    return not (state.get('policy_schema',1)>=2 and (not client.get('managed',True) or not profile.get('managed',True) or profile.get('filter_level')=='none'))
+    return not (not client.get('managed',True) or not profile.get('managed',True) or profile.get('filter_level')=='none')
 
 
 def lease_set(name,addresses):
@@ -148,23 +147,18 @@ def wg_config(state):
 
 
 def import_state(store,state):
-    from zoneinfo import ZoneInfo
-    with store.lock,store.db:
-        store.zone=ZoneInfo(state['timezone'])
-        if isinstance(store,GatewayStore):store.state=state
-        store.db.execute('DELETE FROM devices')
-        store.db.execute('DELETE FROM profiles')
-        for p in state['profiles']:
-            from .store import validate_profile
-            value=p if state.get('policy_schema',1)>=2 else validate_profile(p)
-            store.db.execute('INSERT INTO profiles VALUES(?,?)',(p['id'],json.dumps(value)))
-        for p in state['peers']:
-            store.db.execute('INSERT INTO devices VALUES(?,?,?)',(p['ip'],p['id'],p['profile_id']))
+    with store.lock:store.state=state
 
 
 def call(url,token,data=None):
     req=Request(url,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},data=json.dumps(data).encode() if data is not None else None)
     with urlopen(req,timeout=3) as response:return json.load(response)
+
+
+def fetch_state(service,token):
+    state=call(service.rstrip('/')+'/v1/gateway/state',token)
+    if state.get('policy_schema')!=POLICY_SCHEMA:raise ValueError('Unsupported policy format; upgrade the Temperance web service')
+    return state
 
 
 def run(cmd,body=None):
@@ -185,12 +179,6 @@ def apply_firewall(script):
         if subprocess.run(['nft','list','table',family,table],capture_output=True).returncode==0:
             prefix+=f'delete table {family} {table}\n'
     run(['nft','-f','-'],prefix+script)
-
-
-def activity(interface,state):
-    counters=json.loads(run(['nft','-j','list','table','inet','temperance']))['nftables']
-    active_octets={item['counter']['name'][5:] for item in counters if 'counter' in item and item['counter'].get('name','').startswith('peer_') and item['counter'].get('bytes',0)>0}
-    return [p['id'] for p in state['peers'] if p['ip'].split('.')[-1] in active_octets]
 
 
 def detailed_activity(state,destinations):
@@ -235,7 +223,7 @@ def main():
     if url.scheme!='https' and url.hostname not in ('localhost','127.0.0.1'):parser.error('Remote policy service must use HTTPS')
     cache=PolicyCache(args.cache,args.service)
     try:
-        state=call(args.service.rstrip('/')+'/v1/gateway/state',token)
+        state=fetch_state(args.service,token)
         if not args.dry_run:cache.update(state)
     except Exception:
         if not cache.usable():raise
@@ -255,31 +243,25 @@ def main():
     sync_peers(args.interface,state)
     apply_firewall(script)
     subprocess.run(['nft','delete','table','inet','temperance_boot'],capture_output=True)
-    last_good=time.monotonic()
     try:
         while True:
             try:
-                destinations=list(store.destinations.values())
-                details=detailed_activity(state,destinations) if state.get('policy_schema',1)>=2 else []
-                ids=[] if details else activity(args.interface,state)
+                details=detailed_activity(state,list(store.destinations.values()))
                 with store.lock:history=list(store.history)
-                if state.get('policy_schema',1)>=2:
-                    cache.record(details,history)
-                    batch=cache.batch()
-                    call(args.service.rstrip('/')+'/v1/gateway/activity',token,batch)
-                    cache.acknowledge(batch)
-                else:
-                    call(args.service.rstrip('/')+'/v1/gateway/activity',token,{'active_devices':ids})
+                cache.record(details,history)
+                batch=cache.batch()
+                call(args.service.rstrip('/')+'/v1/gateway/activity',token,batch)
+                cache.acknowledge(batch)
                 with store.lock:
                     reported={h['id'] for h in history}
                     store.history=[h for h in store.history if h['id'] not in reported]
-                latest=call(args.service.rstrip('/')+'/v1/gateway/state',token)
+                latest=fetch_state(args.service,token)
                 cache.update(latest)
                 script=rules(latest,destinations=list(store.destinations.values()))
                 import_state(store,latest)
                 apply_firewall(script)
                 sync_peers(args.interface,latest)
-                state=latest;last_good=time.monotonic()
+                state=latest
             except Exception as exc:
                 print(f'Gateway sync failed ({type(exc).__name__}); retrying',flush=True)
                 # Reset counters after reporting to avoid accounting the same traffic twice.

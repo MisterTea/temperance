@@ -1,18 +1,14 @@
 """Run ONLY in a disposable privileged Linux container/VM, never on a workstation.
 Creates three isolated network namespaces and real WireGuard interfaces.
 """
-import base64
-import json
 import os
-import socket
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from temperance.control import ControlStore
-from temperance.gateway import firewall,apply_firewall,wg_config,sync_peers
+from temperance.gateway import firewall,apply_firewall,sync_peers
 from temperance.dns import Resolver,UDPHandler,UDPServer
 from temperance.gateway_store import GatewayStore
 
@@ -26,10 +22,12 @@ def probe():
     return subprocess.run(['ip','netns','exec','t-client','curl','--silent','--fail','--max-time','2','http://203.0.113.2:8080'],capture_output=True).returncode==0
 server_private=run('wg','genkey');server_public=run('wg','pubkey',body=server_private)
 client_private=run('wg','genkey');client_public=run('wg','pubkey',body=client_private)
-store=ControlStore(':memory:','UTC','192.0.2.1:51820',server_public)
-pid=store.save_profile({'name':'Test','deny':['blocked.test']})
-code=store.issue_code(pid)['code'];device=store.enroll({'name':'Test device','code':code,'public_key':client_public})
-state=store.gateway_state()
+# The /v1/gateway/state document the Next.js service sends for one enrolled device.
+p={'id':1,'name':'Test','managed':True,'paused':False,'filter_level':'adult','limit':0,'used':0,'allow':[],'deny':['blocked.test'],
+   'unmanaged':[],'categories':[],'schedules':[],'category_limits':{},'site_limits':{},'rewards':[],'bedtime':{'start':'','end':'','days':list(range(7))}}
+peer={'id':'device','ip':'10.77.0.2','profile_id':1,'public_key':client_public,'managed':True,'paused':False}
+state={'policy_schema':2,'version':1,'timezone':'UTC','paused':False,'profiles':[p],'peers':[peer]}
+store=GatewayStore();store.state=state
 http=None;dns=None
 try:
     for name in ('t-client','t-internet'):run('ip','netns','add',name);ns(name,'ip','link','set','lo','up')
@@ -50,7 +48,7 @@ try:
     ns('t-client','ip','route','add','203.0.113.0/24','dev','wg-client')
     ns('t-client','ip','route','add','10.77.0.0/24','dev','wg-client')
     http=subprocess.Popen(['ip','netns','exec','t-internet','python3','-m','http.server','8080','--bind','203.0.113.2'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    dns=UDPServer(('10.77.0.1',53),UDPHandler);dns.resolver=Resolver(store,networks=['10.77.0.0/24'])
+    dns=UDPServer(('10.77.0.1',53),UDPHandler);dns.resolver=Resolver(store)
     threading.Thread(target=dns.serve_forever,daemon=True).start()
     script=firewall(state,'temperance','wan-test')
     run('nft','--check','-f','-',body=script);apply_firewall(script)
@@ -61,14 +59,13 @@ try:
     code="import socket,struct;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.settimeout(2);s.sendto(struct.pack('!6H',1,256,1,0,0,0)+b'\\x07blocked\\x04test\\0\\0\\1\\0\\1',('203.0.113.2',53));assert s.recv(4096)[3]&15==3"
     ns('t-client','python3','-c',code)
     print('PASS: alternate DNS is redirected and domain rules enforced',flush=True)
-    store.save_profile({'id':pid,'name':'Test','paused':True});state=store.gateway_state();apply_firewall(firewall(state,'temperance','wan-test'))
+    p['paused']=True;apply_firewall(firewall(state,'temperance','wan-test'))
     assert not probe(),'pause leaked forwarded traffic'
-    store.save_profile({'id':pid,'name':'Test'});state=store.gateway_state();apply_firewall(firewall(state,'temperance','wan-test'))
+    p['paused']=False;apply_firewall(firewall(state,'temperance','wan-test'))
     assert probe(),'resume did not restore traffic'
     print('PASS: pause and resume enforce both traffic directions',flush=True)
-    # Upgrade the same encrypted peer to the richer policy protocol and exercise real packet rules.
-    p=dict(state['profiles'][0],filter_level='adult',managed=True,paused=True,unmanaged=['school.test'],allow=[],deny=[],categories=[],schedules=[],category_limits={},site_limits={},rewards=[])
-    enhanced={**state,'policy_schema':2,'profiles':[p],'paused':False}
+    p.update(paused=True,unmanaged=['school.test'],deny=[])
+    enhanced=state
     destinations=[{'ip':'10.77.0.2','address':'203.0.113.2','host':'school.test','expires':time.time()+120}]
     apply_firewall(firewall(enhanced,'temperance','wan-test',destinations=destinations))
     assert probe(),'unmanaged exception did not bypass pause'
@@ -87,12 +84,13 @@ try:
     apply_firewall(firewall(enhanced,'temperance','wan-test',destinations=destinations))
     assert probe(),'category budget restore did not allow traffic'
     print('PASS: category budget enforcement and attributed counters',flush=True)
+    p['category_limits']={};p['bucket_usage']={}
     apply_firewall(firewall(state,'temperance','wan-test'))
     time.sleep(16)
     assert not probe(),'expired access lease leaked traffic'
     print('PASS: expired enforcement lease fails closed',flush=True)
     apply_firewall(firewall(state,'temperance','wan-test'))
-    store.delete_device('10.77.0.2');state=store.gateway_state()
+    state['peers']=[]
     sync_peers('temperance',state)
     assert not probe(),'revoked peer could still pass traffic'
     print('PASS: revocation removes tunnel peer',flush=True)

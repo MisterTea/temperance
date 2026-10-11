@@ -1,10 +1,10 @@
-"""DNS policy/history and destination attribution for the version-two gateway."""
+"""DNS policy/history and destination attribution for the gateway."""
 import ipaddress
 import struct
+import threading
 import time
 import uuid
-from .store import Store
-from .policy import domain_reason, classify, matches
+from .policy import domain_reason, classify
 
 
 def addresses(packet):
@@ -39,9 +39,9 @@ def clients(state):
     return list(state.get('peers',[]))+list(state.get('lan_devices',[]))
 
 
-class GatewayStore(Store):
+class GatewayStore:
     def __init__(self,lan_networks=()):
-        super().__init__(':memory:')
+        self.lock=threading.RLock()
         self.state=None
         self.destinations={}
         self.history=[]
@@ -57,7 +57,7 @@ class GatewayStore(Store):
         return None,None
 
     def evaluate(self,ip,host,now=None):
-        if not self.state or self.state.get('policy_schema',1)<2:return super().evaluate(ip,host,now)
+        if not self.state:return True,'no policy'
         now=time.time() if now is None else now
         with self.lock:
             client,p=self.subject(ip)
@@ -75,7 +75,7 @@ class GatewayStore(Store):
             return blocked,reason
 
     def observe_dns_reply(self,ip,host,packet):
-        if not self.state or self.state.get('policy_schema',1)<2:return
+        if not self.state:return
         with self.lock:
             now=time.time()
             self.destinations={k:v for k,v in self.destinations.items() if v['expires']>now}
@@ -85,7 +85,7 @@ class GatewayStore(Store):
                 self.destinations=dict(sorted(self.destinations.items(),key=lambda item:item[1]['expires'],reverse=True)[:10000])
 
     def dns_override(self,ip,host,kind):
-        if not self.state or self.state.get('policy_schema',1)<2:return None
+        if not self.state:return None
         client,p=self.subject(ip)
         if not p or not p.get('managed',True) or p.get('filter_level')=='none':return None
         if client and not client.get('managed',True):return None

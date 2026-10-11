@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "temperance-gateway"
 version = "0.2.0"
-description = "Local-first, open source family DNS controls"
+description = "Linux WireGuard and DNS enforcement gateway for the Temperance web service"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -13,15 +13,10 @@ authors = [{name = "Temperance contributors"}]
 dependencies = []
 
 [project.scripts]
-temperance = "temperance.server:main"
-temperance-control = "temperance.control:main"
 temperance-gateway = "temperance.gateway:main"
 
 [tool.setuptools.packages.find]
 include = ["temperance*"]
-
-[tool.setuptools.package-data]
-temperance = ["static/*"]
 
 [tool.coverage.run]
 source = ["temperance"]

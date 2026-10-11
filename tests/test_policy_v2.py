@@ -3,12 +3,10 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from temperance.policy import access_reason,domain_reason,in_window
+from temperance.policy import access_reason,domain_reason
 from temperance.policy_cache import PolicyCache
 from temperance.gateway import firewall
 from temperance.gateway_store import GatewayStore
-from temperance.destination_policy import destination_rules
-
 class PolicyV2Tests(unittest.TestCase):
     def profile(self,**values):return {'id':1,'name':'Test','managed':True,'paused':False,'filter_level':'kid','limit':0,'used':0,'allow':[],'deny':[],'unmanaged':[],'categories':[],'schedules':[],'bedtime':{'start':'','end':'','days':list(range(7))},**values}
     def state(self,p):return {'policy_schema':2,'version':1,'day':'2026-10-11','timezone':'America/Chicago','paused':False,'profiles':[p],'peers':[{'id':'device','ip':'10.77.0.2','profile_id':1,'public_key':'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=','managed':True,'paused':False}],'offline_grace_seconds':86400}

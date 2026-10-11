@@ -48,7 +48,7 @@ def read_exact(sock, size):
 
 
 class Resolver:
-    def __init__(self, store, upstream=("1.1.1.1", 53), networks=("127.0.0.0/8",), management_domains=()):
+    def __init__(self, store, upstream=("1.1.1.1", 53), networks=("10.77.0.0/24",), management_domains=()):
         self.store = store
         self.upstream = upstream
         self.networks = [ipaddress.ip_network(n) for n in networks]
@@ -65,14 +65,13 @@ class Resolver:
         blocked = False if host in self.management_domains else self.store.evaluate(ip, host)[0]
         if blocked:
             return failure(packet, 3, end)  # NXDOMAIN, no forged content
-        if hasattr(self.store,'dns_override'):
-            kind=struct.unpack('!H',packet[end-4:end-2])[0]
-            target=self.store.dns_override(ip,host,kind)
-            if target:
-                # A CNAME pins supported search/video services to their published restricted endpoint.
-                labels=b''.join(bytes([len(part)])+part.encode() for part in target.split('.'))+b'\0'
-                flags=0x8180
-                return packet[:2]+struct.pack('!5H',flags,1,1,0,0)+packet[12:end]+b'\xc0\x0c'+struct.pack('!HHIH',5,1,60,len(labels))+labels
+        kind=struct.unpack('!H',packet[end-4:end-2])[0]
+        target=self.store.dns_override(ip,host,kind)
+        if target:
+            # A CNAME pins supported search/video services to their published restricted endpoint.
+            labels=b''.join(bytes([len(part)])+part.encode() for part in target.split('.'))+b'\0'
+            flags=0x8180
+            return packet[:2]+struct.pack('!5H',flags,1,1,0,0)+packet[12:end]+b'\xc0\x0c'+struct.pack('!HHIH',5,1,60,len(labels))+labels
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM if tcp else socket.SOCK_DGRAM) as sock:
                 sock.settimeout(3)
@@ -85,7 +84,7 @@ class Resolver:
                     response = sock.recv(65535)
                 if len(response) < 12 or response[:2] != packet[:2] or not response[2] & 0x80:
                     raise OSError("Invalid upstream reply")
-                if hasattr(self.store,'observe_dns_reply'):self.store.observe_dns_reply(ip,host,response)
+                self.store.observe_dns_reply(ip,host,response)
                 return response
         except OSError:
             return failure(packet, 2, end)

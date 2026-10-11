@@ -1,6 +1,6 @@
 # Temperance Next.js policy service
 
-This is the canonical web service. It implements the existing `/v1` WireGuard enrollment/device/gateway protocol directly in TypeScript. It does not proxy the old Python service. Python remains the Linux VPN/DNS enforcement plane and the standalone DNS mode; `temperance.control` is retained only for legacy migration/reference tests.
+This is the canonical web service. It implements the existing `/v1` WireGuard enrollment/device/gateway protocol directly in TypeScript. It is the only web service: the Python package is just the Linux VPN/DNS enforcement gateway, which polls this service and serves no HTTP itself.
 
 The Next.js App Router serves the family dashboard and authenticated API. One deployment manages one household; do not publish it as a shared multi-tenant SaaS without additional account isolation.
 
@@ -86,11 +86,11 @@ Component tests render the dashboard in jsdom and route its `fetch` calls to the
 
 ## Migrating an existing Temperance instance
 
-Keep the original SQLite database and gateway private key backed up. Export the old control-plane database without modifying it:
+Instances that ran the former Python control service can move to Next.js. Keep the original SQLite database and gateway private key backed up. Export the old control-plane database without modifying it:
 
 ```sh
 python3 scripts/export_legacy_policy.py data/control.sqlite3 \
   --output /private/path/temperance-migration.json --timezone America/Chicago
 ```
 
-Configure Next.js with the same VPN endpoint/public key and gateway/admin secrets. Sign in, restore the generated file through Settings, and retain the same HTTPS origin so existing native clients continue to work. Point the gateway's `--service` URL at that origin. If you change the origin, native clients currently need an administrator reset/re-enrollment until the planned origin-migration UI is implemented. VPN peer public keys and device-token hashes are preserved. DNS-only LAN assignments are not converted into fake VPN enrollments; configure the home-routing mode separately when it is implemented. Code expiration and one-use enrollment semantics remain unchanged. Existing clients' enrollment response shape remains compatible.
+Configure Next.js with the same VPN endpoint/public key and gateway/admin secrets. Sign in, restore the generated file through Settings, and retain the same HTTPS origin so existing native clients continue to work. Point the gateway's `--service` URL at that origin. If you change the origin, native clients currently need an administrator reset/re-enrollment until the planned origin-migration UI is implemented. VPN peer public keys and device-token hashes are preserved. DNS-only LAN assignments are not converted into fake VPN enrollments; re-add them as home-network devices (see `docs/deployment.md`). Code expiration and one-use enrollment semantics remain unchanged. Existing clients' enrollment response shape remains compatible.

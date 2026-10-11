@@ -4,7 +4,6 @@ import os
 import time
 import uuid
 from pathlib import Path
-from datetime import timedelta, date
 from .policy import local
 
 class PolicyCache:

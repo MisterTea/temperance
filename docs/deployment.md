@@ -7,7 +7,7 @@ Use a dedicated Linux host with a reachable public IPv4 address/UDP port and an 
 3. Create a persistent Turso/libSQL HTTP database, then copy `deploy/.env.example` to `deploy/.env`, generate two different random tokens, and set the HTTPS origin, gateway public key, numeric public IPv4 endpoint (`IP:51820`), timezone, and database URL/token. Restrict the file to mode 600. Tokens must each contain at least 32 characters.
 4. Start the service: `docker compose --env-file deploy/.env -f deploy/compose.yml up -d --build`. The Next.js container is published only on local port 8788. Its data is in the configured SQL database, not its ephemeral filesystem. Configure Caddy on the host using `deploy/Caddyfile`, with `TEMPERANCE_POLICY_HOST` set to the HTTPS hostname. Caddy terminates TLS and forwards to localhost:8788. Open TCP 443 and UDP 51820 to the public network. Never publish port 8788 directly.
 5. Create `/etc/temperance/gateway.env` (mode 600) containing `TEMPERANCE_GATEWAY_TOKEN`, `TEMPERANCE_PUBLIC_URL`, and `TEMPERANCE_UPLINK` (e.g. `eth0`). Match the gateway token to the service. Install `deploy/temperance-gateway.service` in `/etc/systemd/system/`, run `systemctl daemon-reload`, then `systemctl enable --now temperance-gateway`. The required `wg-quick@temperance` unit starts automatically; enable it at boot as well. If another firewall manages forwarding, explicitly permit the WireGuard/uplink flow while retaining Temperance's earlier drop rules.
-6. Sign into the HTTPS dashboard with the admin token, create a family profile, and create an enrollment code. Enroll a test device and install/start its VPN. Test pause, resume, bedtime, filtering, and budget behavior before enrolling other devices.
+6. Open the HTTPS dashboard, use the admin token once to create the owner account, then create a family profile, and create an enrollment code. Enroll a test device and install/start its VPN. Test pause, resume, bedtime, filtering, and budget behavior before enrolling other devices.
 
 The gateway agent requires root, `CAP_NET_ADMIN`, and `CAP_NET_BIND_SERVICE`. Its systemd unit narrows the capability set and filesystem access. It binds DNS only on `10.77.0.1:53`. It can produce a reviewable configuration without modifying networking:
 
@@ -32,17 +32,4 @@ Like VPN peers, home devices fail closed: if the agent stops or its cached polic
 
 Do not use the bootstrap script on your development workstation. Do not use the VPN subnet `10.77.0.0/24` anywhere else in the deployment. The numeric public endpoint avoids tunnel startup depending on DNS; the HTTPS hostname must resolve before enrollment. If paused clients must refresh status, serve the policy API on the gateway's HTTPS endpoint; input HTTPS is exempt from forwarding limits, while remote service traffic through the uplink is governed by the pause. Control-plane polling from the gateway host remains independent of child VPN forwarding.
 
-Back up the policy SQLite database using SQLite's online backup API (or stop the service before copying). Retain the server private key separately. Losing the database requires re-enrollment; losing the server key requires new provisioning on clients. Rotate compromised administrator/gateway tokens in their environment files and restart both processes. Revoke individual devices through the dashboard's Remove action.
-
-## Legacy Python API reference (migration only)
-
-The old Python reference service supports HTTP exclusively on loopback for development. The canonical service is now Next.js; use `web/README.md` for current setup. Native clients intentionally require HTTPS. Do not weaken their trust checks for testing; use a trusted development TLS endpoint instead.
-
-```sh
-export TEMPERANCE_ADMIN_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
-export TEMPERANCE_GATEWAY_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
-python3 -m temperance.control --vpn-endpoint 192.0.2.1:51820 \
-  --vpn-public-key 'your-generated-WireGuard-public-key'
-```
-
-Visit http://127.0.0.1:8788. No real VPN interface is installed by this command. The VPN agent is a separate deliberately privileged process.
+Back up the policy database with your database's own tooling (SQLite online backup, `pg_dump`, or your libSQL host's snapshots), or download a backup from the dashboard's Settings. Retain the server private key separately. Losing the database requires re-enrollment; losing the server key requires new provisioning on clients. Rotate compromised administrator/gateway tokens in their environment files and restart both processes. Revoke individual devices through the dashboard's Remove action.

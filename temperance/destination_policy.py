@@ -14,7 +14,7 @@ def counter_name(ip):
 
 
 def destination_rules(state,destinations,expired=False):
-    if expired or state.get('policy_schema',1)<2:return {'objects':[],'outbound':[],'inbound':[],'buckets':{}}
+    if expired:return {'objects':[],'outbound':[],'inbound':[],'buckets':{}}
     peers={p['ip']:p for p in state['peers']}
     profiles={p['id']:p for p in state['profiles']}
     groups={}
