@@ -120,6 +120,12 @@ class WireTests(unittest.TestCase):
         snapshot=self.store.snapshot()
         self.assertEqual(snapshot['total'],4);self.assertEqual(snapshot['blocked'],2)
 
+    def test_management_hostname_resolves_while_paused(self):
+        self.store.save_profile({'id':self.pid,'name':'Test','paused':True})
+        self.resolver.management_domains=frozenset(['policy.test'])
+        self.assertEqual(self.resolver.resolve(query('policy.test'),'127.0.0.1')[3]&15,0)
+        self.assertEqual(self.resolver.resolve(query('other.test'),'127.0.0.1')[3]&15,3)
+
     def test_malformed_and_untrusted_clients(self):
         self.assertEqual(self.resolver.resolve(query('allowed.test'),'10.1.1.1')[3]&15,5)
         for packet in [b'x',query('test')[:13],query('test')[:12]+b'\xc0\x0c\0\1\0\1']:

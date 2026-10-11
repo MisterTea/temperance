@@ -36,7 +36,8 @@ def firewall(state, interface, uplink, expired=False):
     lines += [
         ' chain input { type filter hook input priority -10; policy accept;',
         f'  iifname "{interface}" ip daddr 10.77.0.1 udp dport 53 accept',
-        f'  iifname "{interface}" ip daddr 10.77.0.1 tcp dport {{ 53, 443 }} accept',
+        f'  iifname "{interface}" ip daddr 10.77.0.1 tcp dport 53 accept',
+        f'  iifname "{interface}" tcp dport 443 accept',
         f'  iifname "{interface}" drop',
         ' }',
         ' chain forward { type filter hook forward priority -10; policy accept;',
@@ -136,7 +137,7 @@ def main():
     store=Store(':memory:',state['timezone'])
     import_state(store,state)
     apply_firewall(firewall(state,args.interface,args.uplink,expired=True))
-    resolver=Resolver(store,networks=['10.77.0.0/24'])
+    resolver=Resolver(store,networks=['10.77.0.0/24'],management_domains=[url.hostname])
     servers=[]
     for cls,handler in [(UDPServer,UDPHandler),(TCPServer,TCPHandler)]:
         server=cls(('10.77.0.1',53),handler);server.resolver=resolver;servers.append(server)

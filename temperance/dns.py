@@ -48,10 +48,11 @@ def read_exact(sock, size):
 
 
 class Resolver:
-    def __init__(self, store, upstream=("1.1.1.1", 53), networks=("127.0.0.0/8",)):
+    def __init__(self, store, upstream=("1.1.1.1", 53), networks=("127.0.0.0/8",), management_domains=()):
         self.store = store
         self.upstream = upstream
         self.networks = [ipaddress.ip_network(n) for n in networks]
+        self.management_domains = frozenset(management_domains)
 
     def resolve(self, packet, ip, tcp=False):
         if not any(ipaddress.ip_address(ip) in n for n in self.networks):
@@ -60,7 +61,8 @@ class Resolver:
             host, end = question(packet)
         except (ValueError, UnicodeError):
             return failure(packet, 1)
-        blocked, _ = self.store.evaluate(ip, host)
+        # The control-plane hostname must resolve even when the profile is paused.
+        blocked = False if host in self.management_domains else self.store.evaluate(ip, host)[0]
         if blocked:
             return failure(packet, 3, end)  # NXDOMAIN, no forged content
         try:
