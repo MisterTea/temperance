@@ -8,3 +8,9 @@ clients/android/.gradle
 clients/android/app/build
 __pycache__
 *.sqlite3*
+web/.env.local
+web/.dev.vars
+web/node_modules
+web/.next
+web/.open-next
+web/.wrangler

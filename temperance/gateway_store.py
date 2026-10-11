@@ -1,0 +1,80 @@
+"""DNS policy/history and destination attribution for the version-two gateway."""
+import ipaddress
+import struct
+import time
+import uuid
+from .store import Store
+from .policy import domain_reason, classify, matches
+
+
+def addresses(packet):
+    if len(packet)<12:return []
+    _,_,questions,answers,_,_=struct.unpack('!6H',packet[:12])
+    pos=12
+    def skip_name(pos):
+        for _ in range(128):
+            if pos>=len(packet):raise ValueError('Truncated name')
+            length=packet[pos];pos+=1
+            if length&0xc0==0xc0:
+                if pos>=len(packet):raise ValueError('Truncated pointer')
+                return pos+1
+            if length==0:return pos
+            if length>63 or pos+length>len(packet):raise ValueError('Invalid label')
+            pos+=length
+        raise ValueError('Invalid name')
+    result=[]
+    try:
+        for _ in range(questions):pos=skip_name(pos)+4
+        for _ in range(answers):
+            pos=skip_name(pos)
+            kind,cls,ttl,length=struct.unpack('!HHIH',packet[pos:pos+10]);pos+=10
+            data=packet[pos:pos+length];pos+=length
+            if kind==1 and cls==1 and len(data)==4:result.append((str(ipaddress.IPv4Address(data)),min(max(ttl,30),3600)))
+    except (ValueError,struct.error):return []
+    return result
+
+
+class GatewayStore(Store):
+    def __init__(self):
+        super().__init__(':memory:')
+        self.state=None
+        self.destinations={}
+        self.history=[]
+
+    def evaluate(self,ip,host,now=None):
+        if not self.state or self.state.get('policy_schema',1)<2:return super().evaluate(ip,host,now)
+        now=time.time() if now is None else now
+        with self.lock:
+            peer=next((p for p in self.state['peers'] if p['ip']==ip),None)
+            p=next((p for p in self.state['profiles'] if peer and p['id']==peer['profile_id']),None)
+            if not p:return True,'unassigned VPN device'
+            if not peer.get('managed',True):reason='unmanaged'
+            else:
+                reason=domain_reason(p,host,self.state['timezone'],now,self.state.get('paused',False),self.state.get('extra_domains'))
+                if peer.get('paused') and reason!='unmanaged':reason='device pause'
+            blocked=reason not in ('allowed','unmanaged')
+            if reason!='unmanaged' and p.get('filter_level')!='none':
+                self.history.append(dict(id=str(uuid.uuid4()),device_id=peer['id'],at=now,domain=host,blocked=blocked,reason=reason,category=classify(host,self.state.get('extra_domains'))))
+                self.history=self.history[-500:]
+            return blocked,reason
+
+    def observe_dns_reply(self,ip,host,packet):
+        if not self.state or self.state.get('policy_schema',1)<2:return
+        with self.lock:
+            now=time.time()
+            self.destinations={k:v for k,v in self.destinations.items() if v['expires']>now}
+            for address,ttl in addresses(packet):
+                self.destinations[(ip,address,host)]={'ip':ip,'address':address,'host':host,'expires':now+ttl}
+            if len(self.destinations)>10000:
+                self.destinations=dict(sorted(self.destinations.items(),key=lambda item:item[1]['expires'],reverse=True)[:10000])
+
+    def dns_override(self,ip,host,kind):
+        if not self.state or self.state.get('policy_schema',1)<2:return None
+        peer=next((p for p in self.state['peers'] if p['ip']==ip),None)
+        p=next((p for p in self.state['profiles'] if peer and p['id']==peer['profile_id']),None)
+        if not p or not p.get('managed',True) or p.get('filter_level')=='none':return None
+        if p.get('safe_search') and (host=='google.com' or host.startswith('www.google.') or host=='www.bing.com' or host=='duckduckgo.com'):
+            return {'www.bing.com':'strict.bing.com','duckduckgo.com':'safe.duckduckgo.com'}.get(host,'forcesafesearch.google.com')
+        if p.get('youtube_restricted') and host in ('youtube.com','www.youtube.com','m.youtube.com','youtubei.googleapis.com','youtube.googleapis.com','www.youtube-nocookie.com'):
+            return 'restrict.youtube.com'
+        return None

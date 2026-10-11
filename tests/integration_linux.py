@@ -65,6 +65,28 @@ try:
     store.save_profile({'id':pid,'name':'Test'});state=store.gateway_state();apply_firewall(firewall(state,'temperance','wan-test'))
     assert probe(),'resume did not restore traffic'
     print('PASS: pause and resume enforce both traffic directions',flush=True)
+    # Upgrade the same encrypted peer to the richer policy protocol and exercise real packet rules.
+    p=dict(state['profiles'][0],filter_level='adult',managed=True,paused=True,unmanaged=['school.test'],allow=[],deny=[],categories=[],schedules=[],category_limits={},site_limits={},rewards=[])
+    enhanced={**state,'policy_schema':2,'profiles':[p],'paused':False}
+    destinations=[{'ip':'10.77.0.2','address':'203.0.113.2','host':'school.test','expires':time.time()+120}]
+    apply_firewall(firewall(enhanced,'temperance','wan-test',destinations=destinations))
+    assert probe(),'unmanaged exception did not bypass pause'
+    print('PASS: unmanaged site exception bypasses profile pause',flush=True)
+    p['paused']=False;p['unmanaged']=[];p['allow_only']=True;p['allow']=['school.test']
+    apply_firewall(firewall(enhanced,'temperance','wan-test',destinations=destinations))
+    assert probe(),'strict allow-list blocked its known allowed destination'
+    apply_firewall(firewall(enhanced,'temperance','wan-test'))
+    assert not probe(),'strict allow-list leaked unknown destinations'
+    print('PASS: strict allow-list denies unknown IP destinations',flush=True)
+    p['allow_only']=False;p['category_limits']={'video':1};p['bucket_usage']={'category:video':1}
+    destinations[0]['host']='youtube.com'
+    apply_firewall(firewall(enhanced,'temperance','wan-test',destinations=destinations))
+    assert not probe(),'category quota leaked an existing destination'
+    p['bucket_usage']={'category:video':0}
+    apply_firewall(firewall(enhanced,'temperance','wan-test',destinations=destinations))
+    assert probe(),'category budget restore did not allow traffic'
+    print('PASS: category budget enforcement and attributed counters',flush=True)
+    apply_firewall(firewall(state,'temperance','wan-test'))
     time.sleep(16)
     assert not probe(),'expired access lease leaked traffic'
     print('PASS: expired enforcement lease fails closed',flush=True)

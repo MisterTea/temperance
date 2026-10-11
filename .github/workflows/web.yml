@@ -1,0 +1,31 @@
+name: Next.js policy service
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  nextjs:
+    runs-on: ubuntu-latest
+    services:
+      sql:
+        image: ghcr.io/tursodatabase/libsql-server:latest
+        env:
+          SQLD_NODE: primary
+        ports: ['8081:8080']
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+        env:
+          TEMPERANCE_TEST_DATABASE_URL: http://127.0.0.1:8081
+      - run: npm run build
+      - run: npm run cloudflare:build
+      - run: npm audit --audit-level=high

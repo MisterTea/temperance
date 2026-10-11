@@ -6,10 +6,12 @@ Open source family VPN and DNS controls inspired by [Circle](https://meetcircle.
 
 ## VPN apps and policy service
 
-Temperance now includes a central authenticated policy service, a Linux WireGuard enforcement gateway, and device applications for **macOS, Linux, Windows, Android, and iOS**. Parents update profiles in the HTTPS dashboard and issue short-lived enrollment codes. Devices generate VPN keys locally and install a full tunnel. The gateway applies DNS filters plus packet-level pauses, bedtime, and observed-network-minute budgets, refreshing policy every five seconds. Expiring firewall leases close forwarding if enforcement stops.
+Temperance now includes a central authenticated Next.js policy service, a Linux WireGuard enforcement gateway, and device applications for **macOS, Linux, Windows, Android, and iOS**. Parents update profiles in the HTTPS dashboard and issue short-lived enrollment codes. Devices generate VPN keys locally and install a full tunnel. The gateway applies DNS filters plus packet-level pauses, bedtime, and observed-network-minute budgets, refreshing policy every five seconds. Expiring firewall leases close forwarding if enforcement stops.
 
 - [Build/install the five device apps](clients/README.md)
-- [Deploy the HTTPS policy service and Linux gateway](docs/deployment.md)
+- [Deploy the Next.js service to Vercel, Cloudflare Workers, or Docker](web/README.md)
+- [Configure the Linux VPN gateway](docs/deployment.md)
+- [Circle research and feature-parity audit](docs/research/circle-feature-audit.md)
 - [Architecture, API, and enforcement limits](docs/architecture.md)
 
 The mobile apps embed WireGuard; the Apple apps use native SwiftUI/Network Extension. Linux and Windows use compiled Go applications with a localhost browser UI and official OS WireGuard tooling. Apple VPN builds require your signing team and entitlements for installation. Android debug APKs are test artifacts. Unmanaged-device VPN removal and comprehensive encrypted-DNS/content filtering remain limitations. The repository includes CI build artifacts and an isolated Linux integration test with real encrypted traffic; it does not provision a public server or publish app-store releases automatically.

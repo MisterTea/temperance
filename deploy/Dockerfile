@@ -1,8 +1,17 @@
-FROM python:3.12-slim
+FROM node:22-slim AS build
 WORKDIR /app
-COPY pyproject.toml README.md LICENSE ./
-COPY temperance ./temperance
-RUN useradd --uid 10001 --create-home temperance && mkdir /data && chown temperance:temperance /data
+COPY web/package*.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+FROM node:22-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000
+RUN useradd --uid 10001 --create-home temperance
+COPY --from=build --chown=temperance:temperance /app/.next/standalone ./
+COPY --from=build --chown=temperance:temperance /app/.next/static ./.next/static
+COPY --from=build --chown=temperance:temperance /app/public ./public
 USER temperance
-EXPOSE 8788
-ENTRYPOINT ["python", "-m", "temperance.control", "--host", "0.0.0.0", "--data", "/data/control.sqlite3"]
+EXPOSE 3000
+CMD ["node", "server.js"]

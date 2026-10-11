@@ -19,3 +19,10 @@ clients/android/local.properties
 *.keystore
 *.p12
 *.mobileprovision
+node_modules/
+.next/
+.open-next/
+.wrangler/
+*.tsbuildinfo
+web/.env.local
+web/.dev.vars

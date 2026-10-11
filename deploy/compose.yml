@@ -5,12 +5,8 @@ services:
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
     env_file: .env
-    command: ["--public-url", "${TEMPERANCE_PUBLIC_URL:?set public HTTPS URL}", "--vpn-endpoint", "${TEMPERANCE_VPN_ENDPOINT:?set gateway IPv4:port}", "--vpn-public-key", "${TEMPERANCE_VPN_PUBLIC_KEY:?set gateway public key}", "--timezone", "${TEMPERANCE_TIMEZONE:-UTC}"]
-    volumes: ["policy-data:/data"]
-    ports: ["127.0.0.1:8788:8788"]
+    ports: ["127.0.0.1:8788:3000"]
     read_only: true
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-volumes:
-  policy-data:
