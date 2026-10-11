@@ -23,7 +23,8 @@ test("parent creates and edits a profile with limits, bedtime, and schedules", a
   request,
 }, info) => {
   const clean = watchConsole(page);
-  const name = "Avery " + info.project.name;
+  const name =
+    "Avery " + info.project.name + (info.retry ? ` ${info.retry}` : "");
   await page.goto("/");
   await page.getByRole("button", { name: "+ Add profile" }).click();
   const editor = page.getByRole("dialog");
@@ -268,7 +269,9 @@ test("history shows gateway decisions and one-click rules; usage summarizes minu
     .filter({ hasText: profile });
   await expect(row).toBeVisible();
   await expect(
-    page.getByRole("row", { name: /example-advertising-network/ }),
+    page
+      .getByRole("row", { name: /example-advertising-network/ })
+      .filter({ hasText: profile }),
   ).toContainText("ads");
   await expectCleanLayout(page, "history with long domains");
   await page.getByLabel("Decision").selectOption("true");
