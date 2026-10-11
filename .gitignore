@@ -7,3 +7,15 @@ dist/
 data/
 *.sqlite3*
 .DS_Store
+
+.env
+deploy/.env
+clients/apple/Vendor/
+clients/apple/Temperance.xcodeproj/
+clients/android/.gradle/
+clients/android/app/build/
+clients/android/local.properties
+*.jks
+*.keystore
+*.p12
+*.mobileprovision

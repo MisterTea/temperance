@@ -1,0 +1,5 @@
+FROM debian:stable-slim
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 nftables wireguard-tools iproute2 curl procps && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+ENV TEMPERANCE_DISPOSABLE_TEST=1
+CMD ["python3", "tests/integration_linux.py"]

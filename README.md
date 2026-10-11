@@ -1,8 +1,22 @@
 # Temperance
 
-Open source, local-first family DNS controls inspired by [Circle](https://meetcircle.com/pages/features-usage). Manage family profiles, assign devices, filter domains, pause DNS access, and set bedtime schedules and daily DNS activity budgets. All configuration and browsing metadata stay in a local SQLite database. No account, telemetry, cloud service, or runtime dependencies.
+Open source family VPN and DNS controls inspired by [Circle](https://meetcircle.com/pages/features-usage). Manage family profiles, assign devices, filter domains, pause DNS access, and set bedtime schedules and daily DNS activity budgets. Configuration is stored in a local SQLite database; VPN clients share observed activity minutes with your self-hosted policy service. Standalone DNS mode has no account, telemetry, cloud service, or runtime dependencies. VPN mode adds an authenticated self-hosted policy service and WireGuard dependencies.
 
-**Status: working MVP, not a complete Circle replacement.** Temperance is an independent project and has no affiliation with Circle. It uses original code and a distinct interface.
+**Status: working MVP with VPN client source for all five platforms; not a complete Circle replacement.** Temperance is an independent project and has no affiliation with Circle. It uses original code and a distinct interface.
+
+## VPN apps and policy service
+
+Temperance now includes a central authenticated policy service, a Linux WireGuard enforcement gateway, and device applications for **macOS, Linux, Windows, Android, and iOS**. Parents update profiles in the HTTPS dashboard and issue short-lived enrollment codes. Devices generate VPN keys locally and install a full tunnel. The gateway applies DNS filters plus packet-level pauses, bedtime, and observed-network-minute budgets, refreshing policy every five seconds. Expiring firewall leases close forwarding if enforcement stops.
+
+- [Build/install the five device apps](clients/README.md)
+- [Deploy the HTTPS policy service and Linux gateway](docs/deployment.md)
+- [Architecture, API, and enforcement limits](docs/architecture.md)
+
+The mobile apps embed WireGuard; the Apple apps use native SwiftUI/Network Extension. Linux and Windows use compiled Go applications with a localhost browser UI and official OS WireGuard tooling. Apple VPN builds require your signing team and entitlements for installation. Android debug APKs are test artifacts. Unmanaged-device VPN removal and comprehensive encrypted-DNS/content filtering remain limitations. The repository includes CI build artifacts and an isolated Linux integration test with real encrypted traffic; it does not provision a public server or publish app-store releases automatically.
+
+## Standalone DNS mode
+
+The original dependency-free DNS dashboard can still run without a VPN or policy service.
 
 ## Run locally
 
@@ -57,7 +71,7 @@ The administration UI binds exclusively to `127.0.0.1`, with Host/Origin checks 
 - **Categories:** small, transparent starter lists in `temperance/store.py` for social, video, and gaming services. These are examples, not comprehensive content classifications.
 - **Privacy:** raw domain names, client IPs, decisions, and timestamps are retained for 30 days and pruned at startup/hourly. Protect the data directory and backups. Domain logs can reveal sensitive browsing habits. Data is not sent to a Temperance service; allowed DNS questions are forwarded to the configured upstream (default `1.1.1.1`).
 
-DNS filtering cannot terminate existing connections or stop access through cached answers, IP literals, VPNs, mobile data, encrypted DNS, or alternate resolvers. Dependable whole-network enforcement requires router firewall/routing controls and usually device agents. This MVP does not implement those controls, device discovery, mobile apps, location tracking, rewards, or exact app usage reporting. It is designed for a small trusted home network, not an internet-facing resolver.
+DNS filtering cannot terminate existing connections or stop access through cached answers, IP literals, VPNs, mobile data, encrypted DNS, or alternate resolvers. Dependable whole-network enforcement requires router firewall/routing controls and usually device agents. Standalone DNS mode does not implement router controls, discovery, location tracking, rewards, or exact app usage reporting. For mobile/off-network traffic and packet-level controls, use the VPN apps and gateway described above. The standalone DNS service is designed for a small trusted home network, not an internet-facing resolver.
 
 ## Development
 
@@ -75,7 +89,7 @@ Architecture: `store.py` owns SQLite and policy decisions; `dns.py` implements w
 1. Authenticated remote administration and profile/history management.
 2. Curated, updateable category lists and per-category budgets.
 3. Router integrations for discovery and enforceable network pauses.
-4. Optional device agents for accurate foreground usage and off-network controls.
-5. IPv6 support, bounded concurrency, and operational metrics.
+4. Accurate foreground usage agents and managed-device enrollment.
+5. IPv6 internet forwarding, comprehensive filter feeds, and operational metrics.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).

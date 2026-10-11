@@ -1,0 +1,99 @@
+name: Temperance
+options:
+  bundleIdPrefix: org.temperance
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    DEVELOPMENT_TEAM: ''
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+packages:
+  WireGuardKit:
+    path: Vendor/wireguard-apple
+targetTemplates:
+  BaseApp:
+    sources: [App]
+    dependencies:
+      - package: WireGuardKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Temperance
+        INFOPLIST_KEY_KeychainAccessGroup: $(AppIdentifierPrefix)org.temperance.shared
+        CODE_SIGN_ENTITLEMENTS: App/App.entitlements
+    preBuildScripts:
+      - name: Build WireGuard Go bridge
+        script: '"$SRCROOT/build-bridge.sh"'
+        basedOnDependencyAnalysis: false
+  BaseTunnel:
+    sources:
+      - path: Tunnel
+      - path: App/Identity.swift
+    dependencies:
+      - package: WireGuardKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_KeychainAccessGroup: $(AppIdentifierPrefix)org.temperance.shared
+        CODE_SIGN_ENTITLEMENTS: Tunnel/Tunnel.entitlements
+    info:
+      path: Tunnel/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    preBuildScripts:
+      - name: Build WireGuard Go bridge
+        script: '"$SRCROOT/build-bridge.sh"'
+        basedOnDependencyAnalysis: false
+targets:
+  TemperanceMac:
+    templates: [BaseApp]
+    type: application
+    platform: macOS
+    deploymentTarget: '13.0'
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.temperance.mac
+        INFOPLIST_KEY_TunnelBundleIdentifier: org.temperance.mac.tunnel
+    dependencies:
+      - target: TemperanceMacTunnel
+        embed: true
+  TemperanceMacTunnel:
+    templates: [BaseTunnel]
+    type: app-extension
+    platform: macOS
+    deploymentTarget: '13.0'
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.temperance.mac.tunnel
+  TemperanceIOS:
+    templates: [BaseApp]
+    type: application
+    platform: iOS
+    deploymentTarget: '16.0'
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.temperance.ios
+        INFOPLIST_KEY_TunnelBundleIdentifier: org.temperance.ios.tunnel
+        TARGETED_DEVICE_FAMILY: '1,2'
+    dependencies:
+      - target: TemperanceIOSTunnel
+        embed: true
+  TemperanceIOSTunnel:
+    templates: [BaseTunnel]
+    type: app-extension
+    platform: iOS
+    deploymentTarget: '16.0'
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.temperance.ios.tunnel
+schemes:
+  TemperanceMac:
+    build:
+      targets:
+        TemperanceMac: all
+  TemperanceIOS:
+    build:
+      targets:
+        TemperanceIOS: all

@@ -1,0 +1,60 @@
+name: VPN clients and integration
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            binary: temperance-linux-amd64
+          - os: windows-latest
+            binary: temperance-windows-amd64.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: clients/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - run: go test ./...
+      - run: go build -trimpath -o ${{ matrix.binary }} .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: clients/desktop/${{ matrix.binary }}
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: clients/android/gradlew -p clients/android assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: clients/android/app/build/outputs/apk/debug/app-debug.apk
+  apple:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - run: brew install xcodegen
+      - run: clients/apple/bootstrap.sh
+      - run: xcodebuild -project clients/apple/Temperance.xcodeproj -scheme TemperanceMac -derivedDataPath build/apple CODE_SIGNING_ALLOWED=NO build
+      - run: xcodebuild -project clients/apple/Temperance.xcodeproj -scheme TemperanceIOS -destination 'generic/platform=iOS' -derivedDataPath build/apple-ios CODE_SIGNING_ALLOWED=NO build
+  vpn-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f deploy/Dockerfile.test -t temperance-test .
+      - run: docker run --rm --privileged -v "$PWD:/workspace:ro" temperance-test

@@ -1,0 +1,10 @@
+.git
+.venv
+build
+data
+clients/apple/Vendor
+clients/apple/Temperance.xcodeproj
+clients/android/.gradle
+clients/android/app/build
+__pycache__
+*.sqlite3*
