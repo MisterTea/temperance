@@ -11,7 +11,9 @@ val buildRustCore by tasks.registering(Exec::class) {
     workingDir = rootDir.resolve("../../core")
     commandLine("./build-bindings.sh", "android")
     inputs.dir(rootDir.resolve("../../core/temperance-core/src"))
+    inputs.file(rootDir.resolve("../../core/Cargo.lock"))
     outputs.dir(projectDir.resolve("src/main/jniLibs"))
+    outputs.dir(projectDir.resolve("src/main/java/uniffi"))
     onlyIf { System.getenv("TEMPERANCE_SKIP_RUST") == null }
 }
 tasks.named("preBuild") { dependsOn(buildRustCore) }

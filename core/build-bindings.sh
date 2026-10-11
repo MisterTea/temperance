@@ -8,9 +8,11 @@ ROOT=$(cd .. && pwd)
 LIB=temperance_core
 PROFILE=${PROFILE:-release}
 
+# Bindings are generated from an unstripped debug build: the release profile
+# strips symbols, which removes UniFFI's metadata on Linux.
 host_library() {
-  cargo build -p temperance-core --profile "$PROFILE" >&2
-  local dir=target/$PROFILE
+  cargo build -p temperance-core >&2
+  local dir=target/debug
   for ext in dylib so dll; do
     [ -f "$dir/lib$LIB.$ext" ] && { echo "$dir/lib$LIB.$ext"; return; }
   done
@@ -35,6 +37,7 @@ apple() {
     -library "$out/lib/macos.a" -headers "$out/headers" \
     -output "$out/TemperanceCoreFFI.xcframework"
   mkdir -p "$out/Sources"
+  test -s "$out/generated/$LIB.swift" || { echo "Swift bindings were not generated" >&2; exit 1; }
   mv "$out/generated/$LIB.swift" "$out/Sources/TemperanceCore.swift"
   rm -rf "$out/generated" "$out/headers" "$out/lib"
 }
@@ -43,6 +46,7 @@ android() {
   local app=$ROOT/clients/android/app/src/main
   cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -P 26 -o "$app/jniLibs" build -p temperance-core --profile "$PROFILE"
   cargo run -q -p uniffi-bindgen -- generate --library "$(host_library)" --language kotlin --out-dir "$app/java"
+  test -s "$app/java/uniffi/temperance_core/temperance_core.kt" || { echo "Kotlin bindings were not generated" >&2; exit 1; }
 }
 
 case "${1:-all}" in

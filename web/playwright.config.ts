@@ -7,7 +7,7 @@ export const GATEWAY_TOKEN = "e2e-gateway-".padEnd(48, "g");
 export const baseURL = `http://127.0.0.1:${port}`;
 // The standalone server changes directory, so SQLite paths must be absolute.
 const database =
-  process.env.E2E_DATABASE_URL ??
+  process.env.E2E_DATABASE_URL ||
   "sqlite:" + resolve(__dirname, "test-results/e2e.sqlite3");
 
 export default defineConfig({
