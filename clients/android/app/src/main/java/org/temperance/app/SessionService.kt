@@ -20,7 +20,7 @@ class SessionService : Service() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = application as TemperanceApp
-        app.executor.execute { try { app.connect() } catch (e: Exception) { app.status = e.message ?: "VPN connection failed" } }
+        app.executor.execute { try { app.connect() } catch (e: Exception) { app.status = StatusText.error(e) } }
         return START_STICKY
     }
     override fun onDestroy() { scheduler.shutdownNow(); super.onDestroy() }

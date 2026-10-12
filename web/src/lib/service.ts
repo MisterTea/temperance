@@ -21,6 +21,7 @@ const publicDevice = (d: Device) => ({
   ip: d.ip,
   name: d.name,
   profile_id: d.profile_id,
+  user_id: d.user_id,
   paused: d.paused,
   managed: d.managed,
   last_seen: d.last_seen,
@@ -145,6 +146,8 @@ export function saveProfile(state: State, input: unknown) {
 }
 export function deleteProfile(state: State, id: number) {
   profile(state, id);
+  if ((state.users ?? []).some((u) => u.profile_id === id))
+    throw new Error("Reassign or delete this profile’s client users first");
   if (state.devices.some((d) => !d.revoked && d.profile_id === id))
     throw new Error("Reassign or revoke this profile’s devices first");
   state.profiles = state.profiles.filter((p) => p.id !== id);
@@ -219,6 +222,10 @@ export function saveDevice(state: State, input: unknown) {
   profile(state, data.profile_id);
   const device = state.devices.find((d) => d.ip === data.ip && !d.revoked);
   if (!device) throw new Error("Enroll a VPN device first");
+  const owner =
+    device.user_id && (state.users ?? []).find((u) => u.id === device.user_id);
+  if (owner && owner.profile_id !== data.profile_id)
+    throw new Error("Change the client user's assigned profile in Settings");
   Object.assign(device, data);
   if (device.kind === "home") delete device.location_requested;
   changed(state, "device", `Device ${device.name} updated`);
@@ -231,18 +238,24 @@ export function revokeDevice(state: State, ip: string) {
   changed(state, "device", `Device ${device.name} revoked`);
   return snapshot(state);
 }
+/** `ipv4:port` or `hostname:port` (dynamic DNS for a home gateway). */
+export function vpnEndpoint(value = process.env.TEMPERANCE_VPN_ENDPOINT ?? "") {
+  const match = /^([a-zA-Z0-9.-]{1,253}):(\d{1,5})$/.exec(value);
+  const host = match?.[1].toLowerCase() ?? "";
+  const port = Number(match?.[2]);
+  const labels = host.split(".");
+  const valid = /^[\d.]+$/.test(host)
+    ? labels.length === 4 && labels.every((n) => n !== "" && Number(n) <= 255)
+    : labels.every((l) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l)) &&
+      !/^\d+$/.test(labels.at(-1)!);
+  if (!match || !valid || port < 1 || port > 65535)
+    throw new Error(
+      "Configure TEMPERANCE_VPN_ENDPOINT as host:port (IPv4 address or DNS name)",
+    );
+  return `${host}:${port}`;
+}
 export function provisioning(device: Device) {
-  const endpoint = process.env.TEMPERANCE_VPN_ENDPOINT ?? "";
-  if (
-    !/^(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}$/.test(endpoint) ||
-    endpoint
-      .split(":")[0]
-      .split(".")
-      .some((n) => Number(n) > 255) ||
-    Number(endpoint.split(":")[1]) < 1 ||
-    Number(endpoint.split(":")[1]) > 65535
-  )
-    throw new Error("Configure a numeric IPv4 VPN endpoint");
+  const endpoint = vpnEndpoint();
   const serverKey = validateKey(process.env.TEMPERANCE_VPN_PUBLIC_KEY);
   const octet = Number(device.ip.split(".").at(-1));
   return {
@@ -350,7 +363,16 @@ export function gatewaySeen(state: State, at = now()) {
 }
 export async function authenticatedDevice(state: State, token: string) {
   const tokenHash = await hash(token);
-  return state.devices.find((d) => !d.revoked && d.token_hash === tokenHash);
+  return state.devices.find(
+    (d) =>
+      !d.revoked &&
+      d.token_hash === tokenHash &&
+      (!d.user_id ||
+        (state.users ?? []).some(
+          (u) =>
+            u.id === d.user_id && !u.disabled && u.profile_id === d.profile_id,
+        )),
+  );
 }
 export async function enroll(state: State, input: unknown) {
   const data = z

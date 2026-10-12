@@ -89,7 +89,7 @@ export function Onboarding({
             you will:
           </p>
           <ol className="plan">
-            <li>create the administrator account parents sign in with,</li>
+            <li>sign in with your server’s admin password,</li>
             <li>choose starting rules for your first family member, and</li>
             <li>connect their first device.</li>
           </ol>
@@ -108,70 +108,32 @@ export function Onboarding({
           onSubmit={(e) => {
             e.preventDefault();
             const f = Object.fromEntries(new FormData(e.currentTarget));
-            if (f.password !== f.confirm) {
-              setError("The passwords do not match");
-              return;
-            }
             run(async () => {
-              await api("/v1/setup", {
-                setup_token: f.setup_token,
-                username: f.username,
-                password: f.password,
-              });
+              await api("/v1/login", { password: f.password });
               setStep(2);
               await onAccountCreated();
             });
           }}
         >
-          <h1 id="account">Create the administrator account</h1>
+          <h1 id="account">Sign in as administrator</h1>
           <label>
-            Setup token
-            <input name="setup_token" type="password" required />
+            Admin password
+            <input
+              name="password"
+              type="password"
+              required
+              autoComplete="current-password"
+            />
             <small>
-              The <code>TEMPERANCE_ADMIN_TOKEN</code> value from the server’s
-              environment. It proves you own this installation and is only
-              needed once.
+              The TEMPERANCE_ADMIN_PASSWORD value configured on your server.
             </small>
           </label>
-          <label>
-            Username
-            <input
-              name="username"
-              required
-              defaultValue="admin"
-              autoComplete="username"
-              autoCapitalize="none"
-            />
-          </label>
-          <div className="two">
-            <label>
-              Password
-              <input
-                name="password"
-                type="password"
-                required
-                minLength={10}
-                autoComplete="new-password"
-              />
-              <small>At least 10 characters.</small>
-            </label>
-            <label>
-              Confirm password
-              <input
-                name="confirm"
-                type="password"
-                required
-                minLength={10}
-                autoComplete="new-password"
-              />
-            </label>
-          </div>
           <div className="actions">
             <button type="button" className="quiet" onClick={() => setStep(0)}>
               Back
             </button>
             <button className="primary" disabled={busy}>
-              {busy ? "Creating…" : "Create account"}
+              {busy ? "Signing in…" : "Sign in"}
             </button>
           </div>
         </form>
@@ -370,9 +332,9 @@ export function Onboarding({
         <section aria-labelledby="done">
           <h1 id="done">{saved}’s rules are ready.</h1>
           <p>
-            Next, connect {saved}’s phone, tablet or computer: create an
-            enrollment code in Devices and enter it in the Temperance app. TVs
-            and consoles can be added as home-network devices.
+            Next, connect {saved}’s phone, tablet or computer: create a client
+            username/password in Settings and enter it in the Temperance app.
+            TVs and consoles can be added as home-network devices.
           </p>
           <div className="actions">
             <button

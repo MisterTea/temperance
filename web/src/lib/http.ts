@@ -76,17 +76,12 @@ export async function handle(
     if (path === "healthz") return json({ ok: true });
     const write = request.method === "POST";
     repo ??= repository();
-    if (
-      path.startsWith("v1/oauth/") ||
-      path === "v1/setup" ||
-      path === "v1/login" ||
-      path === "v1/logout"
-    )
+    if (path === "v1/setup" || path === "v1/login" || path === "v1/logout")
       return await accountRoute(request, path, repo);
     if (path.startsWith("api/")) {
       const { state } = await repo.read();
-      const actor = await principal(request, state);
-      if (!actor) throw new HTTPError(401, "Parent sign-in required");
+      const actor = await principal(request);
+      if (!actor) throw new HTTPError(401, "Administrator sign-in required");
       if (
         write &&
         !bearer(request) &&
@@ -97,12 +92,7 @@ export async function handle(
         const url = new URL(request.url),
           today = service.snapshot(state).day;
         if (path === "api/state") return json(service.snapshot(state));
-        if (path === "api/me")
-          return json(
-            actor === "service"
-              ? { role: "service" }
-              : accounts.publicUser(actor),
-          );
+        if (path === "api/me") return json({ role: "admin" });
         if (path === "api/users")
           return json(accounts.users(state).map(accounts.publicUser));
         if (path === "api/usage")
@@ -176,7 +166,7 @@ export async function handle(
               format: "temperance",
               schema: 2,
               exported_at: Math.floor(Date.now() / 1000),
-              state: { ...state, users: undefined, refresh_tokens: undefined },
+              state: { ...state, refresh_tokens: undefined },
             },
             200,
             {
@@ -187,32 +177,31 @@ export async function handle(
       } else {
         const data = await body(request);
         const result = await mutate(repo, async (state) => {
-          const self =
-            actor === "service"
-              ? undefined
-              : accounts.users(state).find((u) => u.id === actor.id);
           switch (path) {
             case "api/users": {
-              if (self && self.role !== "owner")
-                throw new HTTPError(403, "Only the owner can add parents");
               const user = await accounts.createUser(state, data);
               service.changed(
                 state,
                 "account",
-                `Parent ${user.username} added`,
+                `Client user ${user.username} created`,
+              );
+              return accounts.publicUser(user);
+            }
+            case "api/users/update": {
+              const user = await accounts.updateUser(state, data);
+              service.changed(
+                state,
+                "account",
+                `Client user ${user.username} updated`,
               );
               return accounts.publicUser(user);
             }
             case "api/users/delete": {
               const id = z.object({ id: z.string() }).parse(data).id;
-              accounts.deleteUser(state, self ?? { role: "owner", id: "" }, id);
-              service.changed(state, "account", "Parent account removed");
+              accounts.deleteUser(state, id);
+              service.changed(state, "account", "Client user removed");
               return accounts.users(state).map(accounts.publicUser);
             }
-            case "api/password":
-              if (!self) throw new HTTPError(400, "Sign in as a parent");
-              await accounts.changePassword(state, self, data);
-              return { ok: true };
             case "api/profiles":
               return service.saveProfile(state, data);
             case "api/profiles/delete":
@@ -297,6 +286,35 @@ export async function handle(
         });
         return json(result);
       }
+    }
+    if (path === "v1/device/login" && write) {
+      const input = z
+        .object({
+          username: z.string().max(40),
+          password: z.string().max(200),
+          name: z.string().trim().min(1).max(80),
+          public_key: z.string().transform(validateKey),
+        })
+        .parse(await body(request));
+      const result = await mutate(repo, async (state) => {
+        const user = await accounts.authenticate(
+          state,
+          input.username,
+          input.password,
+        );
+        if (!user) return undefined;
+        const code = await service.issueCode(state, user.profile_id!);
+        const enrolled = await service.enroll(state, {
+          code: code.code,
+          name: input.name,
+          public_key: input.public_key,
+        });
+        const device = state.devices.find((d) => d.id === enrolled.device_id)!;
+        device.user_id = user.id;
+        return { ...enrolled, user: accounts.publicUser(user) };
+      });
+      if (!result) throw new HTTPError(401, "Invalid username or password");
+      return json(result);
     }
     if (path === "v1/enroll" && write) {
       const data = await body(request);
@@ -397,127 +415,33 @@ function cookie(request: Request) {
     .find((s) => s.startsWith(cookieName + "="))
     ?.slice(cookieName.length + 1);
 }
-// The admin secret remains a service credential for automation and first-run setup.
-async function principal(request: Request, state: State) {
+// Only the administrator password/session can change family policies or IAM users.
+async function principal(request: Request) {
   const token = bearer(request);
   if (token && (await hash(token)) === (await hash(secrets().admin)))
-    return "service" as const;
-  const value = token || cookie(request);
-  return value ? accounts.verifyAccess(state, value) : undefined;
-}
-async function form(request: Request): Promise<Record<string, unknown>> {
-  if (
-    (request.headers.get("content-type") ?? "").startsWith(
-      "application/x-www-form-urlencoded",
-    )
-  )
-    return Object.fromEntries(new URLSearchParams(await request.text()));
-  return body(request);
+    return true;
+  return accounts.verifyAdminSession(cookie(request) ?? "");
 }
 function sameOrigin(request: Request) {
   if (request.headers.get("origin") !== origin())
     throw new HTTPError(403, "Same-origin requests required");
 }
 async function accountRoute(request: Request, path: string, repo: Repository) {
-  if (path === "v1/setup" && request.method === "GET") {
-    const { state } = await repo.read();
-    return json({ needs_setup: accounts.users(state).length === 0 });
-  }
+  if (path === "v1/setup" && request.method === "GET")
+    return json({ needs_setup: false, auth: "admin_password" });
   if (request.method !== "POST") throw new HTTPError(404, "Not found");
-  if (path === "v1/logout") {
+  sameOrigin(request);
+  if (path === "v1/logout")
     return json({}, 200, { "Set-Cookie": sessionCookie("", 0) });
-  }
-  const data = await form(request);
-  if (path === "v1/setup") {
-    sameOrigin(request);
-    const input = z
-      .object({
-        setup_token: z.string(),
-        username: z.string(),
-        password: z.string(),
-      })
-      .parse(data);
-    if ((await hash(input.setup_token)) !== (await hash(secrets().admin)))
-      throw new HTTPError(401, "Invalid setup token");
-    const token = await mutate(repo, async (state) => {
-      if (accounts.users(state).length)
-        throw new HTTPError(409, "Setup is already complete");
-      const user = await accounts.createUser(state, input, "owner");
-      service.changed(state, "account", `Owner ${user.username} created`);
-      return accounts.accessToken(user);
-    });
-    return json({ ok: true }, 200, {
-      "Set-Cookie": sessionCookie(token, 3600),
-    });
-  }
-  if (path === "v1/login") {
-    sameOrigin(request);
-    const input = z
-      .object({ username: z.string(), password: z.string() })
-      .parse(data);
-    const token = await mutate(repo, async (state) => {
-      const user = await accounts.authenticate(
-        state,
-        input.username,
-        input.password,
-      );
-      return user ? accounts.accessToken(user) : undefined;
-    });
-    if (!token) throw new HTTPError(401, "Invalid username or password");
-    return json({}, 200, { "Set-Cookie": sessionCookie(token, 3600) });
-  }
-  if (path === "v1/oauth/revoke") {
-    const input = z.object({ token: z.string() }).parse(data);
-    await mutate(repo, (state) => accounts.revoke(state, input.token));
-    return json({});
-  }
-  if (path === "v1/oauth/token") {
-    const grant = z
-      .discriminatedUnion("grant_type", [
-        z.object({
-          grant_type: z.literal("password"),
-          username: z.string(),
-          password: z.string(),
-          client_id: z.string().max(80).default("temperance"),
-        }),
-        z.object({
-          grant_type: z.literal("refresh_token"),
-          refresh_token: z.string(),
-        }),
-      ])
-      .safeParse(data);
-    if (!grant.success)
-      return json(
-        {
-          error: "unsupported_grant_type",
-          error_description: "Use password or refresh_token",
-        },
-        400,
-      );
-    const g = grant.data;
-    const tokens = await mutate(repo, async (state) => {
-      if (g.grant_type === "refresh_token") {
-        try {
-          return await accounts.refreshTokens(state, g.refresh_token);
-        } catch {
-          return undefined;
-        }
-      }
-      const user = await accounts.authenticate(state, g.username, g.password);
-      return user ? accounts.issueTokens(state, user, g.client_id) : undefined;
-    });
-    if (!tokens)
-      return json(
-        {
-          error: "invalid_grant",
-          error_description: "Invalid credentials or token",
-        },
-        400,
-        { Pragma: "no-cache" },
-      );
-    return json(tokens, 200, { Pragma: "no-cache" });
-  }
-  throw new HTTPError(404, "Not found");
+  if (path !== "v1/login") throw new HTTPError(404, "Not found");
+  const input = z
+    .object({ password: z.string().max(200) })
+    .parse(await body(request));
+  if ((await hash(input.password)) !== (await hash(secrets().admin)))
+    throw new HTTPError(401, "Invalid admin password");
+  return json({}, 200, {
+    "Set-Cookie": sessionCookie(await accounts.adminSession(), 3600),
+  });
 }
 function validateBackup(value: unknown): State {
   const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -527,6 +451,7 @@ function validateBackup(value: unknown): State {
     id: z.string().uuid(),
     name: z.string().min(1).max(80),
     profile_id: id,
+    user_id: z.string().uuid().optional(),
     revoked: z.boolean(),
     paused: z.boolean(),
     managed: z.boolean(),
@@ -573,7 +498,22 @@ function validateBackup(value: unknown): State {
       token_hash: z.string().regex(/^[a-f0-9]{64}$/),
     }),
   ]);
+  const iamUser = z.object({
+    id: z.string().uuid(),
+    username: accounts.username,
+    password_hash: z
+      .string()
+      .regex(/^pbkdf2-sha256\$[0-9]+\$[a-f0-9]{32}\$[a-f0-9]{64}$/),
+    role: z.enum(["user", "owner", "parent"]),
+    profile_id: id.optional(),
+    disabled: z.boolean().optional(),
+    session_version: z.number().int().positive(),
+    created_at: stamp,
+    failed_logins: z.number().int().nonnegative(),
+    locked_until: stamp.optional(),
+  });
   const schema = z.object({
+    users: z.array(iamUser).max(253).optional(),
     schema: z.literal(2),
     version: z.number().int().positive(),
     nextProfileId: id,
@@ -672,6 +612,21 @@ function validateBackup(value: unknown): State {
   )
     throw new HTTPError(400, "Invalid profile IDs");
   const ids = new Set(s.profiles.map((p) => p.id));
+  const users = s.users ?? [];
+  if (
+    new Set(users.map((u) => u.id)).size !== users.length ||
+    new Set(users.map((u) => u.username)).size !== users.length
+  )
+    throw new HTTPError(400, "Duplicate backup users");
+  for (const u of users)
+    if (
+      (u.role === "user" && !u.profile_id) ||
+      (u.profile_id && !ids.has(u.profile_id))
+    )
+      throw new HTTPError(400, "Invalid backup user profile");
+  for (const d of s.devices)
+    if (d.user_id && !users.some((u) => u.id === d.user_id))
+      throw new HTTPError(400, "Invalid backup device user");
   const vpn = s.devices.filter((d) => d.kind !== "home");
   if (
     new Set(s.devices.map((d) => d.ip)).size !== s.devices.length ||

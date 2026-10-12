@@ -111,7 +111,7 @@ fn enrolls_connects_refreshes_and_requests_time() {
         post(
             &mut app,
             "/enroll",
-            "service=https%3A%2F%2Ffamily.example&code=abc&name=Laptop"
+            "service=https%3A%2F%2Ffamily.example&username=alex&password=user-password&name=Laptop"
         ),
         303
     );
@@ -120,7 +120,7 @@ fn enrolls_connects_refreshes_and_requests_time() {
         "Ready. Rules are enforced by your family's gateway."
     );
     let sent = fake.sent.borrow()[0].clone();
-    assert_eq!(sent.url, "https://family.example/v1/enroll");
+    assert_eq!(sent.url, "https://family.example/v1/device/login");
     assert!(!sent.body.unwrap().contains("private"));
 
     let conf = std::fs::read_to_string(dir.path().join("data/temperance.conf")).unwrap();
@@ -222,7 +222,7 @@ fn rejects_cross_origin_wrong_host_and_bad_input() {
     post(
         &mut app,
         "/enroll",
-        "service=http%3A%2F%2Finsecure.example&code=a&name=b",
+        "service=http%3A%2F%2Finsecure.example&username=alex&password=user-password&name=b",
     );
     assert_eq!(app.status, "Enter an HTTPS service origin");
     post(&mut app, "/connect", "");
@@ -233,7 +233,7 @@ fn rejects_cross_origin_wrong_host_and_bad_input() {
     post(
         &mut app,
         "/enroll",
-        "service=https%3A%2F%2Ff.example&code=a&name=b",
+        "service=https%3A%2F%2Ff.example&username=alex&password=user-password&name=b",
     );
     assert!(app.status.starts_with("Cannot reach policy service"));
     assert!(app.identity.is_none());
@@ -244,12 +244,12 @@ fn rejects_cross_origin_wrong_host_and_bad_input() {
     post(
         &mut app,
         "/enroll",
-        "service=https%3A%2F%2Ff.example&code=a&name=b",
+        "service=https%3A%2F%2Ff.example&username=alex&password=user-password&name=b",
     );
     post(
         &mut app,
         "/enroll",
-        "service=https%3A%2F%2Ff.example&code=a&name=b",
+        "service=https%3A%2F%2Ff.example&username=alex&password=user-password&name=b",
     );
     assert_eq!(app.status, "Already enrolled");
     post(&mut app, "/request", "minutes=lots");
@@ -280,7 +280,7 @@ fn tunnel_failures_and_provisioning_changes_are_reported() {
     post(
         &mut app,
         "/enroll",
-        "service=https%3A%2F%2Ff.example&code=a&name=b",
+        "service=https%3A%2F%2Ff.example&username=alex&password=user-password&name=b",
     );
     post(&mut app, "/connect", "");
     assert_eq!(app.status, "WireGuard: denied");
@@ -330,7 +330,7 @@ fn shows_alerts_and_declines_location_requests() {
     post(
         &mut app,
         "/enroll",
-        "service=https%3A%2F%2Ffamily.example&code=abc&name=Laptop",
+        "service=https%3A%2F%2Ffamily.example&username=alex&password=user-password&name=Laptop",
     );
     let asked = state(
         2,
@@ -377,7 +377,7 @@ fn enrolled() -> (App<Fake, FakeTunnel>, Fake, FakeTunnel, tempfile::TempDir) {
     post(
         &mut app,
         "/enroll",
-        "service=https%3A%2F%2Ffamily.example&code=abc&name=Laptop",
+        "service=https%3A%2F%2Ffamily.example&username=alex&password=user-password&name=Laptop",
     );
     (app, fake, tunnel, dir)
 }
@@ -534,16 +534,266 @@ fn wifi_sign_in_window_expires_and_restores_protection() {
 
 #[test]
 fn platform_helpers_parse_handshakes_and_command_results() {
-    use crate::{command_result, handshake_age, wireguard_tool};
+    use crate::{command_result, handshake_age};
     assert_eq!(handshake_age("key=\t1000\n", 1030), Some(30));
     assert_eq!(handshake_age("a\t0\n", 1030), Some(u64::MAX));
     assert_eq!(handshake_age("a\t900\nb\t1000\n", 1030), Some(30));
     assert_eq!(handshake_age("", 1030), None);
     assert_eq!(handshake_age("a\t2000\n", 1030), Some(0));
     if !cfg!(windows) {
-        assert_eq!(wireguard_tool("wg"), std::path::PathBuf::from("wg"));
         assert!(command_result(std::process::Command::new("true").output()).is_ok());
         assert!(command_result(std::process::Command::new("false").output()).is_err());
     }
     assert!(command_result(Err(std::io::Error::other("missing"))).is_err());
+}
+
+#[test]
+fn data_dir_prefers_the_flag_then_platform_config_directories() {
+    use crate::data_dir;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+    let args = |a: &[&str]| {
+        a.iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .into_iter()
+    };
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| OsString::from(v))
+        }
+    };
+    assert_eq!(
+        data_dir(args(&["--verbose", "--data", "/srv/t"]), env(&[])),
+        PathBuf::from("/srv/t")
+    );
+    assert_eq!(
+        data_dir(args(&["--data"]), env(&[("HOME", "/home/a")])),
+        PathBuf::from("/home/a/.config/temperance")
+    );
+    assert_eq!(
+        data_dir(
+            args(&[]),
+            env(&[("APPDATA", "C:/Users/a/AppData"), ("HOME", "/h")])
+        ),
+        PathBuf::from("C:/Users/a/AppData/temperance")
+    );
+    assert_eq!(
+        data_dir(args(&[]), env(&[("XDG_CONFIG_HOME", "/x"), ("HOME", "/h")])),
+        PathBuf::from("/x/temperance")
+    );
+    assert_eq!(data_dir(args(&[]), env(&[])), PathBuf::from("./temperance"));
+}
+
+#[test]
+fn background_tick_refreshes_every_thirty_seconds_and_reports_failures() {
+    let (mut app, fake, _tunnel, _dir) = enrolled();
+    let sent = fake.sent.borrow().len();
+    crate::tick(&mut app, 1);
+    assert_eq!(
+        fake.sent.borrow().len(),
+        sent,
+        "no refresh between 30 s marks"
+    );
+    crate::tick(&mut app, 6);
+    assert!(fake.sent.borrow()[sent].url.ends_with("/v1/device/state"));
+    assert!(
+        app.status.ends_with("; existing VPN remains installed"),
+        "{}",
+        app.status
+    );
+    fake.replies
+        .borrow_mut()
+        .push_back(Ok((200, state(2, "allowed", ""))));
+    app.portal_until = Some(i64::MAX);
+    let sent = fake.sent.borrow().len();
+    crate::tick(&mut app, 12);
+    assert!(
+        fake.sent.borrow()[sent..]
+            .iter()
+            .all(|r| !r.url.ends_with("/v1/device/state")),
+        "no refresh while the tunnel is lowered for Wi-Fi sign-in"
+    );
+}
+
+#[test]
+fn background_tick_shows_a_tunnel_that_cannot_come_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let tunnel = FakeTunnel {
+        fail: true,
+        ..Default::default()
+    };
+    let mut app = App::new(dir.path().into(), "n".into(), Fake::default(), tunnel).unwrap();
+    app.portal_until = Some(0);
+    crate::tick(&mut app, 1);
+    assert_eq!(app.status, "WireGuard: denied");
+    assert!(app.portal_until.is_none());
+}
+
+fn local_server() -> (tiny_http::Server, String) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let host = server.server_addr().to_ip().unwrap().to_string();
+    (server, host)
+}
+
+#[test]
+fn local_ui_server_sends_security_headers_and_redirects_after_posts() {
+    let (mut app, _fake, _tunnel, _dir) = app();
+    let (server, host) = local_server();
+    let url = format!("http://{host}");
+    let client = std::thread::spawn(move || {
+        let agent = crate::agent(5, false);
+        let page = agent.get(format!("{url}/?tab=1")).call().unwrap();
+        let header = |r: &ureq::http::Response<ureq::Body>, name: &str| {
+            r.headers()
+                .get(name)
+                .map(|v| v.to_str().unwrap().to_string())
+        };
+        let headers = [
+            "content-type",
+            "cache-control",
+            "x-frame-options",
+            "content-security-policy",
+        ]
+        .map(|name| header(&page, name).unwrap_or_default());
+        let html = page.into_body().read_to_string().unwrap();
+        let post = agent
+            .post(format!("{url}/refresh"))
+            .header("Origin", &url)
+            .send("nonce=n0nce")
+            .unwrap();
+        let missing = agent.get(format!("{url}/missing")).call().unwrap();
+        (
+            headers,
+            html,
+            post.status().as_u16(),
+            header(&post, "location"),
+            missing.status().as_u16(),
+        )
+    });
+    for _ in 0..3 {
+        crate::respond(&mut app, server.recv().unwrap(), &host);
+    }
+    let (headers, html, post, location, missing) = client.join().unwrap();
+    assert_eq!(headers[0], "text/html; charset=utf-8");
+    assert_eq!(headers[1], "no-store");
+    assert_eq!(headers[2], "DENY");
+    assert!(headers[3].starts_with("default-src 'none'"));
+    assert!(html.contains("n0nce"));
+    assert_eq!((post, location.as_deref()), (303, Some("/")));
+    assert_eq!(app.status, "Enroll first");
+    assert_eq!(missing, 404);
+}
+
+#[test]
+fn https_transport_sends_requests_and_keeps_the_policy_service_on_https() {
+    use crate::{agent, Https};
+    use temperance_core::Header;
+    let (server, host) = local_server();
+    let portal = std::thread::spawn(move || {
+        let mut request = server.recv().unwrap();
+        let seen = (
+            request.method().to_string(),
+            request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("X-Test"))
+                .map(|h| h.value.to_string()),
+        );
+        let mut body = String::new();
+        std::io::Read::read_to_string(request.as_reader(), &mut body).unwrap();
+        request
+            .respond(
+                tiny_http::Response::from_string("sign in here")
+                    .with_status_code(302)
+                    .with_header(
+                        tiny_http::Header::from_bytes("Location", "http://portal.example/")
+                            .unwrap(),
+                    ),
+            )
+            .unwrap();
+        (seen, body)
+    });
+    let https = Https {
+        policy: agent(5, true),
+        probe: agent(5, false),
+    };
+    let request = HttpRequest {
+        method: "POST".into(),
+        url: format!("http://{host}/generate_204"),
+        headers: vec![Header {
+            name: "X-Test".into(),
+            value: "1".into(),
+        }],
+        body: Some("hello".into()),
+    };
+    assert_eq!(
+        https.probe(&request).unwrap(),
+        (
+            302,
+            Some("http://portal.example/".into()),
+            "sign in here".into()
+        )
+    );
+    let ((method, header), body) = portal.join().unwrap();
+    assert_eq!(
+        (method.as_str(), header.as_deref(), body.as_str()),
+        ("POST", Some("1"), "hello")
+    );
+    assert!(https.send(&request).is_err(), "plain HTTP policy service");
+    let bad = HttpRequest {
+        url: "not a url".into(),
+        ..request
+    };
+    assert!(https.probe(&bad).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn wireguard_runs_the_official_tools() {
+    use crate::WireGuard;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("log");
+    let script = |name: &str, body: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    script(
+        "wg",
+        r#"[ "$3" = latest-handshakes ] && printf 'peer\t%s\n' $(($(date +%s) - 10)); exit 0"#,
+    );
+    script(
+        "wg-quick",
+        &format!(
+            r#"echo "$@" >> {}; [ "$1" = up ] || {{ echo busy >&2; exit 1; }}"#,
+            log.display()
+        ),
+    );
+    let config = dir.path().join("temperance.conf");
+    let tools = WireGuard {
+        tools: Some(dir.path().into()),
+    };
+    assert!(tools.is_up());
+    assert!(tools
+        .handshake_age()
+        .is_some_and(|age| (10..60).contains(&age)));
+    tools.up(&config).unwrap();
+    assert_eq!(tools.down(&config).unwrap_err(), "WireGuard: busy\n");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        format!("up {0}\ndown {0}\n", config.display())
+    );
+
+    let missing = WireGuard {
+        tools: Some(dir.path().join("absent")),
+    };
+    assert!(!missing.is_up());
+    assert_eq!(missing.handshake_age(), None);
+    assert!(missing.up(&config).unwrap_err().starts_with("WireGuard: "));
+    assert!(WireGuard::system().tools.is_none());
 }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["temperance-core", "temperance-desktop", "uniffi-bindgen"]
+members = ["temperance-core", "temperance-desktop", "temperance-gateway", "uniffi-bindgen"]
 
 [workspace.package]
 version = "0.4.0"
@@ -18,3 +18,7 @@ lto = true
 codegen-units = 1
 strip = true
 opt-level = "z"
+
+# The gateway moves every packet of the household; size matters less than throughput.
+[profile.release.package.temperance-gateway]
+opt-level = 3

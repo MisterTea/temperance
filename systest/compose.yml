@@ -1,0 +1,73 @@
+# Client and server together in isolation; start with systest/run.sh.
+#
+#   lan (172.30.0.0/24)  client ── caddy (server.test, HTTPS) ── server
+#                        client ── server:51820/udp (WireGuard)
+#   wan (198.51.100.0/24)          server ── internet (DNS .53, sites .10, .11)
+#
+# Both networks are internal (no route to the real internet), and the client is not on
+# wan: the fake internet is only reachable through the tunnel.
+name: temperance-systest
+services:
+  server:
+    image: ${TEMPERANCE_SYSTEST_SERVER_IMAGE:-temperance-systest-server}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      TEMPERANCE_ADMIN_PASSWORD: system-test-admin-password
+      TEMPERANCE_GATEWAY_TOKEN: system-test-gateway-token-0123456789abcdef
+      TEMPERANCE_PUBLIC_URL: https://server.test
+      TEMPERANCE_VPN_ENDPOINT: 172.30.0.10:51820
+      TEMPERANCE_TIMEZONE: UTC
+      TEMPERANCE_DATA_DIR: /data
+      TEMPERANCE_GATEWAY_LISTEN: 0.0.0.0:51820
+      TEMPERANCE_GATEWAY_DNS_UPSTREAM: 198.51.100.53:53
+    tmpfs: [/data:mode=1777]
+    networks:
+      lan: { ipv4_address: 172.30.0.10 }
+      wan: { ipv4_address: 198.51.100.2 }
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 2s
+      retries: 60
+
+  caddy:
+    image: caddy:2
+    command: caddy reverse-proxy --from https://server.test --to server:3000 --internal-certs
+    volumes: [caddy-data:/data]
+    networks:
+      lan:
+        ipv4_address: 172.30.0.20
+        aliases: [server.test]
+
+  internet:
+    build: internet
+    cap_add: [NET_ADMIN]
+    networks:
+      wan: { ipv4_address: 198.51.100.53 }
+
+  client:
+    build:
+      context: ..
+      dockerfile: systest/Dockerfile
+    environment:
+      TEMPERANCE_ADMIN_PASSWORD: system-test-admin-password
+    cap_add: [NET_ADMIN]
+    volumes: [caddy-data:/caddy:ro]
+    networks:
+      lan: { ipv4_address: 172.30.0.30 }
+    depends_on:
+      server: { condition: service_healthy }
+      caddy: { condition: service_started }
+      internet: { condition: service_started }
+
+networks:
+  lan:
+    internal: true
+    ipam: { config: [{ subnet: 172.30.0.0/24 }] }
+  wan:
+    internal: true
+    ipam: { config: [{ subnet: 198.51.100.0/24 }] }
+
+volumes:
+  caddy-data:

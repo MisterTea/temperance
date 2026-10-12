@@ -1,5 +1,5 @@
-//! Policy semantics shared with the Next.js service and the Python gateway.
-//! `specs/policy-cases.json` is the contract all three implementations run.
+//! Policy semantics shared with the Next.js service, the gateway and the device apps.
+//! `specs/policy-cases.json` is the contract this and the TypeScript implementation run.
 use std::collections::HashMap;
 
 use chrono::{DateTime, Datelike, TimeZone, Timelike};

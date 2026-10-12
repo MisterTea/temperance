@@ -1,36 +1,27 @@
 # Temperance Next.js policy service
 
-This is the canonical web service. It implements the existing `/v1` WireGuard enrollment/device/gateway protocol directly in TypeScript. It is the only web service: the Python package is just the Linux VPN/DNS enforcement gateway, which polls this service and serves no HTTP itself.
+This is the canonical web service. It implements the `/v1` WireGuard enrollment/device/gateway protocol in TypeScript. At home it is also the VPN gateway: with `TEMPERANCE_GATEWAY_LISTEN` set, `src/instrumentation.ts` starts the embedded Rust gateway (`gateway-addon/`, built from `core/temperance-gateway`) in the same process, so one program serves the dashboard, the API and WireGuard. A gateway on another machine can instead run the standalone `temperance-gateway` binary, which polls `/v1/gateway/*`.
 
 The Next.js App Router serves the family dashboard and authenticated API. One deployment manages one household; do not publish it as a shared multi-tenant SaaS without additional account isolation.
 
 ## Storage
 
-`TEMPERANCE_DATABASE_URL` selects the backend by scheme. Every backend stores the same versioned household document and updates it with an atomic revision compare-and-swap, so concurrent requests and multiple server instances never lose writes. There is no process-memory production fallback.
+SQLite is the default: without `TEMPERANCE_DATABASE_URL` the household lives in `$TEMPERANCE_DATA_DIR/temperance.sqlite3` (`./data` next to the app when unset; never `/tmp`). Both backends go through one [Kysely](https://kysely.dev) repository, so there is a single copy of every query, and schema changes are Kysely migrations in `src/lib/migrations/`. The household is one versioned document updated with an atomic revision compare-and-swap, so concurrent requests and multiple server instances never lose writes.
 
-| URL | Backend | Good for |
+| `TEMPERANCE_DATABASE_URL` | Backend | Good for |
 | --- | --- | --- |
-| `sqlite:/data/temperance.sqlite3` (or `file:`, or a path ending in `.db`/`.sqlite3`) | SQLite via Node 24's built-in `node:sqlite` (WAL mode) | A single self-hosted server or Docker volume |
-| `postgres://user:pass@host:5432/db` | PostgreSQL via `pg` | Vercel, multi-instance, managed Postgres (Neon, Supabase, RDS) |
-| `https://…` / `libsql://…` + `TEMPERANCE_DATABASE_TOKEN` | libSQL/Turso HTTP pipeline | Vercel, Cloudflare Workers |
+| unset, `sqlite:/path/temperance.sqlite3` (or `file:`, or a path ending in `.db`/`.sqlite3`) | SQLite via Node 24's built-in `node:sqlite` (WAL, busy timeout); `better-sqlite3` is used if `node:sqlite` is unavailable | The home server, a Docker volume |
+| `postgres://user:pass@host:5432/db` | PostgreSQL via `pg` | Vercel, Cloudflare Workers, multi-instance, managed Postgres (Neon, Supabase, RDS) |
 
-SQLite needs a persistent local disk, so it is not suitable for Vercel Functions or Workers; use PostgreSQL or libSQL there.
+SQLite needs a persistent local disk, so it is not suitable for Vercel Functions or Workers; use PostgreSQL there.
 
-## Accounts and OAuth
+## Simple password authentication
 
-On first run the sign-in page asks for the setup token (`TEMPERANCE_ADMIN_TOKEN`) and creates the household **owner** with a username and password. The owner adds co-parents in Settings. Passwords are stored only as salted PBKDF2-SHA256 hashes (600,000 iterations); ten failed attempts lock an account for 15 minutes. Browser sessions are HttpOnly, SameSite=Strict cookies.
+Set `TEMPERANCE_ADMIN_PASSWORD` (at least 10 characters) on the server. The website asks only for this password; there is no OAuth setup or administrator username. Its HttpOnly/SameSite session is limited to the website. Existing `TEMPERANCE_ADMIN_TOKEN` installations temporarily use that value as the admin password until the new variable is configured.
 
-Native or scripted clients use the standard OAuth 2.0 token endpoint:
+In Settings → Client users, create a username/password and assign its family profile. The macOS/iOS, Android and Windows apps ask for the server and those client credentials, then call `POST /v1/device/login` with their locally generated WireGuard public key and device name. The server selects the profile assigned to that username; clients cannot choose another profile or administer policies. Passwords are sent over HTTPS and are never saved by the client. The device keeps its scoped credential in the platform keychain/private storage for subsequent policy requests. No OAuth grants, client IDs, refresh-token exchange, admin sign-in, or enrollment-code copying are required.
 
-```sh
-curl -s https://family.example/v1/oauth/token \
-  -d grant_type=password -d username=robin -d 'password=…'
-# {"access_token":"…","token_type":"Bearer","expires_in":3600,"refresh_token":"…"}
-curl -s https://family.example/v1/oauth/token -d grant_type=refresh_token -d refresh_token=…
-curl -s https://family.example/v1/oauth/revoke -d token=…
-```
-
-Refresh tokens rotate on every use. Changing a password or removing a parent revokes their tokens. The admin token remains a bearer credential for automation.
+Passwords are stored as salted PBKDF2-SHA256 hashes. Admins can reassign profiles, disable/delete users or reset their passwords. Disabling/deleting a user or resetting a password revokes its existing VPN devices; those clients must be reset and signed in again. Existing unlinked devices remain compatible during migration. Old parent/owner account records do not grant website access; assign their profiles explicitly if converting them to client users. The gateway still uses its independent `TEMPERANCE_GATEWAY_TOKEN`.
 
 ## Local development
 
@@ -44,15 +35,17 @@ cp .env.example .env.local
 npm run dev
 ```
 
-To develop against PostgreSQL instead, run `docker run --rm -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=dev postgres:17-alpine` and set `TEMPERANCE_DATABASE_URL=postgres://postgres:dev@127.0.0.1:5432/postgres`. Production database URLs require HTTPS and a private database token. The gateway public key is generated by the dedicated Linux gateway; never put its private key in the web service. Native apps intentionally require an HTTPS service origin.
+To develop against PostgreSQL instead, run `docker run --rm -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=dev postgres:17-alpine` and set `TEMPERANCE_DATABASE_URL=postgres://postgres:dev@127.0.0.1:5432/postgres`. Native apps intentionally require an HTTPS service origin.
+
+To run the embedded gateway locally, build the add-on once (`npm run build:gateway`, needs Rust) and set `TEMPERANCE_GATEWAY_LISTEN=0.0.0.0:51820`. The gateway's WireGuard key is generated into the data directory (`gateway.key`, mode 600) and its public key is handed to devices automatically; leave `TEMPERANCE_VPN_PUBLIC_KEY` unset. CI publishes prebuilt add-ons for linux-x64, linux-arm64, darwin-arm64, darwin-x64 and win32-x64.
 
 Use `npm run build && npm start` to exercise the standalone production server. The start script copies static assets to the standalone output. Use a reverse proxy for self-hosted HTTPS. The root `deploy/Dockerfile` and Compose recipe now build this Next.js service.
 
 ## Vercel
 
-Import `MisterTea/temperance` and set the project root directory to **web**. Next.js is auto-detected; `vercel.json` records the framework. Create/connect a persistent PostgreSQL (e.g. Neon from the Vercel Marketplace) or Turso/libSQL database and configure every variable from `.env.example` in Vercel's server-side environment settings. Set `TEMPERANCE_PUBLIC_URL` to the actual stable HTTPS domain. Never prefix secrets with `NEXT_PUBLIC_`.
+Import `MisterTea/temperance` and set the project root directory to **web**. Next.js is auto-detected; `vercel.json` records the framework. Create/connect a persistent PostgreSQL database (e.g. Neon from the Vercel Marketplace) and configure every variable from `.env.example` in Vercel's server-side environment settings. Set `TEMPERANCE_PUBLIC_URL` to the actual stable HTTPS domain. Never prefix secrets with `NEXT_PUBLIC_`.
 
-Build command: `npm run build`. Do not run the Python gateway, VPN, or SQLite in Vercel Functions; they are a separate always-on Linux service. A new process or cold start must read the same SQL database. Verify authentication, enrollment, a policy change reaching the gateway, and data persistence after redeploy before enrolling real devices. Vercel deployments in this repository are configuration/build verified; no account or paid hosting resource is automatically provisioned.
+Build command: `npm run build`. Vercel cannot host the VPN gateway or SQLite; run the standalone `temperance-gateway` binary at home and point it at the Vercel URL. A new process or cold start must read the same SQL database. Verify authentication, enrollment, a policy change reaching the gateway, and data persistence after redeploy before enrolling real devices. Vercel deployments in this repository are configuration/build verified; no account or paid hosting resource is automatically provisioned.
 
 ## Cloudflare Workers
 
@@ -62,27 +55,26 @@ The project uses Cloudflare's documented OpenNext adapter with pinned compatible
 npm ci
 npm run cloudflare:build
 # Set secrets first through Wrangler's prompted inputs or Cloudflare's dashboard.
-npx wrangler secret put TEMPERANCE_ADMIN_TOKEN
+npx wrangler secret put TEMPERANCE_ADMIN_PASSWORD
 npx wrangler secret put TEMPERANCE_GATEWAY_TOKEN
-npx wrangler secret put TEMPERANCE_DATABASE_TOKEN
+npx wrangler secret put TEMPERANCE_DATABASE_URL   # postgres://…
 # Configure the remaining server-side values in Cloudflare's dashboard or secrets.
 npm run cloudflare:deploy
 ```
 
-`wrangler.jsonc` enables `nodejs_compat`, static assets, and the adapter's self-reference service binding. Use persistent HTTP/libSQL storage, not a local file or Worker-memory map. For local runtime verification, copy the environment values into a private `.dev.vars` with a localhost origin matching the preview port, run `npm run cloudflare:build`, then `npx wrangler dev --port 3001`. No Cloudflare login is required for local preview. Full-stack deployments target **Workers**, not a static Pages export. `cloudflare:deploy` is a deliberate operator step and is not run automatically by the assistant or CI.
+`wrangler.jsonc` enables `nodejs_compat`, static assets, and the adapter's self-reference service binding. Use PostgreSQL (reached through `pg-cloudflare` sockets), not a local file or Worker-memory map. For local runtime verification, copy the environment values into a private `.dev.vars` with a localhost origin matching the preview port, run `npm run cloudflare:build`, then `npx wrangler dev --port 3001`. No Cloudflare login is required for local preview. Full-stack deployments target **Workers**, not a static Pages export. `cloudflare:deploy` is a deliberate operator step and is not run automatically by the assistant or CI.
 
 ## Tests
 
 ```sh
 npm run typecheck
 npm run test:coverage                      # unit + React component tests, 80% gate
-TEMPERANCE_TEST_POSTGRES_URL=postgres://… \
-TEMPERANCE_TEST_DATABASE_URL=http://127.0.0.1:8081 npm test   # also run storage contract on PG/libSQL
+TEMPERANCE_TEST_POSTGRES_URL=postgres://… npm test   # also run the storage contract on PostgreSQL
 npm run build && npx playwright test       # feature/UX tests on SQLite
 E2E_DATABASE_URL=postgres://… npx playwright test             # same suite on PostgreSQL
 ```
 
-Component tests render the dashboard in jsdom and route its `fetch` calls to the real API handler, so UI and API are exercised together. Playwright runs every feature flow at desktop (1440×900), tablet (820×1180), and Pixel 7 sizes and audits each screen for horizontal scrolling, content outside the viewport, clipped text, overlapping controls or text, broken images, and touch targets under 24px; screenshots are attached to the HTML report. The storage contract test verifies independent instances and concurrent writes for every backend. Shared policy cases in `specs/policy-cases.json` run in TypeScript and Python. The Linux traffic integration suite verifies actual WireGuard forwarding and policy packet rules. Unit tests alone do not prove parity or physical-client operation; follow `docs/research/circle-feature-audit.md` for remaining work.
+Component tests render the dashboard in jsdom and route its `fetch` calls to the real API handler, so UI and API are exercised together. Playwright runs every feature flow at desktop (1440×900), tablet (820×1180), and Pixel 7 sizes and audits each screen for horizontal scrolling, content outside the viewport, clipped text, overlapping controls or text, broken images, and touch targets under 24px; screenshots are attached to the HTML report. The storage contract test (seeded first read, compare-and-swap conflicts, concurrent writers on independent connections) runs on SQLite and, when configured, PostgreSQL. Shared policy cases in `specs/policy-cases.json` run in TypeScript and Rust. `tests/gateway.test.ts` drives the in-process gateway loop with a fake add-on; the gateway itself is tested end to end in `core/temperance-gateway/tests/tunnel.rs`. Unit tests alone do not prove parity or physical-client operation; follow `docs/research/circle-feature-audit.md` for remaining work.
 
 ## Migrating an existing Temperance instance
 

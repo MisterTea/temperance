@@ -1,5 +1,11 @@
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
+import { E2E_NOW, shiftClock } from "./e2e/clock.mjs";
+
+// Computed once by the runner; workers and the server inherit it.
+process.env.E2E_CLOCK_OFFSET_MS ??= String(Date.parse(E2E_NOW) - Date.now());
+shiftClock(Number(process.env.E2E_CLOCK_OFFSET_MS));
 
 const port = Number(process.env.E2E_PORT ?? 3100);
 export const ADMIN_TOKEN = "e2e-admin-".padEnd(48, "a");
@@ -25,8 +31,10 @@ export default defineConfig({
     timeout: 60_000,
     env: {
       PORT: String(port),
+      NODE_OPTIONS: `--import=${pathToFileURL(resolve(__dirname, "e2e/clock.mjs")).href}`,
+      E2E_CLOCK_OFFSET_MS: process.env.E2E_CLOCK_OFFSET_MS,
       TEMPERANCE_DATABASE_URL: database,
-      TEMPERANCE_ADMIN_TOKEN: ADMIN_TOKEN,
+      TEMPERANCE_ADMIN_PASSWORD: ADMIN_TOKEN,
       TEMPERANCE_GATEWAY_TOKEN: GATEWAY_TOKEN,
       TEMPERANCE_PUBLIC_URL: baseURL,
       TEMPERANCE_VPN_ENDPOINT: "192.0.2.10:51820",

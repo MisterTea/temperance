@@ -221,15 +221,22 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         Ok(())
     }
 
-    pub fn enroll(&mut self, service: &str, code: &str, name: &str) -> Result<(), String> {
+    pub fn enroll(
+        &mut self,
+        service: &str,
+        username: &str,
+        password: &str,
+        name: &str,
+    ) -> Result<(), String> {
         if self.identity.as_ref().is_some_and(|i| i.state.is_some()) {
             return Err("Already enrolled".into());
         }
         let service = core::validate_service(service.into()).map_err(|e| e.to_string())?;
         let keys = core::generate_keypair();
-        let request = core::enroll_request(
+        let request = core::sign_in_request(
             service.clone(),
-            code.into(),
+            username.into(),
+            password.into(),
             name.into(),
             keys.public_key.clone(),
         )
@@ -320,7 +327,8 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             let result = match path {
                 "/enroll" => self.enroll(
                     &form_value(body, "service"),
-                    &form_value(body, "code"),
+                    &form_value(body, "username"),
+                    &form_value(body, "password"),
                     &form_value(body, "name"),
                 ),
                 "/connect" => self.connect(),
@@ -458,7 +466,7 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
                 )
             }
             None => format!(
-                r#"<form method="post" action="/enroll">{hidden}<label>Policy service<input name="service" type="url" placeholder="https://policy.example.com" required></label><label>Enrollment code<input name="code" required autocomplete="off"></label><label>Device name<input name="name" required maxlength="80"></label><button>Enroll this device</button></form>"#
+                r#"<form method="post" action="/enroll">{hidden}<label>Policy service<input name="service" type="url" placeholder="https://policy.example.com" required></label><label>Username<input name="username" required autocomplete="username"></label><label>Password<input name="password" type="password" required autocomplete="current-password"></label><label>Device name<input name="name" required maxlength="80"></label><button>Enroll this device</button></form>"#
             ),
         };
         format!(

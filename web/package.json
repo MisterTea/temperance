@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port 3000",
     "build": "next build",
+    "build:gateway": "npm --prefix gateway-addon run build",
     "start": "node scripts/start.cjs",
     "test": "vitest run",
     "typecheck": "next typegen && tsc --noEmit",
@@ -15,6 +16,8 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@temperance/gateway-addon": "file:./gateway-addon",
+    "kysely": "^0.29.6",
     "next": "16.3.8",
     "pg": "^8.23.1",
     "pg-cloudflare": "^1.4.1",

@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { snapshot } from "@/lib/service";
 import { dailyLimit, type Profile } from "@/lib/policy";
 import type { History } from "@/lib/model";
@@ -7,7 +7,13 @@ import { ProfileEditor } from "./profile-editor";
 import { Onboarding } from "./onboarding";
 import { api } from "./api";
 type DashboardState = ReturnType<typeof snapshot>;
-type ParentAccount = { id: string; username: string; role: string };
+type ParentAccount = {
+  id: string;
+  username: string;
+  role?: string;
+  profile_id?: number;
+  disabled?: boolean;
+};
 const ago = (at: number) => {
   const minutes = Math.max(0, Math.round((Date.now() / 1000 - at) / 60));
   if (minutes < 1) return "just now";
@@ -26,6 +32,12 @@ export function Dashboard() {
   const [signedIn, setSignedIn] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [onboarding, setOnboarding] = useState<boolean>();
+  const [resetUser, setResetUser] = useState<ParentAccount>();
+  const [resetError, setResetError] = useState("");
+  const resetDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (resetUser) resetDialog.current?.showModal();
+  }, [resetUser]);
   const [parents, setParents] = useState<ParentAccount[]>([]);
   const [me, setMe] = useState<ParentAccount>();
   const [loading, setLoading] = useState(true);
@@ -165,16 +177,7 @@ export function Dashboard() {
             }}
           >
             <label>
-              Username
-              <input
-                name="username"
-                required
-                autoComplete="username"
-                autoCapitalize="none"
-              />
-            </label>
-            <label>
-              Password
+              Admin password
               <input
                 name="password"
                 type="password"
@@ -568,6 +571,7 @@ export function Dashboard() {
                       <td>
                         <select
                           aria-label={`${d.name} profile`}
+                          disabled={!!d.user_id}
                           value={d.profile_id}
                           onChange={(e) =>
                             act(() =>
@@ -1149,109 +1153,135 @@ export function Dashboard() {
               </form>
             </section>
             <section>
-              <h2>Family administrators</h2>
+              <h2>Client users</h2>
               <p>
-                Co-parents sign in with their own username and password.
-                Passwords are stored only as salted PBKDF2 hashes.
+                Create a username/password and assign its family profile.
+                Clients sign in as that user; users cannot edit policy or
+                administer this website.
               </p>
               {parents.map((u) => (
                 <article className="row-card" key={u.id}>
-                  <span>
-                    <strong>{u.username}</strong> <small>{u.role}</small>
-                  </span>
-                  {me?.role === "owner" && u.id !== me.id ? (
+                  <div>
+                    <strong>{u.username}</strong>
+                    <small>{u.disabled ? "Disabled" : "Enabled"}</small>
+                  </div>
+                  <label>
+                    Family profile
+                    <select
+                      value={u.profile_id ?? ""}
+                      onChange={(e) =>
+                        act(async () => {
+                          await api("/api/users/update", {
+                            id: u.id,
+                            profile_id: Number(e.target.value),
+                          });
+                          await loadParents();
+                          await refresh();
+                        })
+                      }
+                    >
+                      <option value="" disabled>
+                        Assign a profile
+                      </option>
+                      {state.profiles.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div>
+                    <button
+                      onClick={() =>
+                        act(async () => {
+                          await api("/api/users/update", {
+                            id: u.id,
+                            disabled: !u.disabled,
+                          });
+                          await loadParents();
+                        })
+                      }
+                    >
+                      {u.disabled ? "Enable" : "Disable"}
+                    </button>
                     <button
                       onClick={() => {
-                        if (confirm(`Remove ${u.username}'s access?`))
-                          act(async () => {
+                        setResetError("");
+                        setResetUser(u);
+                      }}
+                    >
+                      Reset password
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Delete ${u.username} and revoke its devices?`,
+                          )
+                        )
+                          act(async () =>
                             setParents(
                               await api<ParentAccount[]>("/api/users/delete", {
                                 id: u.id,
                               }),
-                            );
-                          });
+                            ),
+                          );
                       }}
                     >
-                      Remove
+                      Delete user
                     </button>
-                  ) : null}
+                  </div>
                 </article>
               ))}
-              {me?.role === "owner" ? (
-                <form
-                  aria-label="Add parent"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const target = e.currentTarget;
-                    const f = Object.fromEntries(new FormData(target));
-                    act(async () => {
-                      await api("/api/users", f);
-                      target.reset();
-                      await loadParents();
+              <form
+                aria-label="Add client user"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const target = e.currentTarget;
+                  const f = Object.fromEntries(new FormData(target));
+                  act(async () => {
+                    await api("/api/users", {
+                      ...f,
+                      profile_id: Number(f.profile_id),
                     });
-                  }}
-                >
-                  <div className="two">
-                    <label>
-                      Co-parent username
-                      <input
-                        name="username"
-                        required
-                        autoComplete="off"
-                        autoCapitalize="none"
-                      />
-                    </label>
-                    <label>
-                      Initial password
-                      <input
-                        name="password"
-                        type="password"
-                        minLength={10}
-                        required
-                        autoComplete="new-password"
-                      />
-                    </label>
-                  </div>
-                  <button className="secondary">Add parent</button>
-                </form>
-              ) : null}
-              {me && me.role !== "service" ? (
-                <form
-                  aria-label="Change password"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const f = Object.fromEntries(new FormData(e.currentTarget));
-                    act(async () => {
-                      await api("/api/password", f);
-                      setSignedIn(false);
-                      setState(undefined);
-                    });
-                  }}
-                >
-                  <div className="two">
-                    <label>
-                      Current password
-                      <input
-                        name="current_password"
-                        type="password"
-                        required
-                        autoComplete="current-password"
-                      />
-                    </label>
-                    <label>
-                      New password
-                      <input
-                        name="new_password"
-                        type="password"
-                        minLength={10}
-                        required
-                        autoComplete="new-password"
-                      />
-                    </label>
-                  </div>
-                  <button className="secondary">Change password</button>
-                </form>
-              ) : null}
+                    target.reset();
+                    await loadParents();
+                  });
+                }}
+              >
+                <div className="two">
+                  <label>
+                    Username
+                    <input
+                      name="username"
+                      required
+                      autoComplete="off"
+                      autoCapitalize="none"
+                    />
+                  </label>
+                  <label>
+                    Password
+                    <input
+                      name="password"
+                      type="password"
+                      minLength={10}
+                      required
+                      autoComplete="new-password"
+                    />
+                  </label>
+                  <label>
+                    Family profile
+                    <select name="profile_id" required>
+                      {state.profiles.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <button className="secondary">Create user</button>
+              </form>
             </section>
             <section>
               <h2>Portable backup</h2>
@@ -1362,6 +1392,59 @@ export function Dashboard() {
           <span>Policy version {state.version}</span>
         </footer>
       </main>
+      {resetUser ? (
+        <dialog
+          className="editor"
+          ref={resetDialog}
+          onCancel={() => setResetUser(undefined)}
+        >
+          <form
+            aria-label="Reset client password"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const password = new FormData(e.currentTarget).get("password");
+              try {
+                await api("/api/users/update", { id: resetUser.id, password });
+                await loadParents();
+                setResetUser(undefined);
+              } catch (error) {
+                setResetError(
+                  error instanceof Error
+                    ? error.message
+                    : "Could not reset password",
+                );
+              }
+            }}
+          >
+            <h2>Reset password for {resetUser.username}</h2>
+            <p>Existing devices will be revoked and must sign in again.</p>
+            <label>
+              New password
+              <input
+                name="password"
+                type="password"
+                minLength={10}
+                maxLength={200}
+                autoComplete="new-password"
+                required
+              />
+            </label>
+            <p className="error" role="alert">
+              {resetError}
+            </p>
+            <div className="actions">
+              <button className="primary">Reset password</button>
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setResetUser(undefined)}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </dialog>
+      ) : null}
       {editing ? (
         <ProfileEditor
           profile={editing === true ? undefined : editing}

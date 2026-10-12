@@ -22,11 +22,14 @@ export function validateKey(value: unknown): string {
   return value;
 }
 export function secrets() {
-  const admin = process.env.TEMPERANCE_ADMIN_TOKEN ?? "",
+  const admin =
+      process.env.TEMPERANCE_ADMIN_PASSWORD ??
+      process.env.TEMPERANCE_ADMIN_TOKEN ??
+      "",
     gateway = process.env.TEMPERANCE_GATEWAY_TOKEN ?? "";
-  if (admin.length < 32 || gateway.length < 32 || admin === gateway)
+  if (admin.length < 10 || gateway.length < 32 || admin === gateway)
     throw new Error(
-      "Configure distinct admin/gateway secrets of at least 32 characters",
+      "Configure an admin password (10+ characters) and a different gateway secret (32+ characters)",
     );
   return { admin, gateway };
 }

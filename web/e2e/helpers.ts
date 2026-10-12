@@ -1,7 +1,24 @@
-import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import {
+  test as base,
+  expect,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 import { ADMIN_TOKEN, GATEWAY_TOKEN } from "../playwright.config";
+import { shiftClock } from "./clock.mjs";
 
-export const OWNER = { username: "robin", password: "kitchen-table-42" };
+/** Pages share the run's shifted clock with the server and the test runner. */
+export const test = base.extend({
+  context: async ({ context }, use) => {
+    await context.addInitScript(
+      shiftClock,
+      Number(process.env.E2E_CLOCK_OFFSET_MS),
+    );
+    await use(context);
+  },
+});
+
+export const OWNER = { password: ADMIN_TOKEN };
 
 export const admin = { Authorization: "Bearer " + ADMIN_TOKEN };
 export const gateway = { Authorization: "Bearer " + GATEWAY_TOKEN };

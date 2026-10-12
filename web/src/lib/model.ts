@@ -8,6 +8,8 @@ export interface Device {
   profile_id: number;
   public_key: string;
   token_hash: string;
+  /** IAM user who registered this VPN client. */
+  user_id?: string;
   revoked: boolean;
   paused: boolean;
   managed: boolean;
@@ -58,7 +60,9 @@ export interface User {
   id: string;
   username: string;
   password_hash: string;
-  role: "owner" | "parent";
+  role: "user" | "owner" | "parent";
+  profile_id?: number;
+  disabled?: boolean;
   session_version: number;
   created_at: number;
   failed_logins: number;

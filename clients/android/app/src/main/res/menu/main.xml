@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/menu_refresh" android:title="@string/menu_refresh" android:showAsAction="ifRoom" />
+    <item android:id="@+id/menu_ask_time" android:title="@string/ask_time" android:showAsAction="never" />
+    <item android:id="@+id/menu_wifi" android:title="@string/wifi_sign_in" android:showAsAction="never" />
+    <item android:id="@+id/menu_vpn_settings" android:title="@string/menu_vpn_settings" android:showAsAction="never" />
+    <item android:id="@+id/menu_location" android:title="@string/menu_location" android:showAsAction="never" />
+    <item android:id="@+id/menu_about" android:title="@string/menu_about" android:showAsAction="never" />
+</menu>

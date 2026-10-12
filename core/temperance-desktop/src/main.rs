@@ -68,16 +68,6 @@ fn agent(timeout: u64, https_only: bool) -> ureq::Agent {
         .into()
 }
 
-fn wireguard_tool(name: &str) -> PathBuf {
-    if cfg!(windows) {
-        PathBuf::from(std::env::var("ProgramFiles").unwrap_or_default())
-            .join("WireGuard")
-            .join(name)
-    } else {
-        PathBuf::from(name)
-    }
-}
-
 fn command_result(output: std::io::Result<std::process::Output>) -> Result<(), String> {
     let output = output.map_err(|e| format!("WireGuard: {e}"))?;
     if output.status.success() {
@@ -90,45 +80,74 @@ fn command_result(output: std::io::Result<std::process::Output>) -> Result<(), S
     }
 }
 
-struct WireGuard;
+/// The official WireGuard tools, run from `tools` or, when it is `None`, from `PATH`.
+struct WireGuard {
+    tools: Option<PathBuf>,
+}
 
-impl TunnelControl for WireGuard {
-    fn is_up(&self) -> bool {
-        if cfg!(windows) {
-            Command::new("sc.exe")
-                .args(["query", "WireGuardTunnel$temperance"])
-                .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).contains("RUNNING"))
-                .unwrap_or(false)
-        } else {
-            Command::new("wg")
-                .args(["show", "temperance"])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
+impl WireGuard {
+    fn system() -> Self {
+        WireGuard {
+            tools: cfg!(windows).then(|| {
+                PathBuf::from(std::env::var("ProgramFiles").unwrap_or_default()).join("WireGuard")
+            }),
         }
     }
+    fn tool(&self, name: &str) -> Command {
+        let exe = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+        Command::new(
+            self.tools
+                .as_ref()
+                .map_or(PathBuf::from(&exe), |d| d.join(&exe)),
+        )
+    }
+}
+
+impl TunnelControl for WireGuard {
+    #[cfg(windows)]
+    fn is_up(&self) -> bool {
+        Command::new("sc.exe")
+            .args(["query", "WireGuardTunnel$temperance"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("RUNNING"))
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    fn is_up(&self) -> bool {
+        self.tool("wg")
+            .args(["show", "temperance"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(windows)]
     fn up(&self, config: &Path) -> Result<(), String> {
-        command_result(if cfg!(windows) {
-            Command::new(wireguard_tool("wireguard.exe"))
+        command_result(
+            self.tool("wireguard")
                 .arg("/installtunnelservice")
                 .arg(config)
-                .output()
-        } else {
-            Command::new("wg-quick").arg("up").arg(config).output()
-        })
+                .output(),
+        )
     }
-    fn down(&self, config: &Path) -> Result<(), String> {
-        command_result(if cfg!(windows) {
-            Command::new(wireguard_tool("wireguard.exe"))
+    #[cfg(not(windows))]
+    fn up(&self, config: &Path) -> Result<(), String> {
+        command_result(self.tool("wg-quick").arg("up").arg(config).output())
+    }
+    #[cfg(windows)]
+    fn down(&self, _config: &Path) -> Result<(), String> {
+        command_result(
+            self.tool("wireguard")
                 .args(["/uninstalltunnelservice", "temperance"])
-                .output()
-        } else {
-            Command::new("wg-quick").arg("down").arg(config).output()
-        })
+                .output(),
+        )
+    }
+    #[cfg(not(windows))]
+    fn down(&self, config: &Path) -> Result<(), String> {
+        command_result(self.tool("wg-quick").arg("down").arg(config).output())
     }
     fn handshake_age(&self) -> Option<u64> {
-        let output = Command::new(wireguard_tool(if cfg!(windows) { "wg.exe" } else { "wg" }))
+        let output = self
+            .tool("wg")
             .args(["show", "temperance", "latest-handshakes"])
             .output()
             .ok()
@@ -155,8 +174,11 @@ fn handshake_age(output: &str, now: u64) -> Option<u64> {
     })
 }
 
-fn data_dir() -> PathBuf {
-    let mut args = std::env::args().skip(1);
+/// `--data <dir>`, else `temperance` under the platform's per-user config directory.
+fn data_dir(
+    mut args: impl Iterator<Item = String>,
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> PathBuf {
     while let Some(arg) = args.next() {
         if arg == "--data" {
             if let Some(dir) = args.next() {
@@ -164,12 +186,63 @@ fn data_dir() -> PathBuf {
             }
         }
     }
-    let base = std::env::var_os("APPDATA")
-        .or_else(|| std::env::var_os("XDG_CONFIG_HOME"))
+    let base = var("APPDATA")
+        .or_else(|| var("XDG_CONFIG_HOME"))
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .or_else(|| var("HOME").map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("temperance")
+}
+
+/// Background work every 5 seconds: end Wi-Fi sign-in windows, and refresh policy every 30 s.
+fn tick<T: Transport, W: TunnelControl>(app: &mut App<T, W>, count: u64) {
+    if let Err(e) = app.check_portal() {
+        app.status = e;
+    }
+    if count % 6 == 0 && app.identity.is_some() && app.portal_until.is_none() {
+        if let Err(e) = app.refresh() {
+            app.status = format!("{e}; existing VPN remains installed");
+        }
+    }
+}
+
+fn respond<T: Transport, W: TunnelControl>(
+    app: &mut App<T, W>,
+    mut request: tiny_http::Request,
+    host: &str,
+) {
+    let header = |request: &tiny_http::Request, name: &'static str| {
+        request
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv(name))
+            .map(|h| h.value.to_string())
+    };
+    let (req_host, origin) = (
+        header(&request, "Host").unwrap_or_default(),
+        header(&request, "Origin"),
+    );
+    let mut body = String::new();
+    let _ = request.as_reader().take(8193).read_to_string(&mut body);
+    let method = request.method().to_string();
+    let path = request.url().split('?').next().unwrap_or("/").to_string();
+    let response = app.handle(&method, &path, &req_host, host, origin.as_deref(), &body);
+    let mut out = tiny_http::Response::from_string(response.body)
+        .with_status_code(response.status)
+        .with_header(tiny_http::Header::from_bytes("Content-Type", response.content_type).unwrap())
+        .with_header(tiny_http::Header::from_bytes("Cache-Control", "no-store").unwrap())
+        .with_header(tiny_http::Header::from_bytes("X-Frame-Options", "DENY").unwrap())
+        .with_header(
+            tiny_http::Header::from_bytes(
+                "Content-Security-Policy",
+                "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+            )
+            .unwrap(),
+        );
+    if let Some(location) = response.location {
+        out = out.with_header(tiny_http::Header::from_bytes("Location", location).unwrap());
+    }
+    let _ = request.respond(out);
 }
 
 fn main() {
@@ -177,7 +250,7 @@ fn main() {
         eprintln!("Temperance has no Linux device app. Protect Linux computers by routing them through the gateway as home-network devices.");
         std::process::exit(2);
     }
-    let dir = data_dir();
+    let dir = data_dir(std::env::args().skip(1), |name| std::env::var_os(name));
     std::fs::create_dir_all(&dir).expect("create data directory");
     let mut nonce = [0u8; 32];
     OsRng.fill_bytes(&mut nonce);
@@ -185,8 +258,13 @@ fn main() {
         policy: agent(15, true),
         probe: agent(5, false),
     };
-    let app =
-        App::new(dir, URL_SAFE_NO_PAD.encode(nonce), transport, WireGuard).expect("load identity");
+    let app = App::new(
+        dir,
+        URL_SAFE_NO_PAD.encode(nonce),
+        transport,
+        WireGuard::system(),
+    )
+    .expect("load identity");
     let app = Arc::new(Mutex::new(app));
     let server = tiny_http::Server::http("127.0.0.1:0").expect("bind localhost");
     let host = server
@@ -198,60 +276,15 @@ fn main() {
 
     let background = Arc::clone(&app);
     std::thread::spawn(move || {
-        let mut tick = 0u64;
+        let mut count = 0u64;
         loop {
-            tick += 1;
+            count = count.wrapping_add(1);
             std::thread::sleep(Duration::from_secs(5));
-            let mut app = background.lock().unwrap();
-            if let Err(e) = app.check_portal() {
-                app.status = e;
-            }
-            if tick % 6 == 0 && app.identity.is_some() && app.portal_until.is_none() {
-                if let Err(e) = app.refresh() {
-                    app.status = format!("{e}; existing VPN remains installed");
-                }
-            }
+            tick(&mut background.lock().unwrap(), count);
         }
     });
-
-    for mut request in server.incoming_requests() {
-        let header = |request: &tiny_http::Request, name: &'static str| {
-            request
-                .headers()
-                .iter()
-                .find(|h| h.field.equiv(name))
-                .map(|h| h.value.to_string())
-        };
-        let (req_host, origin) = (
-            header(&request, "Host").unwrap_or_default(),
-            header(&request, "Origin"),
-        );
-        let mut body = String::new();
-        let _ = request.as_reader().take(8193).read_to_string(&mut body);
-        let method = request.method().to_string();
-        let path = request.url().split('?').next().unwrap_or("/").to_string();
-        let response =
-            app.lock()
-                .unwrap()
-                .handle(&method, &path, &req_host, &host, origin.as_deref(), &body);
-        let mut out = tiny_http::Response::from_string(response.body)
-            .with_status_code(response.status)
-            .with_header(
-                tiny_http::Header::from_bytes("Content-Type", response.content_type).unwrap(),
-            )
-            .with_header(tiny_http::Header::from_bytes("Cache-Control", "no-store").unwrap())
-            .with_header(tiny_http::Header::from_bytes("X-Frame-Options", "DENY").unwrap())
-            .with_header(
-                tiny_http::Header::from_bytes(
-                    "Content-Security-Policy",
-                    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
-                )
-                .unwrap(),
-            );
-        if let Some(location) = response.location {
-            out = out.with_header(tiny_http::Header::from_bytes("Location", location).unwrap());
-        }
-        let _ = request.respond(out);
+    for request in server.incoming_requests() {
+        respond(&mut app.lock().unwrap(), request, &host);
     }
 }
 

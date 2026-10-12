@@ -1,6 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { ADMIN_TOKEN } from "../playwright.config";
-import { OWNER, api, watchConsole } from "./helpers";
+import { OWNER, api, test, watchConsole } from "./helpers";
 import { expectCleanLayout } from "./layout";
 
 const SIZES = [
@@ -25,39 +25,19 @@ test("a fresh install walks the parent through the admin account and first rules
   const clean = watchConsole(page);
   await page.setViewportSize(SIZES[0]);
   await page.goto("/");
-  const progress = page.getByRole("list", { name: "Setup progress" });
-  await expect(progress.locator('[aria-current="step"]')).toContainText(
-    "Welcome",
-  );
-  await auditEverySize(page, "setup welcome");
-  await page.getByRole("button", { name: "Get started" }).click();
-
-  const account = page.getByRole("form", {
-    name: "Create the administrator account",
-  });
-  await expect(progress.locator('[aria-current="step"]')).toContainText(
-    "Admin account",
-  );
-  await account.getByLabel("Setup token").fill("not-the-token");
-  await account.getByLabel("Username").fill(OWNER.username);
-  await account.getByLabel(/^Password/).fill(OWNER.password);
-  await account.getByLabel("Confirm password").fill("a-different-pass");
-  await account.getByRole("button", { name: "Create account" }).click();
-  await expect(page.locator("p.error")).toHaveText(
-    "The passwords do not match",
-  );
-  await account.getByLabel("Confirm password").fill(OWNER.password);
-  await account.getByRole("button", { name: "Create account" }).click();
-  await expect(page.locator("p.error")).toHaveText("Invalid setup token");
-  await auditEverySize(page, "setup account with error");
-
-  await account.getByLabel("Setup token").fill(ADMIN_TOKEN);
-  await account.getByRole("button", { name: "Create account" }).click();
-
+  const account = page.getByRole("form", { name: "Sign in" });
+  await expect(account).toBeVisible();
+  await auditEverySize(page, "admin password sign-in");
+  await account.getByLabel("Admin password").fill("wrong-password");
+  await account.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.locator("p.error")).toHaveText("Invalid admin password");
+  await account.getByLabel("Admin password").fill(ADMIN_TOKEN);
+  await account.getByRole("button", { name: "Sign in" }).click();
   const rules = page.getByRole("form", {
     name: "Starting rules for your first family member",
   });
   await expect(rules).toBeVisible();
+  const progress=page.getByRole("list",{name:"Setup progress"});
   await expect(progress.locator('[aria-current="step"]')).toContainText(
     "Family rules",
   );

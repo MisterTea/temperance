@@ -6,16 +6,24 @@ enum ClientError: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
+/// Persists the device identity; the apps use the shared Keychain (`Vault`).
+protocol IdentityStore {
+    func load() throws -> Identity?
+    func save(_ identity: Identity) throws
+}
 /// Keychain storage shared with the tunnel extension. The identity format is
 /// owned by the shared Rust core so every platform persists the same data.
-enum Vault {
-    static var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "org.temperance.identity",
-         kSecAttrAccount as String: "device",
-         kSecAttrAccessGroup as String: Bundle.main.object(forInfoDictionaryKey: "KeychainAccessGroup") as! String]
+struct Vault: IdentityStore {
+    var service = "org.temperance.identity"
+    var accessGroup = Bundle.main.object(forInfoDictionaryKey: "KeychainAccessGroup") as? String
+    private var query: [String: Any] {
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: "device"]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        return query
     }
-    static func load() throws -> Identity? {
+    func load() throws -> Identity? {
         var q = query; q[kSecReturnData as String] = true
         var result: CFTypeRef?
         let status = SecItemCopyMatching(q as CFDictionary, &result)
@@ -23,7 +31,7 @@ enum Vault {
         guard status == errSecSuccess, let data = result as? Data else { throw ClientError.message("Keychain read failed: \(status)") }
         return try identityFromJson(json: String(decoding: data, as: UTF8.self))
     }
-    static func save(_ identity: Identity) throws {
+    func save(_ identity: Identity) throws {
         let data = Data(identityToJson(identity: identity).utf8)
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {

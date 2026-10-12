@@ -245,6 +245,33 @@ pub fn location_unavailable_request(
     )
 }
 
+/// Signs this device into its administrator-assigned IAM user. The username
+/// and password are sent once over HTTPS; only device credentials are persisted.
+#[uniffi::export]
+pub fn sign_in_request(
+    service: String,
+    username: String,
+    password: String,
+    name: String,
+    public_key: String,
+) -> Result<HttpRequest, CoreError> {
+    let name = name.trim();
+    if username.trim().is_empty() || password.is_empty() {
+        return Err(invalid("Enter your username and password"));
+    }
+    if name.is_empty() || name.chars().count() > 80 {
+        return Err(invalid("Enter a device name up to 80 characters"));
+    }
+    let body = serde_json::json!({"username":username.trim(),"password":password,"name":name,"public_key":public_key});
+    request(
+        "POST",
+        &service,
+        "/v1/device/login",
+        None,
+        Some(body.to_string()),
+    )
+}
+
 /// Checks a response that carries no data the client needs.
 #[uniffi::export]
 pub fn parse_ok(status: u16, body: String) -> Result<(), CoreError> {

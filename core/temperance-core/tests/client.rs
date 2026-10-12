@@ -45,12 +45,24 @@ fn tunnel_config_is_full_tunnel_and_validated() {
     assert!(conf.contains("AllowedIPs = 0.0.0.0/0, ::/0"));
     assert!(conf.contains("Address = 10.77.0.2/32, fd77::2/128"));
     assert!(conf.contains(&format!("PrivateKey = {}", keys.private_key)));
+    // Home gateways behind a changing IP use a dynamic-DNS name.
+    for good in ["home.example.net:51820", "[2001:db8::1]:51820"] {
+        let mut t = tunnel();
+        t.endpoint = good.into();
+        let conf = tunnel_config(keys.private_key.clone(), t).unwrap();
+        assert!(conf.contains(&format!("Endpoint = {good}\n")), "{good}");
+    }
     for (field, bad) in [
         ("address", "10.77.0.2"),
         ("address", "10.77.0.2/33"),
         ("address_v6", "fd77::2/129"),
         ("dns", "dns.example"),
-        ("endpoint", "vpn.example:51820"),
+        ("endpoint", "vpn.example:0"),
+        ("endpoint", "vpn.example"),
+        ("endpoint", "-vpn.example:51820"),
+        ("endpoint", "vpn..example:51820"),
+        ("endpoint", "999.1.1.1:51820"),
+        ("endpoint", "vpn.example:51820\nPostUp = rm -rf /"),
         ("endpoint", "192.0.2.1:0"),
         ("public_key", "AAAA"),
         ("dns", "10.77.0.1\nPostUp = rm -rf /"),
@@ -587,4 +599,38 @@ fn child_alerts_fire_once_on_transitions() {
             "Your request for 20 minutes was declined".into(),
         ]
     );
+}
+
+#[test]
+fn client_password_sign_in_is_scoped_and_https_only() {
+    let request = sign_in_request(
+        "https://family.example/".into(),
+        " alex ".into(),
+        "user-password".into(),
+        "Phone".into(),
+        "public-key".into(),
+    )
+    .unwrap();
+    assert_eq!(request.url, "https://family.example/v1/device/login");
+    let body: serde_json::Value = serde_json::from_str(request.body.as_deref().unwrap()).unwrap();
+    assert_eq!(body["username"], "alex");
+    assert_eq!(body["password"], "user-password");
+    assert!(body.get("profile_id").is_none());
+    assert!(body.get("grant_type").is_none());
+    assert!(sign_in_request(
+        "http://family.example".into(),
+        "alex".into(),
+        "password".into(),
+        "Phone".into(),
+        "key".into()
+    )
+    .is_err());
+    assert!(sign_in_request(
+        "https://family.example".into(),
+        "alex".into(),
+        "".into(),
+        "Phone".into(),
+        "key".into()
+    )
+    .is_err());
 }

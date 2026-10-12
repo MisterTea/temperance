@@ -2,24 +2,29 @@ import CoreLocation
 import UserNotifications
 
 /// Shows child alerts computed by the shared core as local notifications.
-enum ChildNotifier {
-    static func requestPermission() {
+struct ChildNotifier: Notifier {
+    func requestPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
-    static func post(_ message: String) {
+    func post(_ message: String) {
         let content = UNMutableNotificationContent()
         content.title = "Temperance"
         content.body = message
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
+    func allowed() async -> Bool? {
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        return status == .notDetermined ? nil : status == .authorized || status == .provisional
+    }
 }
 
 /// Answers a parent's one-time location request with a single fix.
-@MainActor final class LocationResponder: NSObject, CLLocationManagerDelegate {
-    private let manager = CLLocationManager()
+@MainActor final class LocationResponder: NSObject, CLLocationManagerDelegate, LocationSource {
+    private let manager: CLLocationManager
     private var pending: CheckedContinuation<CLLocation?, Never>?
 
-    override init() {
+    init(manager: CLLocationManager = CLLocationManager()) {
+        self.manager = manager
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters

@@ -1,3 +1,3 @@
 {$TEMPERANCE_POLICY_HOST} {
-    reverse_proxy 127.0.0.1:8788
+    reverse_proxy {$TEMPERANCE_UPSTREAM:127.0.0.1:8788}
 }

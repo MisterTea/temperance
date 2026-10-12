@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/time_dialog"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="8dp">
+
+    <RadioGroup
+        android:id="@+id/minutes"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:checkedButton="@+id/minutes_15">
+        <RadioButton android:id="@+id/minutes_15" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:text="@string/minutes_15" />
+        <RadioButton android:id="@+id/minutes_30" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:text="@string/minutes_30" />
+        <RadioButton android:id="@+id/minutes_60" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:text="@string/minutes_60" />
+    </RadioGroup>
+
+    <EditText
+        android:id="@+id/time_message"
+        style="@style/Field"
+        android:layout_marginTop="8dp"
+        android:hint="@string/time_message_hint"
+        android:importantForAutofill="no"
+        android:inputType="textCapSentences|textMultiLine"
+        android:singleLine="false"
+        android:maxLines="4"
+        android:maxLength="300"
+        android:imeOptions="flagNoExtractUi" />
+</LinearLayout>

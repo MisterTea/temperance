@@ -1,9 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
 import {
   api,
   enrollDevice,
   ensureProfile,
   gateway,
+  test,
   watchConsole,
 } from "./helpers";
 import { expectCleanLayout } from "./layout";

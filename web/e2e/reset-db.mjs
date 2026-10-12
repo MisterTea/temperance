@@ -6,7 +6,9 @@ if (/^postgres(ql)?:\/\//.test(url)) {
   const { default: pg } = await import("pg");
   const client = new pg.Client({ connectionString: url });
   await client.connect();
-  await client.query("DROP TABLE IF EXISTS temperance_state");
+  await client.query(
+    "DROP TABLE IF EXISTS temperance_state, kysely_migration, kysely_migration_lock",
+  );
   await client.end();
 } else if (url.startsWith("sqlite:")) {
   const path = url.replace(/^sqlite:(\/\/)?/, "");

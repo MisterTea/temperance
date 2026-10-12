@@ -1,10 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import {
   api,
   enrollDevice,
   ensureProfile,
   gateway,
   profileNamed,
+  test,
   watchConsole,
 } from "./helpers";
 import { expectCleanLayout } from "./layout";
@@ -374,26 +375,23 @@ test("children request time and parents approve, reward, and cancel", async ({
   clean();
 });
 
-test("settings manage co-parents, retention, and feeds", async ({
+test("settings manage client users, retention, and feeds", async ({
   page,
 }, info) => {
   const clean = watchConsole(page);
   const coParent = "coparent-" + info.project.name;
   await page.goto("/");
   await openTab(page, "Settings");
-  await expect(page.locator(".row-card", { hasText: "robin" })).toContainText(
-    "owner",
-  );
-  const add = page.getByRole("form", { name: "Add parent" });
-  await add.getByLabel("Co-parent username").fill(coParent);
-  await add.getByLabel("Initial password").fill("co-parent-password");
-  await add.getByRole("button", { name: "Add parent" }).click();
+  const add = page.getByRole("form", { name: "Add client user" });
+  await add.getByLabel("Username").fill(coParent);
+  await add.getByLabel("Password").fill("client-test-password");
+  await add.getByRole("button", { name: "Create user" }).click();
   const row = page.locator(".row-card", { hasText: coParent });
-  await expect(row).toContainText("parent");
+  await expect(row).toContainText("Enabled");
   await expectCleanLayout(page, "settings");
 
   page.once("dialog", (d) => d.accept());
-  await row.getByRole("button", { name: "Remove" }).click();
+  await row.getByRole("button", { name: "Delete user" }).click();
   await expect(row).toBeHidden();
 
   await page.getByLabel("History retention (days)").fill("14");

@@ -61,7 +61,7 @@ async function api(path: string, body?: unknown, token?: string) {
 
 /** An owner who already finished the first-run wizard. */
 async function setupOwner() {
-  await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+  await api("v1/login", { password: ADMIN });
   await api("api/setup/complete", {}, ADMIN);
 }
 
@@ -148,7 +148,7 @@ async function signIn() {
   await browserFetch("/v1/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(OWNER),
+    body: JSON.stringify({ password: ADMIN }),
   });
 }
 
@@ -184,58 +184,15 @@ describe("sign-in", () => {
   it("walks a fresh install through the admin account and first rules", async () => {
     const user = userEvent.setup();
     render(<Dashboard />);
-    const progress = await screen.findByRole("list", {
-      name: "Setup progress",
-    });
-    expect(within(progress).getByText("Welcome").closest("li")).toHaveProperty(
-      "ariaCurrent",
-      "step",
-    );
-    await user.click(screen.getByRole("button", { name: "Get started" }));
-
-    const account = await screen.findByRole("form", {
-      name: "Create the administrator account",
-    });
-    await user.type(within(account).getByLabelText(/^Setup token/), "wrong");
-    await user.clear(within(account).getByLabelText("Username"));
-    await user.type(within(account).getByLabelText("Username"), OWNER.username);
-    await user.type(
-      within(account).getByLabelText(/^Password/),
-      OWNER.password,
-    );
-    await user.type(
-      within(account).getByLabelText("Confirm password"),
-      "something-else-1",
-    );
-    await user.click(
-      within(account).getByRole("button", { name: "Create account" }),
-    );
-    expect(screen.getByRole("alert").textContent).toBe(
-      "The passwords do not match",
-    );
-    await user.clear(within(account).getByLabelText("Confirm password"));
-    await user.type(
-      within(account).getByLabelText("Confirm password"),
-      OWNER.password,
-    );
-    await user.click(
-      within(account).getByRole("button", { name: "Create account" }),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).toMatch(/setup token/i),
-    );
-    expect((await state()).users ?? []).toHaveLength(0);
-
-    await user.clear(within(account).getByLabelText(/^Setup token/));
-    await user.type(within(account).getByLabelText(/^Setup token/), ADMIN);
-    await user.click(
-      within(account).getByRole("button", { name: "Create account" }),
-    );
+    const signIn = await screen.findByRole("form", { name: "Sign in" });
+    expect(within(signIn).queryByLabelText("Username")).toBeNull();
+    await user.type(within(signIn).getByLabelText("Admin password"), ADMIN);
+    await user.click(within(signIn).getByRole("button", { name: "Sign in" }));
 
     const rules = await screen.findByRole("form", {
       name: "Starting rules for your first family member",
     });
-    expect((await state()).users?.[0].username).toBe("robin");
+    expect((await state()).users ?? []).toHaveLength(0);
     await user.type(within(rules).getByLabelText("Their name"), "Avery");
     await user.click(within(rules).getByLabelText(/^Teen/));
     expect(
@@ -287,7 +244,7 @@ describe("sign-in", () => {
   });
 
   it("resumes the rules step after sign-in and can be skipped", async () => {
-    await api("v1/setup", { setup_token: ADMIN, ...OWNER });
+    await api("v1/login", { password: ADMIN });
     await signIn();
     const user = userEvent.setup();
     render(<Dashboard />);
@@ -323,14 +280,16 @@ describe("sign-in", () => {
     const user = userEvent.setup();
     render(<Dashboard />);
     const form = await screen.findByRole("form", { name: "Sign in" });
-    await user.type(within(form).getByLabelText("Username"), OWNER.username);
-    await user.type(within(form).getByLabelText("Password"), "nope-nope-nope");
+    await user.type(
+      within(form).getByLabelText("Admin password"),
+      "nope-nope-nope",
+    );
     await user.click(within(form).getByRole("button", { name: "Sign in" }));
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toMatch(/invalid/i),
     );
-    await user.clear(within(form).getByLabelText("Password"));
-    await user.type(within(form).getByLabelText("Password"), OWNER.password);
+    await user.clear(within(form).getByLabelText("Admin password"));
+    await user.type(within(form).getByLabelText("Admin password"), ADMIN);
     await user.click(within(form).getByRole("button", { name: "Sign in" }));
     await screen.findByRole("heading", { name: "Your family's digital day." });
 
@@ -924,80 +883,46 @@ describe("settings", () => {
     ).toBe("/api/export");
   });
 
-  it("manages co-parents and changes the password", async () => {
-    await setupOwner();
+  it("creates client users with assigned profiles and allows admin revocation", async () => {
+    await seedHousehold();
     await signIn();
     const user = await openDashboard();
     await tab(user, "Settings");
-    await screen.findByText("robin");
-    const add = screen.getByRole("form", { name: "Add parent" });
-    await user.type(within(add).getByLabelText("Co-parent username"), "jordan");
-    await user.type(within(add).getByLabelText("Initial password"), "short");
-    await user.click(within(add).getByRole("button", { name: "Add parent" }));
-    // Browser validation blocks the short password.
-    expect((await state()).users).toHaveLength(1);
-    await user.clear(within(add).getByLabelText("Initial password"));
-    await user.type(
-      within(add).getByLabelText("Initial password"),
-      "second-parent-pass",
+    const form = await screen.findByRole("form", { name: "Add client user" });
+    await user.type(within(form).getByLabelText("Username"), "alex-client");
+    await user.type(within(form).getByLabelText("Password"), "client-password");
+    await user.selectOptions(
+      within(form).getByLabelText("Family profile"),
+      "1",
     );
-    await user.click(within(add).getByRole("button", { name: "Add parent" }));
-    const jordan = await screen.findByText("jordan");
-    expect((await state()).users).toHaveLength(2);
-
-    vi.mocked(window.confirm).mockReturnValueOnce(false);
-    const card = jordan.closest("article") as HTMLElement;
-    await user.click(within(card).getByRole("button", { name: "Remove" }));
-    expect((await state()).users).toHaveLength(2);
-    await user.click(within(card).getByRole("button", { name: "Remove" }));
-    await waitFor(() => expect(screen.queryByText("jordan")).toBeNull());
-
-    const change = screen.getByRole("form", { name: "Change password" });
-    await user.type(
-      within(change).getByLabelText("Current password"),
-      "not-my-password",
-    );
-    await user.type(
-      within(change).getByLabelText("New password"),
-      "brand-new-password",
-    );
-    await user.click(
-      within(change).getByRole("button", { name: "Change password" }),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).toMatch(/password/i),
-    );
-    await user.clear(within(change).getByLabelText("Current password"));
-    await user.type(
-      within(change).getByLabelText("Current password"),
-      OWNER.password,
-    );
-    await user.click(
-      within(change).getByRole("button", { name: "Change password" }),
-    );
-    await screen.findByRole("form", { name: "Sign in" });
+    await user.click(within(form).getByRole("button", { name: "Create user" }));
+    const label = await screen.findByText("alex-client");
+    expect((await state()).users![0].profile_id).toBe(1);
+    const card = label.closest("article")!;
+    await user.click(within(card).getByRole("button", { name: "Disable" }));
+    await waitFor(() => expect(screen.getByText("Disabled")).toBeTruthy());
+    await user.click(within(card).getByRole("button", { name: "Delete user" }));
+    await waitFor(() => expect(screen.queryByText("alex-client")).toBeNull());
   });
-
-  it("shows a parent account without owner controls", async () => {
-    await setupOwner();
+  it("client passwords cannot sign into the administrator website", async () => {
+    await seedHousehold();
     await api(
       "api/users",
-      { username: "jordan", password: "second-parent-pass" },
+      { username: "alex-client", password: "client-password", profile_id: 1 },
       ADMIN,
     );
     cookie = "";
-    await browserFetch("/v1/login", {
-      method: "POST",
-      body: JSON.stringify({
-        username: "jordan",
-        password: "second-parent-pass",
-      }),
-    });
-    const user = await openDashboard();
-    await tab(user, "Settings");
-    await screen.findByText("jordan");
-    expect(screen.queryByRole("form", { name: "Add parent" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
-    expect(screen.getByRole("form", { name: "Change password" })).toBeTruthy();
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    const form = await screen.findByRole("form", { name: "Sign in" });
+    await user.type(
+      within(form).getByLabelText("Admin password"),
+      "client-password",
+    );
+    await user.click(within(form).getByRole("button", { name: "Sign in" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/admin password/i),
+    );
+    expect(screen.queryByRole("heading", { name: "Client users" })).toBeNull();
   });
 });

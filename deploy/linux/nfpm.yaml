@@ -1,0 +1,29 @@
+# deploy/linux/package.sh fills in @ROOT@, @VERSION@ and @ARCH@.
+name: temperance
+arch: @ARCH@
+version: @VERSION@
+maintainer: Temperance contributors
+description: |
+  Family VPN and DNS controls: the Temperance dashboard and policy service with
+  its WireGuard gateway, as a systemd service. Includes its Node.js runtime.
+homepage: https://github.com/MisterTea/temperance
+license: MIT
+recommends:
+  - nftables
+contents:
+  - src: @ROOT@/node
+    dst: /opt/temperance/node
+    type: tree
+  - src: @ROOT@/app
+    dst: /opt/temperance/app
+    type: tree
+  - src: @ROOT@/temperance.service
+    dst: /usr/lib/systemd/system/temperance.service
+  - src: @ROOT@/temperance.env.example
+    dst: /usr/share/temperance/temperance.env.example
+  - src: @ROOT@/LICENSE
+    dst: /usr/share/doc/temperance/LICENSE
+scripts:
+  postinstall: deploy/linux/postinstall.sh
+  preremove: deploy/linux/preremove.sh
+  postremove: deploy/linux/postremove.sh

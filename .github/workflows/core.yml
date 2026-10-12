@@ -22,12 +22,70 @@ jobs:
           tool: cargo-llvm-cov
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Tests (shared golden policy cases included) with 80% line gate
-        run: cargo llvm-cov --workspace --fail-under-lines 80 --lcov --output-path lcov.info
+      - run: cargo clippy -p temperance-gateway --all-targets --features node,cli -- -D warnings
+      - name: Tests (shared golden policy cases included)
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: 80% line gate for each crate
+        run: |
+          for crate in temperance-core temperance-gateway temperance-desktop; do
+            others=$(printf '%s\n' temperance-core temperance-gateway temperance-desktop uniffi-bindgen | grep -vx "$crate" | paste -sd'|' -)
+            echo "== $crate"
+            cargo llvm-cov report --summary-only --fail-under-lines 80 --ignore-filename-regex "/($others)/" | tail -1
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: rust-coverage
           path: core/lcov.info
+
+  gateway:
+    name: Gateway ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, name: linux-x64, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, name: linux-arm64, target: aarch64-unknown-linux-gnu }
+          - { os: macos-latest, name: darwin-arm64, target: aarch64-apple-darwin }
+          - { os: macos-latest, name: darwin-x64, target: x86_64-apple-darwin, cross: true }
+          - { os: windows-latest, name: win32-x64, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: gateway-${{ matrix.target }}
+      - name: Unit tests and the no-root tunnel integration test
+        if: ${{ !matrix.cross }}
+        run: cargo test -p temperance-gateway
+      - name: Router mode in network namespaces (root, disposable runner)
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          sudo apt-get install -y -qq nftables
+          bin=$(cargo test -p temperance-gateway --test router_linux --no-run --message-format=json \
+            | jq -r 'select(.profile.test == true and .target.name == "router_linux") | .executable')
+          sudo TEMPERANCE_DISPOSABLE_TEST=1 "$bin" --nocapture
+      - name: Node-API add-on
+        working-directory: web/gateway-addon
+        run: node build.mjs --release --target ${{ matrix.target }} --name ${{ matrix.name }}
+      - run: cargo build --release -p temperance-gateway --features cli --target ${{ matrix.target }}
+      - shell: bash
+        run: |
+          mkdir -p ../build
+          cp ../web/gateway-addon/temperance-gateway.${{ matrix.name }}.node ../build/
+          src=target/${{ matrix.target }}/release/temperance-gateway
+          [[ "${{ matrix.target }}" == *windows* ]] && ext=.exe || ext=
+          cp "$src$ext" "../build/temperance-gateway-${{ matrix.name }}$ext"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gateway-${{ matrix.name }}
+          path: build/
 
   desktop:
     name: Desktop ${{ matrix.target }}

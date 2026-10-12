@@ -1,0 +1,8 @@
+# Build the image from this checkout instead of pulling it:
+#   docker compose -f deploy/docker/compose.yml -f deploy/docker/compose.build.yml up -d --build
+services:
+  temperance:
+    image: temperance:local
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile

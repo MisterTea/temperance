@@ -16,7 +16,7 @@ struct Case {
 }
 
 #[test]
-fn shared_policy_contract_matches_typescript_and_python() {
+fn shared_policy_contract_matches_typescript() {
     let text = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../specs/policy-cases.json"

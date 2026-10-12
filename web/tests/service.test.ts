@@ -100,8 +100,8 @@ describe("authoritative policy and enrollment", () => {
     const repo = new TestRepository();
     const login = await request(
       repo,
-      "v1/setup",
-      { setup_token: ADMIN, username: "parent", password: "correct horse" },
+      "v1/login",
+      { password: ADMIN },
       undefined,
       { Origin: "http://127.0.0.1:3000" },
     );
@@ -380,5 +380,25 @@ describe("schedule, filter and reward semantics", () => {
     expect(
       accessReason({ ...p, paused: true }, Date.now() / 1000, "UTC", {}, []),
     ).toBe("paused");
+  });
+});
+describe("VPN endpoint", () => {
+  it("accepts IPv4 and dynamic-DNS hostnames, rejects anything else", () => {
+    expect(service.vpnEndpoint("192.0.2.1:51820")).toBe("192.0.2.1:51820");
+    expect(service.vpnEndpoint("Home.Example.net:51820")).toBe(
+      "home.example.net:51820",
+    );
+    for (const bad of [
+      "",
+      "home.example.net",
+      "home.example.net:0",
+      "home.example.net:70000",
+      "999.1.1.1:51820",
+      "1.2.3:51820",
+      "-home.example.net:51820",
+      "home..example.net:51820",
+      "home.example.net:51820\nPostUp=x",
+    ])
+      expect(() => service.vpnEndpoint(bad), bad).toThrow(/host:port/);
   });
 });

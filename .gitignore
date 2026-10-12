@@ -20,6 +20,7 @@ clients/android/local.properties
 *.p12
 *.mobileprovision
 node_modules/
+*.node
 .next/
 .open-next/
 .wrangler/
@@ -36,3 +37,6 @@ clients/apple/Core/
 clients/android/app/src/main/jniLibs/
 clients/android/app/src/main/java/uniffi/
 .vercel
+
+clients/android/.kotlin/
+systest/target
