@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
+import { randomBytes } from "node:crypto";
 import { ADMIN_TOKEN, GATEWAY_TOKEN } from "../playwright.config";
 import { shiftClock } from "./clock.mjs";
 
@@ -23,7 +24,9 @@ export const OWNER = { password: ADMIN_TOKEN };
 export const admin = { Authorization: "Bearer " + ADMIN_TOKEN };
 export const gateway = { Authorization: "Bearer " + GATEWAY_TOKEN };
 
-export function deviceKey(seed: number) {
+/** Seeded keys must be unique across tests; unseeded ones are random. */
+export function deviceKey(seed?: number) {
+  if (seed === undefined) return randomBytes(32).toString("base64");
   return Buffer.from(
     Array.from({ length: 32 }, (_, n) => (n * 7 + seed) % 256),
   ).toString("base64");

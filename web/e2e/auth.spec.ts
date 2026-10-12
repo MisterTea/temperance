@@ -47,7 +47,7 @@ test("client IAM credentials identify the assigned profile without admin privile
       username,
       password: "client-test-password",
       name: "IAM test phone",
-      public_key: deviceKey(Math.floor(Math.random() * 220) + 1),
+      public_key: deviceKey(),
     },
   });
   expect(response.status()).toBe(200);

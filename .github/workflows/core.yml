@@ -75,6 +75,8 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: |
           sudo apt-get install -y -qq nftables
+          # The runner's Docker sets iptables FORWARD to DROP, which drops routed traffic in every table.
+          sudo iptables -P FORWARD ACCEPT
           bin=$(cargo test -p temperance-gateway --test router_linux --no-run --message-format=json \
             | jq -r 'select(.profile.test == true and .target.name == "router_linux") | .executable')
           sudo TEMPERANCE_DISPOSABLE_TEST=1 "$bin" --nocapture
