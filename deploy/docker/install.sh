@@ -37,8 +37,12 @@ fi
 
 if [ ! -f .env ]; then
   zone=$(readlink /etc/localtime 2> /dev/null | sed -n 's|.*zoneinfo/||p')
+  if [ -z "${TEMPERANCE_HOSTNAME:-}" ] && [ -n "$tty" ]; then
+    echo "No hostname yet? Create a free one at https://www.dynu.com/ (e.g. myhome.ddnsfree.com)," > /dev/tty
+    echo "then enter its Dynu login under Settings > Remote access in the dashboard to keep it current." > /dev/tty
+  fi
   ask TEMPERANCE_HOSTNAME "Public DNS name for this home (dynamic DNS works)" ""
-  [ -n "$TEMPERANCE_HOSTNAME" ] || fail "a public hostname is required, e.g. home.example.net"
+  [ -n "$TEMPERANCE_HOSTNAME" ] || fail "a public hostname is required, e.g. myhome.ddnsfree.com"
   ask TEMPERANCE_TIMEZONE "Family timezone" "${zone:-UTC}"
   ask TEMPERANCE_HTTPS "HTTPS: caddy (Let's Encrypt, forward TCP 80/443), cloudflared (Cloudflare Tunnel), or none" caddy
   case $TEMPERANCE_HTTPS in
@@ -88,5 +92,6 @@ Temperance is running from $dir.
   Dashboard:  $(setting TEMPERANCE_PUBLIC_URL) (and http://$(setting TEMPERANCE_DASHBOARD_PORT) on this machine)
   Password:   TEMPERANCE_ADMIN_PASSWORD in $dir/.env
   Router:     forward UDP port $(setting TEMPERANCE_WIREGUARD_PORT) to this machine$( [ "$(setting COMPOSE_PROFILES)" = caddy ] && echo ", plus TCP 80 and 443 for Caddy")
+              (how-to for TP-Link, eero and Netgear: https://github.com/MisterTea/temperance/blob/main/docs/routers.md)
   Upgrade:    rerun this installer, or: cd $dir && docker compose pull && docker compose up -d
 EOF

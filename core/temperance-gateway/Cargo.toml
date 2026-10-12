@@ -17,7 +17,7 @@ required-features = ["cli"]
 
 [features]
 node = ["dep:napi", "dep:napi-derive"]
-cli = ["dep:ureq"]
+cli = []
 
 [dependencies]
 temperance-core = { path = "../temperance-core" }
@@ -32,7 +32,8 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 log = "0.4"
 napi = { version = "3", optional = true, default-features = false, features = ["napi4"] }
 napi-derive = { version = "3", optional = true }
-ureq = { version = "3", optional = true }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+igd-next = { version = "0.18", default-features = false, features = ["io_sync"] }
 
 [build-dependencies]
 napi-build = "2"

@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { hash, randomToken, validateKey } from "./auth";
-import { type Device, type State } from "./model";
+import {
+  type Device,
+  type NetworkSettings,
+  type ReachStatus,
+  type State,
+} from "./model";
 import {
   accessReason,
   activeWindows,
@@ -98,11 +103,37 @@ export function snapshot(state: State, at = now()) {
     retention_days: state.retention_days,
     offline_grace_seconds: state.offline_grace_seconds,
     gateway_seen: state.gateway_seen,
+    network: publicNetwork(state),
+    network_status: state.network_status ?? null,
+    vpn_endpoint: configuredEndpoint(),
     needs_onboarding: !state.setup_completed_at && state.profiles.length === 0,
     total: profiles.reduce((sum, p) => sum + p.used, 0),
     blocked: profiles.filter((p) => p.access_reason !== "allowed").length,
     recent: state.history.slice(-100).reverse(),
   };
+}
+const network = (state: State) => state.network ?? { upnp: true };
+/** Network settings for the dashboard: the Dynu password never leaves the server. */
+function publicNetwork(state: State) {
+  const { upnp, ddns } = network(state);
+  return {
+    upnp,
+    ddns: ddns
+      ? {
+          provider: ddns.provider,
+          hostname: ddns.hostname,
+          username: ddns.username,
+          has_password: !!ddns.password,
+        }
+      : null,
+  };
+}
+function configuredEndpoint() {
+  try {
+    return vpnEndpoint();
+  } catch {
+    return null;
+  }
 }
 function profile(state: State, id: number) {
   const found = state.profiles.find((p) => p.id === id);
@@ -238,6 +269,15 @@ export function revokeDevice(state: State, ip: string) {
   changed(state, "device", `Device ${device.name} revoked`);
   return snapshot(state);
 }
+/** A DNS name such as `home.example.net` (lowercase, not an IP address). */
+export function isHostname(host: string) {
+  const labels = host.split(".");
+  return (
+    host.length <= 253 &&
+    labels.every((l) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l)) &&
+    !/^\d+$/.test(labels.at(-1)!)
+  );
+}
 /** `ipv4:port` or `hostname:port` (dynamic DNS for a home gateway). */
 export function vpnEndpoint(value = process.env.TEMPERANCE_VPN_ENDPOINT ?? "") {
   const match = /^([a-zA-Z0-9.-]{1,253}):(\d{1,5})$/.exec(value);
@@ -246,8 +286,7 @@ export function vpnEndpoint(value = process.env.TEMPERANCE_VPN_ENDPOINT ?? "") {
   const labels = host.split(".");
   const valid = /^[\d.]+$/.test(host)
     ? labels.length === 4 && labels.every((n) => n !== "" && Number(n) <= 255)
-    : labels.every((l) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l)) &&
-      !/^\d+$/.test(labels.at(-1)!);
+    : isHostname(host);
   if (!match || !valid || port < 1 || port > 65535)
     throw new Error(
       "Configure TEMPERANCE_VPN_ENDPOINT as host:port (IPv4 address or DNS name)",
@@ -417,6 +456,7 @@ export function gatewayState(state: State, at = now()) {
     issued_at: at,
     policy_schema: 2,
     offline_grace_seconds: state.offline_grace_seconds,
+    network: { upnp: network(state).upnp, ddns: network(state).ddns ?? null },
     peers: state.devices
       .filter((d) => !d.revoked && d.kind !== "home")
       .map((d) => ({
@@ -438,6 +478,12 @@ export function gatewayState(state: State, at = now()) {
       })),
   };
 }
+const reachStatus = z.object({
+  state: z.enum(["ok", "warning", "error", "off"]),
+  ip: z.string().max(45).nullable(),
+  message: z.string().max(500),
+  at: z.number(),
+});
 const activityInput = z.object({
   active_devices: z.array(z.string()).max(253).default([]),
   activity: z
@@ -464,10 +510,36 @@ const activityInput = z.object({
     )
     .max(500)
     .default([]),
+  network: z
+    .object({ upnp: reachStatus.nullable(), ddns: reachStatus.nullable() })
+    .optional(),
 });
+/** Store the gateway's reachability report; problems and recoveries become events. */
+function recordNetwork(
+  state: State,
+  report: { upnp: ReachStatus | null; ddns: ReachStatus | null },
+  at: number,
+) {
+  const before = state.network_status;
+  state.network_status = { ...report, reported_at: at };
+  const names = { upnp: "Port forwarding", ddns: "Dynamic DNS" };
+  for (const key of ["upnp", "ddns"] as const) {
+    const status = report[key],
+      old = before?.[key];
+    if (!status || status.message === old?.message) continue;
+    if (status.state === "error" || status.state === "warning")
+      event(state, "network", `${names[key]}: ${status.message}`.slice(0, 500));
+    else if (
+      status.state === "ok" &&
+      (old?.state === "error" || old?.state === "warning")
+    )
+      event(state, "network", `${names[key]} works again`);
+  }
+}
 export function account(state: State, input: unknown) {
   const data = activityInput.parse(input),
     at = now();
+  if (data.network) recordNetwork(state, data.network, at);
   const entries = [
     ...data.active_devices.map((device_id) => ({
       device_id,
@@ -628,13 +700,48 @@ export function settings(state: State, input: unknown) {
         .min(0)
         .max(7 * 86400)
         .optional(),
+      network: networkInput.optional(),
     })
     .parse(input);
+  const { network: reach, ...household } = data;
   if (data.home_profile_id) profile(state, data.home_profile_id);
-  Object.assign(state, data);
+  if (reach) state.network = networkSettings(state, reach);
+  Object.assign(state, household);
   if (data.home_profile_id === null) delete state.home_profile_id;
-  changed(state, "settings", "Household settings updated");
+  changed(
+    state,
+    "settings",
+    reach ? "Remote access settings updated" : "Household settings updated",
+  );
   return snapshot(state);
+}
+const networkInput = z.object({
+  upnp: z.boolean(),
+  ddns: z
+    .object({
+      provider: z.literal("dynu").default("dynu"),
+      hostname: z
+        .string()
+        .trim()
+        .toLowerCase()
+        .refine(
+          (h) => isHostname(h) && h.includes("."),
+          "Use the full Dynu hostname, e.g. myhome.ddnsfree.com",
+        ),
+      username: z.string().trim().min(1).max(100),
+      password: z.string().max(200).default(""),
+    })
+    .nullable(),
+});
+/** A blank password keeps the saved one, so the dashboard never has to show it. */
+function networkSettings(
+  state: State,
+  input: z.infer<typeof networkInput>,
+): NetworkSettings {
+  if (!input.ddns) return { upnp: input.upnp };
+  const password = input.ddns.password || state.network?.ddns?.password;
+  if (!password) throw new Error("Enter the Dynu IP update password");
+  return { upnp: input.upnp, ddns: { ...input.ddns, password } };
 }
 export function usageSummary(state: State, start: string, end: string) {
   return Object.entries(state.usage)

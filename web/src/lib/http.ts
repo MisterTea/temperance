@@ -603,6 +603,19 @@ function validateBackup(value: unknown): State {
       .int()
       .min(0)
       .max(7 * 86400),
+    network: z
+      .object({
+        upnp: z.boolean(),
+        ddns: z
+          .object({
+            provider: z.literal("dynu"),
+            hostname: z.string().refine(service.isHostname),
+            username: z.string().min(1).max(100),
+            password: z.string().min(1).max(200),
+          })
+          .optional(),
+      })
+      .optional(),
   });
   const s = schema.parse(value) as State;
   if (

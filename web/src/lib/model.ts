@@ -74,6 +74,29 @@ export interface RefreshToken {
   client_id: string;
   expires: number;
 }
+export interface DynuSettings {
+  provider: "dynu";
+  hostname: string;
+  username: string;
+  /** Dynu's IP update password; only the gateway ever receives it. */
+  password: string;
+}
+/** How the gateway makes itself reachable from outside the home. */
+export interface NetworkSettings {
+  upnp: boolean;
+  ddns?: DynuSettings;
+}
+export interface ReachStatus {
+  state: "ok" | "warning" | "error" | "off";
+  ip: string | null;
+  message: string;
+  at: number;
+}
+export interface NetworkStatus {
+  upnp: ReachStatus | null;
+  ddns: ReachStatus | null;
+  reported_at: number;
+}
 export interface State {
   users?: User[];
   refresh_tokens?: RefreshToken[];
@@ -94,6 +117,10 @@ export interface State {
   retention_days: number;
   offline_grace_seconds: number;
   gateway_seen?: number;
+  /** Unset means UPnP on and no dynamic DNS. */
+  network?: NetworkSettings;
+  /** The gateway's latest report on UPnP and dynamic DNS. */
+  network_status?: NetworkStatus;
   /** Set when the first-run wizard is finished or skipped. */
   setup_completed_at?: number;
 }

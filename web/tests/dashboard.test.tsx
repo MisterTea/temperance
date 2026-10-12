@@ -883,6 +883,84 @@ describe("settings", () => {
     ).toBe("/api/export");
   });
 
+  it("configures remote access and shows the gateway's report", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Settings");
+    const section = screen
+      .getByRole("heading", { name: "Remote access" })
+      .closest("section")!;
+    const view = within(section);
+    expect(view.getByText(/has not connected yet/)).toBeTruthy();
+    expect(view.getByRole("link", { name: "Router guide" })).toBeTruthy();
+    await user.click(view.getByLabelText(/UPnP/));
+    await user.type(
+      view.getByLabelText(/^Dynu hostname/),
+      "MyHome.ddnsfree.com",
+    );
+    await user.type(view.getByLabelText("Dynu username"), "family");
+    await user.type(
+      view.getByLabelText(/^Dynu IP update password/),
+      "secret-1",
+    );
+    await user.click(view.getByRole("button", { name: "Save remote access" }));
+    await waitFor(async () =>
+      expect((await state()).network).toEqual({
+        upnp: false,
+        ddns: {
+          provider: "dynu",
+          hostname: "myhome.ddnsfree.com",
+          username: "family",
+          password: "secret-1",
+        },
+      }),
+    );
+    // The endpoint is still an IP address, so devices will not follow the name.
+    await view.findByText(
+      /Set TEMPERANCE_VPN_ENDPOINT to myhome.ddnsfree.com:51820/,
+    );
+    expect(
+      view
+        .getByLabelText(/^Dynu IP update password/)
+        .getAttribute("placeholder"),
+    ).toMatch(/Saved/);
+
+    await api(
+      "v1/gateway/activity",
+      {
+        network: {
+          upnp: {
+            state: "off",
+            ip: null,
+            message: "Automatic port forwarding is off.",
+            at: Date.now() / 1000,
+          },
+          ddns: {
+            state: "error",
+            ip: null,
+            message: "Dynu rejected the username or password.",
+            at: Date.now() / 1000,
+          },
+        },
+      },
+      GATEWAY,
+    );
+    await user.click(view.getByRole("button", { name: "Save remote access" }));
+    const status = await view.findByRole("list", {
+      name: "Remote access status",
+    });
+    expect(status.textContent).toContain("Dynamic DNS: Dynu rejected");
+    expect(within(status).getAllByRole("listitem")[1].className).toBe("error");
+    expect((await state()).network?.ddns?.password).toBe("secret-1");
+
+    await user.clear(view.getByLabelText(/^Dynu hostname/));
+    await user.click(view.getByRole("button", { name: "Save remote access" }));
+    await waitFor(async () =>
+      expect((await state()).network).toEqual({ upnp: false }),
+    );
+  });
+
   it("creates client users with assigned profiles and allows admin revocation", async () => {
     await seedHousehold();
     await signIn();

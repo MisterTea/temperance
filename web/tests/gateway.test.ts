@@ -235,10 +235,83 @@ describe("gateway configuration", () => {
         lan_address: "192.168.1.2",
         uplink: "eth1",
       },
+      public_port: 51820,
     });
     expect(() =>
       gatewayConfig({ TEMPERANCE_GATEWAY_ROUTER: "eth0" }, "k"),
     ).toThrow(/lan_interface/);
+  });
+
+  it("maps the router port from the advertised endpoint", () => {
+    const port = (endpoint?: string) =>
+      gatewayConfig({ TEMPERANCE_VPN_ENDPOINT: endpoint }, "k").public_port;
+    expect(port("home.example.net:51821")).toBe(51821);
+    expect(port(undefined)).toBeNull();
+    expect(port("not an endpoint")).toBeNull();
+  });
+});
+
+describe("network reachability", () => {
+  const upnp = {
+    state: "ok",
+    ip: "203.0.113.7",
+    message: "The router forwards UDP 51820 to 192.168.1.20:51820.",
+    at: 1,
+  };
+
+  it("hands UPnP and Dynu settings to the gateway and records its status", async () => {
+    const fake = fakeAddon();
+    const repo = new TestRepository();
+    const gateway = await startGateway({ env, addon: fake.addon, repo });
+    expect(fake.applied[0].network).toEqual({ upnp: true, ddns: null });
+    await request(repo, "api/settings", {
+      network: {
+        upnp: false,
+        ddns: {
+          hostname: "MyHome.ddnsfree.com",
+          username: "family",
+          password: "ip-update-secret",
+        },
+      },
+    });
+    fake.report({ activity: [], history: [], network: { upnp, ddns: null } });
+    await gateway.tick();
+    expect(fake.applied.at(-1)!.network).toEqual({
+      upnp: false,
+      ddns: {
+        provider: "dynu",
+        hostname: "myhome.ddnsfree.com",
+        username: "family",
+        password: "ip-update-secret",
+      },
+    });
+    const { state } = await repo.read();
+    expect(state.network_status).toMatchObject({ upnp, ddns: null });
+    gateway.stop();
+  });
+
+  it("accepts status from a remote gateway", async () => {
+    const repo = new TestRepository();
+    const response = await handle(
+      new Request("http://127.0.0.1:3000/v1/gateway/activity", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + "g".repeat(48),
+        },
+        body: JSON.stringify({
+          network: { upnp: { ...upnp, state: "error" }, ddns: null },
+        }),
+      }),
+      "v1/gateway/activity",
+      repo,
+    );
+    expect(response.status).toBe(200);
+    const { state } = await repo.read();
+    expect(state.network_status?.upnp?.state).toBe("error");
+    expect(state.events.at(-1)?.message).toBe(
+      "Port forwarding: " + upnp.message,
+    );
   });
 });
 

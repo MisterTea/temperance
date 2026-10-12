@@ -401,6 +401,25 @@ test("settings manage client users, retention, and feeds", async ({
   await openTab(page, "Settings");
   await expect(page.getByLabel("History retention (days)")).toHaveValue("14");
 
+  const remote = page.locator("section", {
+    has: page.getByRole("heading", { name: "Remote access" }),
+  });
+  await remote.getByLabel(/^Dynu hostname/).fill("myhome.ddnsfree.com");
+  await remote.getByLabel("Dynu username").fill("family");
+  await remote.getByLabel(/^Dynu IP update password/).fill("ip-secret");
+  await remote.getByRole("button", { name: "Save remote access" }).click();
+  await expect(remote.getByLabel(/^Dynu IP update password/)).toHaveAttribute(
+    "placeholder",
+    /Saved/,
+  );
+  await expect(remote.getByRole("status")).toContainText(
+    "TEMPERANCE_VPN_ENDPOINT",
+  );
+  await expectCleanLayout(page, "settings-remote-access");
+  await remote.getByLabel(/^Dynu hostname/).fill("");
+  await remote.getByRole("button", { name: "Save remote access" }).click();
+  await expect(remote.getByRole("status")).toHaveCount(0);
+
   await page.getByLabel("Category").selectOption({ label: "Gaming" });
   await page.getByLabel("Domains").fill("chess.com\nlichess.org");
   await page.getByRole("button", { name: "Import feed" }).click();

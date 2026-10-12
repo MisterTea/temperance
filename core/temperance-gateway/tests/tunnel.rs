@@ -516,6 +516,67 @@ fn forwarding_stops_when_the_policy_lease_lapses() {
     gateway.stop();
 }
 
+/// Answers each HTTP request with `body`, recording the request lines.
+fn text_server(body: &'static str) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let head = String::from_utf8_lossy(&buf[..n]).to_string();
+            log.lock()
+                .unwrap()
+                .push(head.lines().next().unwrap_or("").to_string());
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    (url, seen)
+}
+
+#[test]
+fn network_settings_arrive_with_the_state_and_status_returns_with_activity() {
+    let (checkip, _) = text_server("Current IP Address: 198.51.100.4");
+    let (dynu, updates) = text_server("good 198.51.100.4");
+    let config: Config = serde_json::from_value(json!({
+        "listen": "127.0.0.1:0",
+        "private_key": generate_private_key(),
+        "reach": {"checkip": checkip, "dynu": dynu},
+    }))
+    .unwrap();
+    let mut gateway = Gateway::start(config).unwrap();
+    let mut state: Value = serde_json::from_str(&state("", 0, json!([]))).unwrap();
+    state["peers"] = json!([]);
+    state["network"] = json!({"upnp": true, "ddns": {"provider": "dynu",
+        "hostname": "home.example.net", "username": "u", "password": "p"}});
+    gateway.apply_state(&state.to_string()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let network = loop {
+        let batch = gateway.drain_activity();
+        if !batch["network"].is_null() {
+            break batch["network"].clone();
+        }
+        assert!(Instant::now() < deadline, "no network status reported");
+        thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(network["ddns"]["state"], "ok");
+    assert_eq!(network["ddns"]["ip"], "198.51.100.4");
+    // A loopback listener is never mapped on the router.
+    assert!(network["upnp"].is_null());
+    assert!(updates.lock().unwrap()[0].contains("hostname=home.example.net&myip=198.51.100.4"));
+    assert!(
+        gateway.drain_activity()["network"].is_null(),
+        "reported once"
+    );
+    gateway.stop();
+}
+
 fn chrono_today() -> String {
     let days = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

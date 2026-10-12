@@ -35,7 +35,7 @@ On macOS the service is a launch agent of the signed-in user, so enable automati
 Edit the environment file (see `deploy/.env.example`):
 
 - `TEMPERANCE_PUBLIC_URL` — the HTTPS address of your dashboard (step 3).
-- `TEMPERANCE_VPN_ENDPOINT` — `host:51820`, where `host` is your public IPv4 address or, better, a dynamic DNS name that follows it (your router's DDNS feature, DuckDNS, Cloudflare, …). Clients resolve the name again when the address changes.
+- `TEMPERANCE_VPN_ENDPOINT` — `host:51820`, where `host` is your public IPv4 address or, better, a dynamic DNS name that follows it, such as `myhome.ddnsfree.com:51820`. Temperance can keep a free [Dynu](https://www.dynu.com/) name up to date itself (dashboard **Settings → Remote access**, see the [router guide](routers.md#dynamic-dns-with-dynu)); your router's DDNS feature, DuckDNS or Cloudflare work too. Clients resolve the name again when the address changes. The port is the one the router exposes, and the gateway asks the router to forward that port.
 - `TEMPERANCE_TIMEZONE` — the family's IANA timezone.
 - `TEMPERANCE_GATEWAY_LISTEN` — `0.0.0.0:51820` to run the embedded gateway. Leave it unset only when a separate gateway host runs the CLI (below).
 
@@ -47,7 +47,11 @@ To cut a release, push a `v<version>` tag. `.github/workflows/release.yml` then 
 
 ## 2. Forward UDP 51820
 
-In your router's admin page, forward **UDP 51820** to the Temperance machine's LAN address, and reserve that address in DHCP so it does not change. This is the only port that must be open to the internet. If your ISP uses carrier-grade NAT (no public IPv4), ask for a public address or run the gateway on a small VPS with the CLI (below).
+**UDP 51820** is the only port that must be open to the internet. Reserve the Temperance machine's LAN address in DHCP so it does not change.
+
+The gateway asks the router to forward the port with UPnP, renews the mapping every 20 minutes and removes it on shutdown. Check **Settings → Remote access** in the dashboard: a green status line means it worked. If the router has UPnP turned off or does not support it, forward the port by hand. The [router guide](routers.md) has step-by-step instructions for TP-Link (Archer and Deco), Amazon eero and Netgear (Nighthawk and Orbi) routers. UPnP can be turned off on the same page.
+
+If your router's own internet address is private (`10.x`, `100.64–127.x`, `172.16–31.x`, `192.168.x`), there is another router in front of it or your ISP uses carrier-grade NAT; the dashboard warns about this. Bridge the ISP's box, ask the ISP for a public address, or run the gateway on a small VPS with the CLI (below).
 
 ## 3. HTTPS for the dashboard
 
@@ -81,7 +85,7 @@ TEMPERANCE_GATEWAY_TOKEN='same as the service' target/release/temperance-gateway
   --service https://temperance.example.com --key-file /var/lib/temperance/gateway.key
 ```
 
-It prints its public key; set `TEMPERANCE_VPN_PUBLIC_KEY` on the service to that value. It polls `/v1/gateway/state` and posts activity every 5 seconds. `--home-dns`, `--lan-network` and `--router-*` enable the home-network modes.
+It prints its public key; set `TEMPERANCE_VPN_PUBLIC_KEY` on the service to that value. It polls `/v1/gateway/state` and posts activity every 5 seconds. `--home-dns`, `--lan-network` and `--router-*` enable the home-network modes. The dashboard's UPnP and Dynu settings reach the CLI with the state; pass `--public-port` when the router exposes a different port than `--listen`.
 
 ## Backups and secrets
 

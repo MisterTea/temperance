@@ -9,6 +9,7 @@ Open source family VPN and DNS controls inspired by [Circle](https://meetcircle.
 Temperance is one home program: the authenticated Next.js dashboard and policy service with a WireGuard gateway written in Rust embedded as a native add-on, plus device applications for **macOS, Windows, Android, and iOS**. It runs on Linux, macOS or Windows with a single forwarded UDP port. Parents update profiles and create client users in the admin-password-protected dashboard. Devices generate VPN keys locally and install a full tunnel. The gateway applies DNS filters plus per-connection pauses, bedtime, and observed-network-minute budgets, re-checking policy every few seconds. A 15-second policy lease stops forwarding if enforcement stops.
 
 - [Run Temperance at home](docs/deployment.md) (Linux `.deb`/`.rpm`/tarball releases; installers for Linux, macOS and Windows; port forwarding; HTTPS), or [with Docker](#run-with-docker)
+- [Router guide](docs/routers.md): automatic UPnP port forwarding, Dynu dynamic DNS, and manual steps for TP-Link, eero and Netgear routers
 - [Build/install the device apps](clients/README.md)
 - [Develop the web service, or host the dashboard on Vercel/Cloudflare with a separate gateway](web/README.md)
 - [Circle research and feature-parity audit](docs/research/circle-feature-audit.md)
@@ -57,7 +58,7 @@ internet ──UDP 51820──▶ router ──UDP 51820──▶ Docker host (1
 ```
 
 1. **Give the Docker host a fixed LAN address.** Reserve one in your router's DHCP settings. With Docker Desktop on macOS or Windows, this is the Mac's or PC's own address, not the address of Docker's internal VM.
-2. **Forward UDP 51820 on the router** to that address. The protocol must be UDP; TCP forwarding does nothing for WireGuard. With `COMPOSE_PROFILES=caddy`, also forward TCP 80 and 443 for the certificate and HTTPS. A Cloudflare Tunnel needs no inbound TCP ports.
+2. **Forward UDP 51820 on the router** to that address. The protocol must be UDP; TCP forwarding does nothing for WireGuard. With `COMPOSE_PROFILES=caddy`, also forward TCP 80 and 443 for the certificate and HTTPS. A Cloudflare Tunnel needs no inbound TCP ports. The gateway's automatic UPnP forwarding cannot reach the router from Docker's default bridge network or from Docker Desktop; it works only with `network_mode: host` on a Linux host. Otherwise forward the port by hand: the [router guide](docs/routers.md) covers TP-Link, eero and Netgear.
 3. **Publish the same UDP port from the container.** `compose.yml` maps `${TEMPERANCE_WIREGUARD_PORT}:51820/udp`. With plain `docker run`, write `-p 51820:51820/udp`; without `/udp`, Docker publishes TCP only.
 4. **Advertise the outside port.** `TEMPERANCE_VPN_ENDPOINT` must be your public hostname (or IPv4 address) with the port the *router* exposes. If 51820 is taken, set `TEMPERANCE_WIREGUARD_PORT=51821`, forward UDP 51821 on the router, and use `home.example.net:51821`. The container always listens on 51820 inside.
 5. **Allow it through the host firewall.** Docker adds its own iptables rules for published ports, and those bypass `ufw` and `firewalld` zones. That is why the dashboard is published on `127.0.0.1` only. On Windows, allow Docker Desktop through Windows Firewall when it asks.
@@ -86,7 +87,7 @@ The system tests ([systest/README.md](systest/README.md)) run the real server im
 
 Every project must keep at least 80% line coverage from its unit tests. In CI the Rust gate applies to each crate separately, and generated UniFFI bindings are left out of the Android and Apple numbers. GitHub Actions run all of these, Playwright on both SQLite and PostgreSQL, the gateway's tunnel test and add-on builds on Linux (x64 and arm64), macOS and Windows, the router-mode test in network namespaces, Rust desktop builds for Windows (x64 and arm64) and macOS, the Android APK and the unsigned macOS/iOS apps.
 
-Gateway layout (`core/temperance-gateway`): `wg.rs` runs WireGuard peers, `gateway.rs` admits packets, relays TCP/UDP flows and holds the policy lease, `policy.rs` turns the service's state document into per-flow verdicts with `temperance-core`, `dns.rs` filters and forwards DNS, `home.rs` generates router-mode nftables rules, `node.rs` is the Node add-on, and `bin/temperance-gateway.rs` is the standalone CLI.
+Gateway layout (`core/temperance-gateway`): `wg.rs` runs WireGuard peers, `gateway.rs` admits packets, relays TCP/UDP flows and holds the policy lease, `policy.rs` turns the service's state document into per-flow verdicts with `temperance-core`, `dns.rs` filters and forwards DNS, `home.rs` generates router-mode nftables rules, `reach.rs` maps the VPN port on the router with UPnP and updates Dynu dynamic DNS, `node.rs` is the Node add-on, and `bin/temperance-gateway.rs` is the standalone CLI.
 
 ## Next milestones
 

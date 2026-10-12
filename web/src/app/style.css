@@ -502,6 +502,13 @@ legend {
 .issues small {
   margin-top: 2px;
 }
+.issues.reach {
+  max-width: none;
+  margin: 0 0 16px;
+}
+.issues li.ok {
+  border-color: #6a9a5b;
+}
 .danger {
   background: white;
   color: #a04934;

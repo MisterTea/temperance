@@ -402,3 +402,113 @@ describe("VPN endpoint", () => {
       expect(() => service.vpnEndpoint(bad), bad).toThrow(/host:port/);
   });
 });
+describe("remote access settings", () => {
+  const dynu = {
+    hostname: "myhome.ddnsfree.com",
+    username: "family",
+    password: "ip-update-secret",
+  };
+  it("defaults to UPnP on and never shows the Dynu password", () => {
+    const state = emptyState();
+    expect(service.snapshot(state).network).toEqual({ upnp: true, ddns: null });
+    expect(service.snapshot(state).vpn_endpoint).toBe("192.0.2.1:51820");
+    service.settings(state, { network: { upnp: true, ddns: dynu } });
+    const shown = service.snapshot(state);
+    expect(shown.network.ddns).toEqual({
+      provider: "dynu",
+      hostname: "myhome.ddnsfree.com",
+      username: "family",
+      has_password: true,
+    });
+    expect(JSON.stringify(shown)).not.toContain("ip-update-secret");
+    expect(service.gatewayState(state).network.ddns?.password).toBe(
+      "ip-update-secret",
+    );
+    expect(state.events.at(-1)?.message).toBe("Remote access settings updated");
+  });
+  it("keeps the saved password when the field is left blank", () => {
+    const state = emptyState();
+    expect(() =>
+      service.settings(state, {
+        network: { upnp: true, ddns: { ...dynu, password: "" } },
+      }),
+    ).toThrow(/IP update password/);
+    service.settings(state, { network: { upnp: true, ddns: dynu } });
+    service.settings(state, {
+      network: { upnp: false, ddns: { ...dynu, username: "other" } },
+    });
+    expect(state.network).toEqual({
+      upnp: false,
+      ddns: { provider: "dynu", ...dynu, username: "other" },
+    });
+    service.settings(state, { network: { upnp: true, ddns: null } });
+    expect(state.network).toEqual({ upnp: true });
+  });
+  it("rejects hostnames that are not full DNS names", () => {
+    for (const hostname of ["myhome", "192.0.2.1", "bad host.example", ""])
+      expect(
+        () =>
+          service.settings(emptyState(), {
+            network: { upnp: true, ddns: { ...dynu, hostname } },
+          }),
+        hostname,
+      ).toThrow();
+  });
+  it("reports a missing endpoint as null", () => {
+    process.env.TEMPERANCE_VPN_ENDPOINT = "";
+    expect(service.snapshot(emptyState()).vpn_endpoint).toBeNull();
+  });
+  it("turns reachability problems and recoveries into events", () => {
+    const state = emptyState();
+    const status = (s: string, message: string) => ({
+      state: s,
+      ip: null,
+      message,
+      at: 1,
+    });
+    const report = (upnp: unknown, ddns: unknown = null) =>
+      service.account(state, { network: { upnp, ddns } });
+    report(status("ok", "Mapped."));
+    expect(state.events).toHaveLength(0);
+    report(status("error", "No UPnP router answered."));
+    report(status("error", "No UPnP router answered."));
+    report(
+      status("ok", "Mapped."),
+      status("warning", "Dynu is having problems; retrying."),
+    );
+    expect(state.events.map((e) => e.message)).toEqual([
+      "Port forwarding: No UPnP router answered.",
+      "Port forwarding works again",
+      "Dynamic DNS: Dynu is having problems; retrying.",
+    ]);
+    expect(state.network_status?.ddns?.state).toBe("warning");
+    expect(() =>
+      service.account(state, {
+        network: { upnp: status("broken", "x"), ddns: null },
+      }),
+    ).toThrow();
+  });
+  it("survives a backup and restore", async () => {
+    const repo = new TestRepository();
+    await request(
+      repo,
+      "api/settings",
+      { network: { upnp: false, ddns: dynu } },
+      ADMIN,
+    );
+    const backup = await (
+      await request(repo, "api/export", undefined, ADMIN)
+    ).json();
+    const restored = new TestRepository();
+    await request(
+      restored,
+      "api/import",
+      { confirm: "RESTORE", backup },
+      ADMIN,
+    );
+    expect((await restored.read()).state.network).toEqual({
+      upnp: false,
+      ddns: { provider: "dynu", ...dynu },
+    });
+  });
+});

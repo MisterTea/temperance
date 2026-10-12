@@ -22,6 +22,7 @@ use crate::dns::{self, Destinations};
 use crate::home::{self, Router};
 use crate::net::{self, forwardable, Net, GATEWAY_IP, MTU, TCP, UDP};
 use crate::policy::{HistoryEntry, Policy, State, Verdict};
+use crate::reach;
 use crate::wg::{decode_key, Wireguard};
 
 /// Without a fresh policy for this long, nothing is forwarded.
@@ -56,6 +57,12 @@ pub struct Config {
     /// Rewrite destination addresses after the policy decision (tests, split horizon).
     #[serde(default)]
     pub connect_map: HashMap<Ipv4Addr, IpAddr>,
+    /// The UDP port the router exposes to the internet; defaults to the listen port.
+    #[serde(default)]
+    pub public_port: Option<u16>,
+    /// UPnP discovery and dynamic DNS addresses (tests).
+    #[serde(default)]
+    pub reach: reach::Endpoints,
 }
 
 pub struct Flow {
@@ -78,6 +85,8 @@ pub struct Shared {
     flows: Mutex<HashMap<u64, Arc<Flow>>>,
     next_flow: AtomicU64,
     router_counters: Mutex<home::Counters>,
+    reach: Mutex<Option<std::sync::mpsc::Sender<reach::Command>>>,
+    reach_report: Arc<Mutex<reach::Report>>,
 }
 
 impl Shared {
@@ -212,6 +221,10 @@ impl Shared {
     fn apply(&self, state: &str) -> Result<(), String> {
         let state: State =
             serde_json::from_str(state).map_err(|e| format!("Invalid gateway state: {e}"))?;
+        if let Some(tx) = &*self.reach.lock().expect("reach lock") {
+            let network = state.network.clone().unwrap_or_default();
+            let _ = tx.send(reach::Command::Configure(network));
+        }
         let policy = Policy::new(
             state,
             &self.config.lan_networks,
@@ -275,7 +288,16 @@ impl Shared {
         let mut history = self.history.lock().expect("history lock");
         let count = history.len().min(500);
         let reported: Vec<HistoryEntry> = history.drain(..count).collect();
-        json!({"active_devices": [], "activity": activity, "history": reported})
+        let mut batch = json!({"active_devices": [], "activity": activity, "history": reported});
+        if let Some(network) = self
+            .reach_report
+            .lock()
+            .expect("report lock")
+            .take_changed()
+        {
+            batch["network"] = network;
+        }
+        batch
     }
 }
 
@@ -601,6 +623,7 @@ pub struct Gateway {
     shared: Arc<Shared>,
     runtime: Option<Runtime>,
     local_addr: SocketAddr,
+    reach_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Gateway {
@@ -630,6 +653,13 @@ impl Gateway {
             ),
             None => None,
         };
+        let reach_report = Arc::new(Mutex::new(reach::Report::default()));
+        let (reach_tx, reach_thread) = reach::spawn(reach::Reach::new(
+            config.reach.clone(),
+            SocketAddr::new(config.listen.ip(), local_addr.port()),
+            config.public_port.unwrap_or(local_addr.port()),
+            reach_report.clone(),
+        ));
         let shared = Arc::new(Shared {
             wg: Arc::new(Wireguard::new(key, socket)),
             config,
@@ -641,6 +671,8 @@ impl Gateway {
             flows: Mutex::default(),
             next_flow: AtomicU64::new(1),
             router_counters: Mutex::default(),
+            reach: Mutex::new(Some(reach_tx)),
+            reach_report,
         });
         runtime.spawn(run(shared.clone()));
         if let Some((udp, tcp)) = home_dns {
@@ -650,6 +682,7 @@ impl Gateway {
             shared,
             runtime: Some(runtime),
             local_addr,
+            reach_thread: Some(reach_thread),
         })
     }
 
@@ -679,6 +712,13 @@ impl Gateway {
         if let Some(runtime) = self.runtime.take() {
             runtime.shutdown_timeout(Duration::from_secs(1));
             let _ = self.shared.route_home(true);
+        }
+        // Removes the router's port mapping before the process exits.
+        if let Some(tx) = self.shared.reach.lock().expect("reach lock").take() {
+            let _ = tx.send(reach::Command::Stop);
+        }
+        if let Some(thread) = self.reach_thread.take() {
+            let _ = thread.join();
         }
     }
 }

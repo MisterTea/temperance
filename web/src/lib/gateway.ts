@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { isIPv4 } from "node:net";
 import path from "node:path";
 import { dataDir, mutate, repository, type Repository } from "./database";
-import { account, gatewaySeen, gatewayState } from "./service";
+import { account, gatewaySeen, gatewayState, vpnEndpoint } from "./service";
 
 // The embedded WireGuard gateway (Rust, Node-API). State, config and activity are JSON strings.
 export interface GatewayHandle {
@@ -59,6 +59,14 @@ export function gatewayConfig(env: Env, privateKey: string) {
     .map((v) => (v ? hostname(v) : ""))
     .filter((h) => h && !isIPv4(h) && h !== "localhost");
   const host = env.HOSTNAME;
+  let publicPort: number | null = null;
+  try {
+    publicPort = Number(
+      vpnEndpoint(env.TEMPERANCE_VPN_ENDPOINT ?? "").split(":")[1],
+    );
+  } catch {
+    // Without an endpoint the router maps the listen port.
+  }
   return {
     listen: env.TEMPERANCE_GATEWAY_LISTEN,
     private_key: privateKey,
@@ -77,6 +85,7 @@ export function gatewayConfig(env: Env, privateKey: string) {
           uplink: router[2],
         }
       : null,
+    public_port: publicPort,
   };
 }
 
@@ -84,7 +93,7 @@ export function gatewayConfig(env: Env, privateKey: string) {
 export async function syncGateway(handle: GatewayHandle, repo: Repository) {
   const batch = JSON.parse(handle.drainActivity());
   const state = await mutate(repo, (s) => {
-    if (batch.activity?.length || batch.history?.length) {
+    if (batch.activity?.length || batch.history?.length || batch.network) {
       // A rejected batch must never keep the policy from refreshing.
       try {
         account(s, batch);

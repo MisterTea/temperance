@@ -26,6 +26,146 @@ const bucketLabel = (bucket: string, profile?: Profile) =>
     ? ((profile?.app_limits ?? []).find((g) => "group:" + g.id === bucket)
         ?.name ?? "App group")
     : bucket.replace(/^(category|site):/, "");
+const ROUTER_GUIDE =
+  "https://github.com/MisterTea/temperance/blob/main/docs/routers.md";
+type NetworkInput = {
+  upnp: boolean;
+  ddns: { hostname: string; username: string; password: string } | null;
+};
+function RemoteAccess({
+  state,
+  onSave,
+}: {
+  state: DashboardState;
+  onSave: (network: NetworkInput) => void;
+}) {
+  const { network, network_status: status, vpn_endpoint: endpoint } = state;
+  const ddns = network.ddns;
+  const [host, port] = endpoint?.split(":") ?? [];
+  const lines = [
+    { label: "Port forwarding", report: status?.upnp },
+    { label: "Dynamic DNS", report: status?.ddns },
+  ].filter((l) => l.report);
+  return (
+    <section>
+      <h2>Remote access</h2>
+      <p>
+        Phones and laptops reach this gateway from outside the home on UDP port{" "}
+        {port ?? "51820"}
+        {endpoint ? (
+          <>
+            {" "}
+            at <strong>{host}</strong>
+          </>
+        ) : null}
+        . Temperance asks your router to forward that port (UPnP) and can keep a
+        free Dynu hostname pointed at your home&apos;s changing address. If your
+        router has no UPnP, the router guide shows how to forward the port by
+        hand on TP-Link, Eero and Netgear routers.
+      </p>
+      <p className="actions">
+        <a
+          className="button secondary"
+          href={ROUTER_GUIDE}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Router guide
+        </a>
+        <a
+          className="button secondary"
+          href="https://www.dynu.com/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Create a free Dynu hostname
+        </a>
+      </p>
+      {lines.length ? (
+        <ul className="issues reach" aria-label="Remote access status">
+          {lines.map(({ label, report }) => (
+            <li key={label} className={report!.state}>
+              <strong>{label}:</strong> {report!.message}{" "}
+              <small>{ago(report!.at)}</small>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p>
+          <small>
+            {state.gateway_seen
+              ? "Waiting for the gateway to report on port forwarding."
+              : "The gateway has not connected yet."}
+          </small>
+        </p>
+      )}
+      {ddns && host && ddns.hostname !== host ? (
+        <p className="notice warning" role="status">
+          Devices connect to {endpoint}. Set TEMPERANCE_VPN_ENDPOINT to{" "}
+          {ddns.hostname}:{port} and restart Temperance so they follow the Dynu
+          hostname.
+        </p>
+      ) : null}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const f = new FormData(e.currentTarget);
+          const text = (name: string) => String(f.get(name) ?? "").trim();
+          onSave({
+            upnp: f.get("upnp") === "on",
+            ddns: text("ddns_host")
+              ? {
+                  hostname: text("ddns_host"),
+                  username: text("ddns_user"),
+                  password: String(f.get("ddns_password") ?? ""),
+                }
+              : null,
+          });
+        }}
+      >
+        <label className="check">
+          <input name="upnp" type="checkbox" defaultChecked={network.upnp} />
+          Forward the VPN port automatically with UPnP
+        </label>
+        <div className="two">
+          <label>
+            Dynu hostname
+            <input
+              name="ddns_host"
+              placeholder="myhome.ddnsfree.com"
+              defaultValue={ddns?.hostname ?? ""}
+            />
+            <small>Leave empty to turn dynamic DNS off.</small>
+          </label>
+          <label>
+            Dynu username
+            <input
+              name="ddns_user"
+              autoComplete="off"
+              defaultValue={ddns?.username ?? ""}
+            />
+          </label>
+          <label>
+            Dynu IP update password
+            <input
+              name="ddns_password"
+              type="password"
+              autoComplete="new-password"
+              placeholder={
+                ddns?.has_password ? "Saved; leave blank to keep" : ""
+              }
+            />
+            <small>
+              Set it under Control Panel → My Account → Username/Password in
+              Dynu.
+            </small>
+          </label>
+        </div>
+        <button className="primary">Save remote access</button>
+      </form>
+    </section>
+  );
+}
 export function Dashboard() {
   const [state, setState] = useState<DashboardState>();
   const [error, setError] = useState("");
@@ -1152,6 +1292,12 @@ export function Dashboard() {
                 <button className="primary">Save settings</button>
               </form>
             </section>
+            <RemoteAccess
+              state={state}
+              onSave={(network) =>
+                act(() => save("/api/settings", { network }))
+              }
+            />
             <section>
               <h2>Client users</h2>
               <p>

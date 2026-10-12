@@ -47,6 +47,9 @@ pub struct State {
     pub extra_domains: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub home_profile_id: Option<u32>,
+    /// UPnP and dynamic DNS settings; absent means UPnP on, no dynamic DNS.
+    #[serde(default)]
+    pub network: Option<crate::reach::Settings>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

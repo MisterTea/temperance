@@ -8,6 +8,7 @@ pub mod gateway;
 pub mod home;
 pub mod net;
 pub mod policy;
+pub mod reach;
 pub mod wg;
 
 #[cfg(all(feature = "node", not(test)))]

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use temperance_gateway::{generate_private_key, public_key, Config, Gateway};
 
-const USAGE: &str = "usage: temperance-gateway --service URL [--key-file PATH] [--listen 0.0.0.0:51820] [--dns-upstream 1.1.1.1:53]
+const USAGE: &str = "usage: temperance-gateway --service URL [--key-file PATH] [--listen 0.0.0.0:51820] [--public-port 51820] [--dns-upstream 1.1.1.1:53]
        [--home-dns 0.0.0.0:53 --lan-network 192.168.1.0/24]
        [--router-lan-interface eth0 --router-lan-address 192.168.1.2 --router-uplink eth0]
 environment: TEMPERANCE_GATEWAY_TOKEN (required), TEMPERANCE_GATEWAY_PRIVATE_KEY";
@@ -76,6 +76,7 @@ fn main() {
         "home_dns": args.get("home-dns"),
         "lan_networks": args.get("lan-network").into_iter().collect::<Vec<_>>(),
         "router": router,
+        "public_port": args.get("public-port").map(|p| p.parse::<u16>().unwrap_or_else(|_| fail("--public-port must be a port number"))),
     }))
     .unwrap_or_else(|e| fail(&e.to_string()));
     let gateway = Gateway::start(config).unwrap_or_else(|e| fail(&e));
