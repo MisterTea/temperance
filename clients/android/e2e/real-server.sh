@@ -6,7 +6,7 @@
 # The app enrolls, browses through the server's embedded WireGuard gateway, is
 # blocked once its time runs out, and browses again after a parent approves more.
 #   prerequisites: a booted emulator (adb) with internet, `npm run build:gateway && npm run build`
-#   in web/, OpenSSL 3.4+, node
+#   in web/, OpenSSL, node
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ANDROID=$(pwd)
@@ -21,9 +21,14 @@ ORIGIN=https://localhost:$HTTPS_PORT
 ADMIN_TOKEN=$(openssl rand -hex 24)
 PASSWORD="e2e-$(openssl rand -hex 8)"
 
-# Backdated: the emulator's clock can trail the host's by several seconds.
+# Backdated: the emulator's clock can trail the host's by several seconds. OpenSSL
+# before 3.4 cannot backdate; an emulator on the same host (CI) shares its clock.
 stamp() { HOURS=$1 node -e 'console.log(new Date(Date.now() + process.env.HOURS * 3600e3).toISOString().replace(/[-:T]|\.\d+/g, ""))'; }
-VALIDITY=(-not_before "$(stamp -1)" -not_after "$(stamp 24)")
+if openssl req -help 2>&1 | grep -q -- -not_before; then
+  VALIDITY=(-not_before "$(stamp -1)" -not_after "$(stamp 24)")
+else
+  VALIDITY=(-days 1)
+fi
 openssl req -x509 -newkey rsa:2048 -nodes "${VALIDITY[@]}" -subj "/CN=Temperance e2e CA" \
   -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign" \
   -keyout "$WORK/ca.key" -out "$WORK/ca.pem" 2>/dev/null

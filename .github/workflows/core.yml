@@ -1,5 +1,12 @@
 name: Rust core and desktop
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions:
   contents: read
 defaults:
@@ -76,12 +83,15 @@ jobs:
         run: node build.mjs --release --target ${{ matrix.target }} --name ${{ matrix.name }}
       - run: cargo build --release -p temperance-gateway --features cli --target ${{ matrix.target }}
       - shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          NAME: ${{ matrix.name }}
         run: |
           mkdir -p ../build
-          cp ../web/gateway-addon/temperance-gateway.${{ matrix.name }}.node ../build/
-          src=target/${{ matrix.target }}/release/temperance-gateway
-          [[ "${{ matrix.target }}" == *windows* ]] && ext=.exe || ext=
-          cp "$src$ext" "../build/temperance-gateway-${{ matrix.name }}$ext"
+          cp "../web/gateway-addon/temperance-gateway.$NAME.node" ../build/
+          src=target/$TARGET/release/temperance-gateway
+          [[ "$TARGET" == *windows* ]] && ext=.exe || ext=
+          cp "$src$ext" "../build/temperance-gateway-$NAME$ext"
       - uses: actions/upload-artifact@v4
         with:
           name: gateway-${{ matrix.name }}
@@ -110,10 +120,13 @@ jobs:
         run: cargo test --workspace
       - run: cargo build --release -p temperance-desktop --target ${{ matrix.target }}
       - shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ARTIFACT: ${{ matrix.artifact }}
         run: |
-          src=target/${{ matrix.target }}/release/temperance
-          [[ "${{ matrix.target }}" == *windows* ]] && src="$src.exe"
-          mkdir -p ../build && cp "$src" "../build/${{ matrix.artifact }}"
+          src=target/$TARGET/release/temperance
+          [[ "$TARGET" == *windows* ]] && src="$src.exe"
+          mkdir -p ../build && cp "$src" "../build/$ARTIFACT"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

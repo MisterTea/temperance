@@ -1,12 +1,16 @@
 name: System tests
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
       image:
         description: Test a published server image instead of building from source
         required: false
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions:
   contents: read
 jobs:
