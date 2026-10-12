@@ -1,97 +1,97 @@
 # Temperance
 
-Open source family VPN and DNS controls inspired by [Circle](https://meetcircle.com/pages/features-usage). Manage family profiles, assign devices, filter domains, pause DNS access, and set bedtime schedules and daily DNS activity budgets. Configuration is stored in a local SQLite database; VPN clients share observed activity minutes with your self-hosted policy service. Standalone DNS mode has no account, telemetry, cloud service, or runtime dependencies. VPN mode adds an authenticated self-hosted policy service and WireGuard dependencies.
+Open source family VPN and DNS controls inspired by [Circle](https://meetcircle.com/pages/features-usage). Manage family profiles, devices, filters, pauses, bedtime and schedules, and daily time budgets from one program you run at home. Phones and computers are enforced through its built-in WireGuard VPN wherever they are; TVs and consoles on the home network are enforced through its DNS or (on Linux) router mode. There is no Temperance cloud service or telemetry.
 
-**Status: working MVP with VPN client source for all five platforms; not a complete Circle replacement.** Temperance is an independent project and has no affiliation with Circle. It uses original code and a distinct interface.
+**Status: working MVP with VPN client source for macOS, Windows, Android, and iOS; not a complete Circle replacement.** Temperance is an independent project and has no affiliation with Circle. It uses original code and a distinct interface.
 
 ## VPN apps and policy service
 
-Temperance now includes a central authenticated Next.js policy service, a Linux WireGuard enforcement gateway, and device applications for **macOS, Linux, Windows, Android, and iOS**. Parents update profiles in the HTTPS dashboard and issue short-lived enrollment codes. Devices generate VPN keys locally and install a full tunnel. The gateway applies DNS filters plus packet-level pauses, bedtime, and observed-network-minute budgets, refreshing policy every five seconds. Expiring firewall leases close forwarding if enforcement stops.
+Temperance is one home program: the authenticated Next.js dashboard and policy service with a WireGuard gateway written in Rust embedded as a native add-on, plus device applications for **macOS, Windows, Android, and iOS**. It runs on Linux, macOS or Windows with a single forwarded UDP port. Parents update profiles and create client users in the admin-password-protected dashboard. Devices generate VPN keys locally and install a full tunnel. The gateway applies DNS filters plus per-connection pauses, bedtime, and observed-network-minute budgets, re-checking policy every few seconds. A 15-second policy lease stops forwarding if enforcement stops.
 
-- [Build/install the five device apps](clients/README.md)
-- [Deploy the Next.js service to Vercel, Cloudflare Workers, or Docker](web/README.md)
-- [Configure the Linux VPN gateway](docs/deployment.md)
+- [Run Temperance at home](docs/deployment.md) (Linux `.deb`/`.rpm`/tarball releases; installers for Linux, macOS and Windows; port forwarding; HTTPS), or [with Docker](#run-with-docker)
+- [Build/install the device apps](clients/README.md)
+- [Develop the web service, or host the dashboard on Vercel/Cloudflare with a separate gateway](web/README.md)
 - [Circle research and feature-parity audit](docs/research/circle-feature-audit.md)
 - [Architecture, API, and enforcement limits](docs/architecture.md)
 
-The mobile apps embed WireGuard; the Apple apps use native SwiftUI/Network Extension. Linux and Windows use compiled Go applications with a localhost browser UI and official OS WireGuard tooling. Apple VPN builds require your signing team and entitlements for installation. Android debug APKs are test artifacts. Unmanaged-device VPN removal and comprehensive encrypted-DNS/content filtering remain limitations. The repository includes CI build artifacts and an isolated Linux integration test with real encrypted traffic; it does not provision a public server or publish app-store releases automatically.
+All four clients and the gateway share one Rust business-logic layer, [`core/temperance-core`](core): the enrollment/refresh protocol, key generation, tunnel validation, the policy engine, the child status view, child alerts, time requests and location answers. It is linked natively into the Rust desktop app for Windows and compiled through UniFFI into an XCFramework with Swift bindings (iOS, macOS) and Android `.so` libraries with Kotlin bindings. Platform code only provides HTTPS, secure storage, VPN APIs and UI. The mobile apps embed WireGuard; the Apple apps use native SwiftUI/Network Extension. Windows uses the Rust app with a localhost browser UI and the official WireGuard tunnel service. There is no Linux device app; Linux computers can be protected as home-network devices behind the gateway.
 
-## Standalone DNS mode
-
-The original dependency-free DNS dashboard can still run without a VPN or policy service.
+The website uses a single admin password to manage policy and create client users. Client apps sign in with a username/password and receive the family profile assigned to that user, without OAuth or a profile picker. Stored user passwords are salted hashes, and apps persist only scoped device credentials. Data lives in SQLite in the data directory by default, or in PostgreSQL when `TEMPERANCE_DATABASE_URL` points to one. Apple VPN builds require your signing team and entitlements for installation. Android debug APKs are test artifacts. Unmanaged-device VPN removal and comprehensive encrypted-DNS/content filtering remain limitations. The repository includes CI build artifacts and end-to-end tests with real encrypted traffic. Version tags publish Linux packages and a container image; it does not provision a server or publish app-store releases automatically.
 
 ## Run locally
 
-Requires Python 3.11 or newer. From this directory:
+The web service is the Next.js app in [`web/`](web) and needs Node.js 24 or newer:
 
 ```sh
-python3 -m temperance.server --timezone America/Chicago
+cd web && npm ci
+cp .env.example .env.local   # set the two tokens; SQLite is the default database
+npm run dev
 ```
 
-Open **http://127.0.0.1:8787**. The dashboard starts empty. Add a profile and a device with IP `127.0.0.1` to try rules locally. DNS listens on UDP and TCP port 5533; your system DNS configuration is not changed.
+Open **http://127.0.0.1:3000**, sign in with `TEMPERANCE_ADMIN_PASSWORD`, then add profiles and devices. To run the VPN gateway too, build the add-on once (`npm run build:gateway`, needs Rust) and set `TEMPERANCE_GATEWAY_LISTEN=0.0.0.0:51820`. See [docs/deployment.md](docs/deployment.md) to install it as a service, including DNS and router modes for devices on a home network.
+
+## Run with Docker
+
+If the home machine already runs Docker (a Linux box, a NAS such as Synology, Unraid or TrueNAS, or Docker Desktop), install the published image (amd64 and arm64) with Docker Compose:
 
 ```sh
-dig @127.0.0.1 -p 5533 example.com
-dig +tcp @127.0.0.1 -p 5533 example.com
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/MisterTea/temperance/main/deploy/docker/install.sh)"
 ```
 
-Add `example.com` to the profile's blocked domains and repeat: the gateway returns NXDOMAIN. Resume/pause and other rules apply to subsequent requests.
+The installer asks for your public hostname, timezone and HTTPS method. It writes `~/temperance/compose.yml` and a `.env` with a generated admin password, then starts the containers and waits for them to report healthy. Rerun it to upgrade. To set it up by hand, copy [`deploy/docker/compose.yml`](deploy/docker/compose.yml) and [`deploy/docker/.env.example`](deploy/docker/.env.example) (as `.env`) into one directory and run `docker compose up -d`.
 
-Optional installation:
+The device apps only accept an HTTPS address, so `.env` picks a front end with `COMPOSE_PROFILES`:
 
-```sh
-python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/temperance --timezone America/Chicago
+- `caddy`: Caddy gets a Let's Encrypt certificate for `TEMPERANCE_PUBLIC_URL`.
+- `cloudflared`: a Cloudflare Tunnel; route its public hostname to `http://temperance:3000`.
+- Empty: point your own reverse proxy at the dashboard port.
+
+The dashboard stays on `127.0.0.1:8788`.
+
+### Port forwarding with Docker
+
+Phones and laptops reach the gateway from outside your home, so their packets go from your router to the Docker host and then to the container:
+
+```
+internet ──UDP 51820──▶ router ──UDP 51820──▶ Docker host (192.168.1.20) ──▶ container :51820
 ```
 
-## Put it on a home network
+1. **Give the Docker host a fixed LAN address.** Reserve one in your router's DHCP settings. With Docker Desktop on macOS or Windows, this is the Mac's or PC's own address, not the address of Docker's internal VM.
+2. **Forward UDP 51820 on the router** to that address. The protocol must be UDP; TCP forwarding does nothing for WireGuard. With `COMPOSE_PROFILES=caddy`, also forward TCP 80 and 443 for the certificate and HTTPS. A Cloudflare Tunnel needs no inbound TCP ports.
+3. **Publish the same UDP port from the container.** `compose.yml` maps `${TEMPERANCE_WIREGUARD_PORT}:51820/udp`. With plain `docker run`, write `-p 51820:51820/udp`; without `/udp`, Docker publishes TCP only.
+4. **Advertise the outside port.** `TEMPERANCE_VPN_ENDPOINT` must be your public hostname (or IPv4 address) with the port the *router* exposes. If 51820 is taken, set `TEMPERANCE_WIREGUARD_PORT=51821`, forward UDP 51821 on the router, and use `home.example.net:51821`. The container always listens on 51820 inside.
+5. **Allow it through the host firewall.** Docker adds its own iptables rules for published ports, and those bypass `ufw` and `firewalld` zones. That is why the dashboard is published on `127.0.0.1` only. On Windows, allow Docker Desktop through Windows Firewall when it asks.
+6. **Check it.** `docker compose logs temperance` should print `Temperance gateway on udp 0.0.0.0:51820`. Then turn off Wi-Fi on a phone, connect with the app over mobile data, and confirm the device shows as active in the dashboard. Many routers cannot loop traffic from your own LAN back to the public address, so test from outside the home network.
 
-Use an always-on Linux host or Raspberry Pi with a reserved LAN address. Reserve client addresses in your router, then assign those addresses to profiles. Production DNS must listen on port 53 for both UDP and TCP. For example, on a host at `192.168.1.10`, with permission to bind port 53:
+Port forwarding cannot work if the router's WAN address is private (`10.x`, `100.64–127.x`, `172.16–31.x`, `192.168.x`), which happens behind carrier-grade NAT or a second router. Bridge the ISP modem, ask the ISP for a public IPv4 address, or run the gateway on a VPS (see [docs/deployment.md](docs/deployment.md#remote-gateway-optional)). Rootless Docker and Podman also work. UDP port forwarding behaves the same, but use a port above 1024.
 
-```sh
-python3 -m temperance.server \
-  --dns-host 192.168.1.10 --dns-port 53 \
-  --allow-network 192.168.1.0/24 \
-  --timezone America/Chicago \
-  --data /path/to/private-data/temperance.sqlite3
-```
+The home-network DNS and router modes identify TVs and consoles by their LAN address. For those modes, run the container with `network_mode: host`, and for router mode also `user: "0"` and `cap_add: [NET_ADMIN]`. Host networking makes Docker skip the port mappings, so the router forwards straight to the host.
 
-Grant a dedicated service only the privilege needed to bind port 53 (for example, `CAP_NET_BIND_SERVICE` in a Linux service manager). Configure DHCP to advertise this host as the DNS resolver, or set DNS on one test device first. Allow port 53 only from your home subnet in the host firewall. Avoid advertising an alternative resolver that bypasses these rules. The allow-network option is mandatory when binding beyond loopback.
-
-Clients must query Temperance directly. If the router proxies all DNS under its own address, Temperance cannot distinguish devices. Unknown/unassigned addresses are allowed and appear in recent activity. IPv4 only in this MVP; IPv6 DNS paths need separate network controls.
-
-The administration UI binds exclusively to `127.0.0.1`, with Host/Origin checks to prevent browser cross-origin writes and DNS rebinding. It has no user authentication: any user/process on that host can administer it. Keep the host trusted. For remote administration use an SSH tunnel, e.g. `ssh -L 8787:127.0.0.1:8787 user@gateway`, then open the local dashboard. Do not expose the dashboard through an unauthenticated reverse proxy.
-
-## What the controls mean
-
-- **Usage:** the number of distinct minutes with at least one allowed DNS request across a profile's devices. Simultaneous devices count once per minute. Background requests may count, and cached DNS or existing connections may not. It is not exact screen time or time spent in a specific app. Requests are counted before forwarding, even if the upstream later fails.
-- **Daily budgets:** block new DNS requests in new minutes after the budget is reached. The current counted minute remains allowed. Budgets reset at midnight in the configured IANA timezone, default UTC.
-- **Bedtime:** a daily interval, including intervals spanning midnight. Start is inclusive; end is exclusive.
-- **Pause:** immediately refuses new DNS requests for that profile.
-- **Filtering:** exact domains plus all their subdomains, including IDNA normalization. Allow rules override category/domain filters. Pause, bedtime, and budget rules take precedence over allow rules.
-- **Categories:** small, transparent starter lists in `temperance/store.py` for social, video, and gaming services. These are examples, not comprehensive content classifications.
-- **Privacy:** raw domain names, client IPs, decisions, and timestamps are retained for 30 days and pruned at startup/hourly. Protect the data directory and backups. Domain logs can reveal sensitive browsing habits. Data is not sent to a Temperance service; allowed DNS questions are forwarded to the configured upstream (default `1.1.1.1`).
-
-DNS filtering cannot terminate existing connections or stop access through cached answers, IP literals, VPNs, mobile data, encrypted DNS, or alternate resolvers. Dependable whole-network enforcement requires router firewall/routing controls and usually device agents. Standalone DNS mode does not implement router controls, discovery, location tracking, rewards, or exact app usage reporting. For mobile/off-network traffic and packet-level controls, use the VPN apps and gateway described above. The standalone DNS service is designed for a small trusted home network, not an internet-facing resolver.
+DNS and packet filtering cannot stop access through mobile data, other VPNs or DNS-over-HTTPS on devices that are not routed through the gateway. [docs/architecture.md](docs/architecture.md) describes what each control measures and its enforcement limits.
 
 ## Development
 
 ```sh
-python3 -m unittest discover -s tests -v
-node --check temperance/static/app.js
+(cd web && npm run test:coverage)                                # policy service + dashboard (80% gate)
+(cd web && npm run build && npx playwright test)                 # feature/UX + layout audits
+(cd core && cargo llvm-cov --workspace)                          # Rust core, gateway + desktop
+clients/android/gradlew -p clients/android unitTestCoverageCheck  # Android app (Robolectric, 80% gate)
+xcodebuild -project clients/apple/Temperance.xcodeproj -scheme TemperanceMac -derivedDataPath build/apple \
+  -resultBundlePath build/apple-tests.xcresult -enableCodeCoverage YES CODE_SIGNING_ALLOWED=NO test \
+  && clients/apple/coverage.py build/apple-tests.xcresult        # Apple app (80% gate)
+sh systest/run.sh                                                # client + server system tests (Docker, Linux)
 ```
 
-Tests use temporary SQLite databases and a deterministic local DNS upstream, covering policy precedence, timezones, minute budgets, persistence, retention, malformed packets, UDP/TCP forwarding, and the administration API. No router configuration or live external DNS is required for tests.
+The system tests ([systest/README.md](systest/README.md)) run the real server image and a headless client together in an isolated Docker network. The fake internet there can only be reached through the WireGuard tunnel. They cover enrolling, filtering, time limits with parent approval, pause, bedtime and revoking a device.
 
-Architecture: `store.py` owns SQLite and policy decisions; `dns.py` implements wire forwarding; `server.py` hosts the API and static dashboard. The frontend is plain HTML/CSS/JavaScript, served from the package. All runtime code uses Python's standard library.
+Every project must keep at least 80% line coverage from its unit tests. In CI the Rust gate applies to each crate separately, and generated UniFFI bindings are left out of the Android and Apple numbers. GitHub Actions run all of these, Playwright on both SQLite and PostgreSQL, the gateway's tunnel test and add-on builds on Linux (x64 and arm64), macOS and Windows, the router-mode test in network namespaces, Rust desktop builds for Windows (x64 and arm64) and macOS, the Android APK and the unsigned macOS/iOS apps.
+
+Gateway layout (`core/temperance-gateway`): `wg.rs` runs WireGuard peers, `gateway.rs` admits packets, relays TCP/UDP flows and holds the policy lease, `policy.rs` turns the service's state document into per-flow verdicts with `temperance-core`, `dns.rs` filters and forwards DNS, `home.rs` generates router-mode nftables rules, `node.rs` is the Node add-on, and `bin/temperance-gateway.rs` is the standalone CLI.
 
 ## Next milestones
 
-1. Authenticated remote administration and profile/history management.
-2. Curated, updateable category lists and per-category budgets.
-3. Router integrations for discovery and enforceable network pauses.
-4. Accurate foreground usage agents and managed-device enrollment.
-5. IPv6 internet forwarding, comprehensive filter feeds, and operational metrics.
+1. Push/e-mail delivery of parent notifications.
+2. IPv6 internet forwarding and operational metrics.
+3. Physical-device acceptance testing and signed store releases.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).

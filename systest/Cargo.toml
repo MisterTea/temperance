@@ -1,0 +1,15 @@
+[package]
+name = "temperance-systest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Headless client for the Docker Compose system tests"
+
+[dev-dependencies]
+temperance-core = { path = "../core/temperance-core" }
+serde_json = "1"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[[test]]
+name = "system"
+path = "tests/system.rs"

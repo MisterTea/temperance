@@ -1,0 +1,40 @@
+<resources>
+    <string name="app_name">Temperance</string>
+
+    <string name="setup_title">Connect this device</string>
+    <string name="setup_intro">Sign in with the username and password created for you on the Temperance website. Your family profile is assigned automatically. Your password is not saved on this device.</string>
+    <string name="server_label">Temperance server</string>
+    <string name="server_hint">temperance.example.com</string>
+    <string name="username_label">Username</string>
+    <string name="password_label">Password</string>
+    <string name="sign_in">Sign in</string>
+    <string name="signing_in">Signing in…</string>
+
+    <string name="vpn_title">Allow the family VPN</string>
+    <string name="vpn_intro">Android will ask whether Temperance may set up a VPN connection. Tap OK so your family\'s rules apply on this device.</string>
+    <string name="allow_vpn">Allow VPN connection</string>
+    <string name="vpn_denied">Without the VPN, family rules cannot apply on this device. Tap Allow VPN connection to try again.</string>
+
+    <string name="wifi_sign_in">Sign in to Wi-Fi</string>
+    <string name="ask_time">Ask for more time</string>
+    <string name="always_on_note">For tamper resistance, turn on Always-on VPN and Block connections without VPN from the menu\'s Always-on VPN settings.</string>
+
+    <string name="menu_refresh">Refresh</string>
+    <string name="menu_vpn_settings">Always-on VPN settings</string>
+    <string name="menu_location">Allow location sharing</string>
+    <string name="menu_about">About Temperance</string>
+
+    <string name="time_title">Ask for more time</string>
+    <string name="time_message_hint">Why do you need more time?</string>
+    <string name="minutes_15">15 minutes</string>
+    <string name="minutes_30">30 minutes</string>
+    <string name="minutes_60">1 hour</string>
+    <string name="send">Send</string>
+    <string name="cancel">Cancel</string>
+    <string name="close">Close</string>
+    <string name="request_sent">Request sent to your parents.</string>
+    <string name="location_on">Parents can now ask for this device\'s location.</string>
+    <string name="location_off">Location sharing stays off.</string>
+    <string name="refreshed">Rules updated</string>
+    <string name="about_text">Temperance %1$s\nCore %2$s\nServer %3$s</string>
+</resources>

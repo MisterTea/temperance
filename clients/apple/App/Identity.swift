@@ -2,51 +2,37 @@ import Foundation
 import Security
 import WireGuardKit
 
-struct Provision: Codable {
-    let address: String
-    let addressV6: String
-    let dns: String
-    let endpoint: String
-    let publicKey: String
-    enum CodingKeys: String, CodingKey { case address, dns, endpoint; case addressV6 = "address_v6", publicKey = "public_key" }
-}
-struct Policy: Codable {
-    let name: String
-    let paused: Bool
-    let limit: Int
-    let used: Int
-    let timezone: String
-}
-struct DeviceState: Codable {
-    let deviceID: String
-    var token: String?
-    let version: Int
-    let policy: Policy
-    let tunnel: Provision
-    enum CodingKeys: String, CodingKey { case token, version, policy, tunnel; case deviceID = "device_id" }
-}
-struct Identity: Codable { let service: URL; let privateKey: String; var state: DeviceState? }
 enum ClientError: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
-enum Vault {
-    static var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "org.temperance.identity",
-         kSecAttrAccount as String: "device",
-         kSecAttrAccessGroup as String: Bundle.main.object(forInfoDictionaryKey: "KeychainAccessGroup") as! String]
+/// Persists the device identity; the apps use the shared Keychain (`Vault`).
+protocol IdentityStore {
+    func load() throws -> Identity?
+    func save(_ identity: Identity) throws
+}
+/// Keychain storage shared with the tunnel extension. The identity format is
+/// owned by the shared Rust core so every platform persists the same data.
+struct Vault: IdentityStore {
+    var service = "org.temperance.identity"
+    var accessGroup = Bundle.main.object(forInfoDictionaryKey: "KeychainAccessGroup") as? String
+    private var query: [String: Any] {
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: "device"]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        return query
     }
-    static func load() throws -> Identity? {
+    func load() throws -> Identity? {
         var q = query; q[kSecReturnData as String] = true
         var result: CFTypeRef?
         let status = SecItemCopyMatching(q as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data else { throw ClientError.message("Keychain read failed: \(status)") }
-        return try JSONDecoder().decode(Identity.self, from: data)
+        return try identityFromJson(json: String(decoding: data, as: UTF8.self))
     }
-    static func save(_ identity: Identity) throws {
-        let data = try JSONEncoder().encode(identity)
+    func save(_ identity: Identity) throws {
+        let data = Data(identityToJson(identity: identity).utf8)
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
             var q = query; q[kSecValueData as String] = data
@@ -56,8 +42,10 @@ enum Vault {
     }
 }
 func tunnelConfiguration(_ identity: Identity) throws -> TunnelConfiguration {
-    guard let t = identity.state?.tunnel,
-          let privateKey = PrivateKey(base64Key: identity.privateKey),
+    guard let t = identity.state?.tunnel else { throw ClientError.message("Enroll first") }
+    // The shared core validates every field and fixes the full-tunnel routes.
+    _ = try tunnelConfig(privateKey: identity.privateKey, tunnel: t)
+    guard let privateKey = PrivateKey(base64Key: identity.privateKey),
           let publicKey = PublicKey(base64Key: t.publicKey),
           let address = IPAddressRange(from: t.address),
           let addressV6 = IPAddressRange(from: t.addressV6),

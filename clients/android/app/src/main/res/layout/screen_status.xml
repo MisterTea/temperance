@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/screen_status"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout style="@style/Screen" android:id="@+id/column">
+
+        <TextView android:id="@+id/headline" style="@style/Title" android:accessibilityHeading="true" />
+        <TextView android:id="@+id/detail" style="@style/Body" android:textColor="@color/ink" />
+
+        <TextView
+            android:id="@+id/vpn_state"
+            style="@style/Body"
+            android:layout_marginTop="16dp"
+            android:drawablePadding="8dp"
+            android:drawableStart="@drawable/dot"
+            android:gravity="center_vertical" />
+
+        <TextView
+            android:id="@+id/health"
+            style="@style/Body"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/warning_card"
+            android:padding="16dp"
+            android:textColor="@color/warning_ink"
+            android:visibility="gone" />
+
+        <Button android:id="@+id/wifi_sign_in" style="@style/Secondary" android:text="@string/wifi_sign_in" android:visibility="gone" />
+        <Button android:id="@+id/ask_time" style="@style/Primary" android:text="@string/ask_time" />
+
+        <TextView android:id="@+id/status_line" style="@style/Note" />
+        <TextView style="@style/Note" android:layout_marginTop="12dp" android:text="@string/always_on_note" />
+    </LinearLayout>
+</ScrollView>

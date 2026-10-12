@@ -1,0 +1,33 @@
+[Unit]
+Description=Temperance (dashboard, policy API and WireGuard gateway)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/temperance/temperance.env
+Environment=NODE_ENV=production TEMPERANCE_DATA_DIR=/var/lib/temperance
+WorkingDirectory=/opt/temperance/app
+ExecStart=/opt/temperance/node/bin/node /opt/temperance/app/server.js
+Restart=always
+RestartSec=3
+# Next.js exits with 128 + SIGTERM when stopped.
+SuccessExitStatus=143
+DynamicUser=yes
+StateDirectory=temperance
+StateDirectoryMode=0700
+UMask=0077
+# DNS for home devices binds port 53; router mode (Linux) manages its own nftables tables.
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

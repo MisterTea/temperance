@@ -1,7 +1,48 @@
 "use client";
 import { useEffect, useId, useRef, useState } from "react";
-import { CATALOG, DAYS, type Profile } from "@/lib/policy";
+import { CATALOG, DAYS, type AppLimit, type Profile } from "@/lib/policy";
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+type Span = { name: string; start: string; end: string; days: number[] };
+const WEEK = 7 * 1440;
+const clock = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+function weekIntervals(w: Span): [number, number][] {
+  if (!w.start || !w.end || w.start === w.end) return [];
+  const start = clock(w.start),
+    end = clock(w.end),
+    length = end > start ? end - start : end + 1440 - start;
+  return w.days.flatMap((day): [number, number][] => {
+    const from = day * 1440 + start,
+      to = from + length;
+    return to > WEEK
+      ? [
+          [from, WEEK],
+          [0, to - WEEK],
+        ]
+      : [[from, to]];
+  });
+}
+/** Pairs of windows that are active at the same time, with the days the overlap starts. */
+export function scheduleConflicts(spans: Span[]) {
+  const found: string[] = [];
+  spans.forEach((a, i) =>
+    spans.slice(i + 1).forEach((b) => {
+      const days = new Set<number>();
+      for (const [a0, a1] of weekIntervals(a))
+        for (const [b0, b1] of weekIntervals(b)) {
+          const from = Math.max(a0, b0);
+          if (from < Math.min(a1, b1)) days.add(Math.floor(from / 1440));
+        }
+      if (days.size)
+        found.push(
+          `${a.name} and ${b.name} overlap on ${[...days]
+            .sort()
+            .map((d) => DAY_NAMES[d])
+            .join(", ")}`,
+        );
+    }),
+  );
+  return found;
+}
 const fresh = (): Omit<Profile, "id"> => ({
   name: "",
   avatar: "◒",
@@ -21,21 +62,63 @@ const fresh = (): Omit<Profile, "id"> => ({
   schedules: [],
   category_limits: {},
   site_limits: {},
+  app_limits: [],
 });
+/** One domain per line (commas also work); keeps the typed text so new lines can be started. */
+export function DomainList({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string[];
+  onChange: (domains: string[]) => void;
+  placeholder?: string;
+}) {
+  const [text, setText] = useState(value.join("\n"));
+  return (
+    <label>
+      {label}
+      <textarea
+        rows={3}
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange(
+            e.target.value
+              .split(/[\s,]+/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+          );
+        }}
+      />
+    </label>
+  );
+}
 export function ProfileEditor({
   profile,
   onClose,
   onSave,
+  onDelete,
 }: {
   profile?: Profile;
   onClose: () => void;
   onSave: (value: unknown) => Promise<void>;
+  onDelete?: () => Promise<void>;
 }) {
   const [value, setValue] = useState(() =>
-    profile ? structuredClone(profile) : fresh(),
+    profile
+      ? { ...structuredClone(profile), app_limits: profile.app_limits ?? [] }
+      : fresh(),
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const conflicts = scheduleConflicts([
+    ...value.schedules,
+    { name: "Bedtime", ...value.bedtime },
+  ]);
   const dialog = useRef<HTMLDialogElement>(null);
   const id = useId();
   useEffect(() => {
@@ -411,6 +494,12 @@ export function ProfileEditor({
               </button>
             </section>
           ))}
+          {conflicts.length ? (
+            <p className="notice warning" aria-live="polite">
+              {conflicts.join(". ")}. The stricter rule applies while both are
+              active.
+            </p>
+          ) : null}
           <button
             type="button"
             className="secondary"
@@ -513,27 +602,104 @@ export function ProfileEditor({
             Add site
           </button>
         </fieldset>
+        <fieldset>
+          <legend>Shared app limits</legend>
+          <p className="hint">
+            Apps in a group draw from one daily budget: 60 minutes for Games
+            means 60 minutes across all of them, not 60 each.
+          </p>
+          {value.app_limits.map((group, index) => {
+            const update = (next: Partial<AppLimit>) =>
+              field(
+                "app_limits",
+                value.app_limits.map((g, i) =>
+                  i === index ? { ...g, ...next } : g,
+                ),
+              );
+            return (
+              <div
+                key={group.id}
+                className="app-group"
+                role="group"
+                aria-label={`App group ${index + 1}`}
+              >
+                <div className="two">
+                  <label>
+                    Group name
+                    <input
+                      value={group.name}
+                      maxLength={60}
+                      required
+                      onChange={(e) => update({ name: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    Shared minutes per day
+                    <input
+                      type="number"
+                      min={1}
+                      max={1440}
+                      required
+                      value={group.minutes}
+                      onChange={(e) =>
+                        update({ minutes: Number(e.target.value) })
+                      }
+                    />
+                  </label>
+                </div>
+                <DomainList
+                  label="Apps and sites in this group"
+                  placeholder={"roblox.com\nminecraft.net"}
+                  value={group.domains}
+                  onChange={(domains) => update({ domains })}
+                />
+                <button
+                  type="button"
+                  className="quiet"
+                  onClick={() =>
+                    field(
+                      "app_limits",
+                      value.app_limits.filter((_, i) => i !== index),
+                    )
+                  }
+                >
+                  Remove {group.name || "group"}
+                </button>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            className="secondary"
+            disabled={value.app_limits.length >= 20}
+            onClick={() =>
+              field("app_limits", [
+                ...value.app_limits,
+                {
+                  id: crypto.randomUUID().slice(0, 8),
+                  name: "",
+                  domains: [],
+                  minutes: 60,
+                },
+              ])
+            }
+          >
+            + Add app group
+          </button>
+        </fieldset>
         {(["allow", "deny", "unmanaged"] as const).map((key) => (
-          <label key={key}>
-            {key === "allow"
-              ? "Always allowed domains"
-              : key === "deny"
-                ? "Blocked domains"
-                : "Unmanaged domains (bypass pauses and budgets)"}
-            <textarea
-              rows={3}
-              value={value[key].join("\n")}
-              onChange={(e) =>
-                field(
-                  key,
-                  e.target.value
-                    .split("\n")
-                    .map((s) => s.trim())
-                    .filter(Boolean),
-                )
-              }
-            />
-          </label>
+          <DomainList
+            key={key}
+            label={
+              key === "allow"
+                ? "Always allowed domains"
+                : key === "deny"
+                  ? "Blocked domains"
+                  : "Unmanaged domains (bypass pauses and budgets)"
+            }
+            value={value[key]}
+            onChange={(next) => field(key, next)}
+          />
         ))}
         <p role="alert" className="error">
           {error}
@@ -541,6 +707,28 @@ export function ProfileEditor({
         <button className="primary full" disabled={busy}>
           {busy ? "Saving…" : "Save profile"}
         </button>
+        {onDelete ? (
+          <button
+            type="button"
+            className="danger full"
+            disabled={busy}
+            onClick={async () => {
+              if (!confirm(`Delete ${value.name}? This removes its rules.`))
+                return;
+              setBusy(true);
+              try {
+                await onDelete();
+                onClose();
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "Could not delete");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Delete profile
+          </button>
+        ) : null}
       </form>
     </dialog>
   );

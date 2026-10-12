@@ -1,11 +1,15 @@
 import type { Profile, Reward, Usage } from "./policy";
 export interface Device {
   id: string;
+  /** Home devices cannot run the VPN app; the gateway enforces them by LAN address. */
+  kind?: "home";
   ip: string;
   name: string;
   profile_id: number;
   public_key: string;
   token_hash: string;
+  /** IAM user who registered this VPN client. */
+  user_id?: string;
   revoked: boolean;
   paused: boolean;
   managed: boolean;
@@ -16,6 +20,15 @@ export interface Device {
     accuracy: number;
     at: number;
   };
+  location_requested?: number;
+  /** Latest connectivity/permission issues the device reported (shared Rust `diagnose`). */
+  diagnostics?: { at: number; issues: DeviceIssue[] };
+}
+export interface DeviceIssue {
+  code: string;
+  severity: "error" | "warning" | "info";
+  message: string;
+  action: string;
 }
 export interface History {
   id: string;
@@ -43,7 +56,27 @@ export interface Event {
   message: string;
   read: boolean;
 }
+export interface User {
+  id: string;
+  username: string;
+  password_hash: string;
+  role: "user" | "owner" | "parent";
+  profile_id?: number;
+  disabled?: boolean;
+  session_version: number;
+  created_at: number;
+  failed_logins: number;
+  locked_until?: number;
+}
+export interface RefreshToken {
+  hash: string;
+  user_id: string;
+  client_id: string;
+  expires: number;
+}
 export interface State {
+  users?: User[];
+  refresh_tokens?: RefreshToken[];
   schema: 2;
   version: number;
   nextProfileId: number;
@@ -60,6 +93,9 @@ export interface State {
   extra_domains: Record<string, string[]>;
   retention_days: number;
   offline_grace_seconds: number;
+  gateway_seen?: number;
+  /** Set when the first-run wizard is finished or skipped. */
+  setup_completed_at?: number;
 }
 export const emptyState = (): State => ({
   schema: 2,

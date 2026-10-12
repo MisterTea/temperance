@@ -1,0 +1,41 @@
+[package]
+name = "temperance-gateway"
+description = "Userspace WireGuard gateway that enforces Temperance policy per flow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "temperance_gateway"
+
+[[bin]]
+name = "temperance-gateway"
+path = "src/bin/temperance-gateway.rs"
+required-features = ["cli"]
+
+[features]
+node = ["dep:napi", "dep:napi-derive"]
+cli = ["dep:ureq"]
+
+[dependencies]
+temperance-core = { path = "../temperance-core" }
+boringtun = "0.7"
+ipstack = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+chrono-tz = "0.10"
+rand_core = { version = "0.6", features = ["getrandom"] }
+log = "0.4"
+napi = { version = "3", optional = true, default-features = false, features = ["napi4"] }
+napi-derive = { version = "3", optional = true }
+ureq = { version = "3", optional = true }
+
+[build-dependencies]
+napi-build = "2"
+
+[dev-dependencies]
+smoltcp = { version = "0.14", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp", "socket-udp"] }

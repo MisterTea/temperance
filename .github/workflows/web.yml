@@ -1,31 +1,88 @@
 name: Next.js policy service
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions:
   contents: read
+defaults:
+  run:
+    working-directory: web
 jobs:
-  nextjs:
+  unit:
+    name: Typecheck, unit tests and coverage (SQLite and PostgreSQL storage)
     runs-on: ubuntu-latest
     services:
-      sql:
-        image: ghcr.io/tursodatabase/libsql-server:latest
+      postgres:
+        image: postgres:17-alpine
         env:
-          SQLD_NODE: primary
-        ports: ['8081:8080']
-    defaults:
-      run:
-        working-directory: web
+          POSTGRES_PASSWORD: temperance
+          POSTGRES_DB: temperance
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      - name: Unit and component tests (80% coverage gate)
+        run: npm run test:coverage
         env:
-          TEMPERANCE_TEST_DATABASE_URL: http://127.0.0.1:8081
+          TEMPERANCE_TEST_POSTGRES_URL: postgres://postgres:temperance@127.0.0.1:5432/temperance
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-coverage
+          path: web/coverage
       - run: npm run build
       - run: npm run cloudflare:build
       - run: npm audit --audit-level=high
+
+  e2e:
+    name: Playwright feature and layout tests (${{ matrix.database }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: temperance
+          POSTGRES_DB: temperance
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      E2E_DATABASE_URL: ${{ matrix.database == 'postgres' && 'postgres://postgres:temperance@127.0.0.1:5432/temperance' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-${{ matrix.database }}
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 14

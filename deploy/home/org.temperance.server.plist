@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Installed by install-macos.sh, which fills in @NODE@ and @HOME@. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>org.temperance.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>set -a; . "@HOME@/Library/Application Support/Temperance/temperance.env"; exec "@NODE@" "@HOME@/Library/Application Support/Temperance/app/server.js"</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>TEMPERANCE_DATA_DIR</key>
+    <string>@HOME@/Library/Application Support/Temperance</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>@HOME@/Library/Application Support/Temperance/app</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>@HOME@/Library/Logs/Temperance.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/Library/Logs/Temperance.log</string>
+</dict>
+</plist>

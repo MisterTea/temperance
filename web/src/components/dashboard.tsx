@@ -1,29 +1,45 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { snapshot } from "@/lib/service";
-import type { Profile } from "@/lib/policy";
+import { dailyLimit, type Profile } from "@/lib/policy";
 import type { History } from "@/lib/model";
 import { ProfileEditor } from "./profile-editor";
+import { Onboarding } from "./onboarding";
+import { api } from "./api";
 type DashboardState = ReturnType<typeof snapshot>;
-async function api<T>(path: string, data?: unknown): Promise<T> {
-  const response = await fetch(path, {
-    cache: "no-store",
-    ...(data === undefined
-      ? {}
-      : {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        }),
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? "Request failed");
-  return result;
-}
+type ParentAccount = {
+  id: string;
+  username: string;
+  role?: string;
+  profile_id?: number;
+  disabled?: boolean;
+};
+const ago = (at: number) => {
+  const minutes = Math.max(0, Math.round((Date.now() / 1000 - at) / 60));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)} h ago`;
+  return `${Math.round(minutes / 1440)} d ago`;
+};
+const bucketLabel = (bucket: string, profile?: Profile) =>
+  bucket.startsWith("group:")
+    ? ((profile?.app_limits ?? []).find((g) => "group:" + g.id === bucket)
+        ?.name ?? "App group")
+    : bucket.replace(/^(category|site):/, "");
 export function Dashboard() {
   const [state, setState] = useState<DashboardState>();
   const [error, setError] = useState("");
   const [signedIn, setSignedIn] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const [onboarding, setOnboarding] = useState<boolean>();
+  const [resetUser, setResetUser] = useState<ParentAccount>();
+  const [resetError, setResetError] = useState("");
+  const resetDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (resetUser) resetDialog.current?.showModal();
+  }, [resetUser]);
+  const [parents, setParents] = useState<ParentAccount[]>([]);
+  const [me, setMe] = useState<ParentAccount>();
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Profile | true>();
   const [tab, setTab] = useState("overview");
@@ -45,8 +61,13 @@ export function Dashboard() {
       setError("");
     } catch (error) {
       const text = error instanceof Error ? error.message : "Could not load";
-      if (text.includes("sign-in")) setSignedIn(false);
-      else setError(text);
+      if (text.includes("sign-in")) {
+        setSignedIn(false);
+        const setup = await api<{ needs_setup: boolean }>("/v1/setup").catch(
+          () => ({ needs_setup: false }),
+        );
+        setNeedsSetup(setup.needs_setup);
+      } else setError(text);
     } finally {
       setLoading(false);
     }
@@ -56,6 +77,9 @@ export function Dashboard() {
     const timer = setInterval(refresh, 10000);
     return () => clearInterval(timer);
   }, [refresh]);
+  useEffect(() => {
+    if (state?.needs_onboarding) setOnboarding((o) => o ?? true);
+  }, [state?.needs_onboarding]);
   const save = async (path: string, value: unknown) => {
     const next = await api<DashboardState>(path, value);
     setState(next);
@@ -85,10 +109,21 @@ export function Dashboard() {
   useEffect(() => {
     if (tab === "history") loadHistory();
   }, [tab, loadHistory]);
+  const loadParents = useCallback(async () => {
+    try {
+      setParents(await api<ParentAccount[]>("/api/users"));
+      setMe(await api<ParentAccount>("/api/me"));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load accounts");
+    }
+  }, []);
+  useEffect(() => {
+    if (tab === "settings" && signedIn) loadParents();
+  }, [tab, signedIn, loadParents]);
   useEffect(() => {
     if (tab !== "usage" || !state) return;
     const start = new Date(state.day + "T12:00:00Z");
-    start.setUTCDate(start.getUTCDate() - period + 1);
+    start.setUTCDate(start.getUTCDate() - 2 * period + 1);
     api<typeof usage>(
       "/api/usage?" +
         new URLSearchParams({
@@ -99,6 +134,28 @@ export function Dashboard() {
       .then(setUsage)
       .catch((e) => setError(e.message));
   }, [tab, state, period]);
+  const finishOnboarding = (next: "devices" | "overview") => {
+    setOnboarding(false);
+    setNeedsSetup(false);
+    setTab(next);
+    refresh();
+  };
+  if (!signedIn && needsSetup && !loading)
+    return (
+      <Onboarding
+        mode="account"
+        onAccountCreated={refresh}
+        onDone={finishOnboarding}
+      />
+    );
+  if (signedIn && state && (onboarding ?? state.needs_onboarding))
+    return (
+      <Onboarding
+        mode="rules"
+        onAccountCreated={refresh}
+        onDone={finishOnboarding}
+      />
+    );
   if (!signedIn)
     return (
       <main className="sign-in">
@@ -109,19 +166,20 @@ export function Dashboard() {
           <p>Loading…</p>
         ) : (
           <form
+            aria-label="Sign in"
             onSubmit={(e) => {
               e.preventDefault();
-              const token = new FormData(e.currentTarget).get("token");
+              const f = Object.fromEntries(new FormData(e.currentTarget));
               act(async () => {
-                await api("/v1/login", { token });
+                await api("/v1/login", f);
                 await refresh();
               });
             }}
           >
             <label>
-              Administrator token
+              Admin password
               <input
-                name="token"
+                name="password"
                 type="password"
                 required
                 autoComplete="current-password"
@@ -143,6 +201,11 @@ export function Dashboard() {
       </main>
     );
   const profileById = new Map(state.profiles.map((p) => [p.id, p]));
+  const usageStart = new Date(state.day + "T12:00:00Z");
+  usageStart.setUTCDate(usageStart.getUTCDate() - period + 1);
+  const currentUsage = usage.filter(
+    (d) => d.day >= usageStart.toISOString().slice(0, 10),
+  );
   return (
     <>
       <aside>
@@ -173,6 +236,18 @@ export function Dashboard() {
             ) : null}
           </button>
         ))}
+        <button
+          className="nav"
+          onClick={() =>
+            act(async () => {
+              await api("/v1/logout", {});
+              setSignedIn(false);
+              setState(undefined);
+            })
+          }
+        >
+          Sign out
+        </button>
         <div className="aside-footer">
           Open source · no vendor account
           <small>Your data stays in your chosen service.</small>
@@ -200,6 +275,18 @@ export function Dashboard() {
         ) : null}
         {tab === "overview" ? (
           <>
+            {state.devices.length && !state.gateway_seen ? (
+              <p className="notice warning" role="status">
+                The VPN gateway has not connected yet. Enrolled devices cannot
+                reach the internet until it does.
+              </p>
+            ) : state.gateway_seen &&
+              Date.now() / 1000 - state.gateway_seen > 180 ? (
+              <p className="notice warning" role="status">
+                VPN gateway offline since {ago(state.gateway_seen)}. Devices on
+                the family VPN have no internet access until it reconnects.
+              </p>
+            ) : null}
             <section className="stats">
               <article>
                 <span>Network activity minutes</span>
@@ -288,6 +375,29 @@ export function Dashboard() {
                       {p.unmanaged.length} unmanaged exceptions ·{" "}
                       {p.rewards.length} rewards today
                     </p>
+                    {(p.app_limits ?? []).length ? (
+                      <ul
+                        className="app-groups"
+                        aria-label={`${p.name} shared app limits`}
+                      >
+                        {p.app_limits.map((g) => (
+                          <li key={g.id}>
+                            {g.name}{" "}
+                            <span>
+                              {p.bucket_usage["group:" + g.id] ?? 0} /{" "}
+                              {dailyLimit(
+                                p,
+                                Date.now() / 1000,
+                                state.timezone,
+                                p.rewards,
+                                "group:" + g.id,
+                              )}{" "}
+                              min
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                     <div className="actions">
                       <button
                         className="secondary"
@@ -376,23 +486,92 @@ export function Dashboard() {
                 </label>
               ) : null}
             </section>
+            <section>
+              <h2>Add a home-network device</h2>
+              <p>
+                For TVs, consoles and speakers that cannot run the app. Reserve
+                its address in your router, then run the gateway on your home
+                network as its DNS server (and router, for time limits and
+                pause).
+              </p>
+              <form
+                className="enrollment"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const form = e.currentTarget,
+                    data = new FormData(form);
+                  act(async () => {
+                    await save("/api/devices/home", {
+                      name: data.get("name"),
+                      ip: data.get("ip"),
+                      profile_id: Number(data.get("profile_id")),
+                    });
+                    form.reset();
+                  });
+                }}
+              >
+                <label>
+                  Device name
+                  <input name="name" required maxLength={80} />
+                </label>
+                <label>
+                  Home-network IPv4 address
+                  <input
+                    name="ip"
+                    required
+                    inputMode="decimal"
+                    placeholder="192.168.1.50"
+                  />
+                </label>
+                <label>
+                  Home device profile
+                  <select name="profile_id" required>
+                    {state.profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="primary">Add home device</button>
+              </form>
+            </section>
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
                     <th>Device</th>
                     <th>Profile</th>
-                    <th>VPN address</th>
+                    <th>Address</th>
+                    <th>Last active</th>
+                    <th>Location</th>
                     <th>Controls</th>
                   </tr>
                 </thead>
                 <tbody>
                   {state.devices.map((d) => (
                     <tr key={d.id}>
-                      <td>{d.name}</td>
+                      <td>
+                        <input
+                          aria-label={`${d.name} name`}
+                          defaultValue={d.name}
+                          maxLength={80}
+                          className="inline-name"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          onBlur={(e) => {
+                            const name = e.target.value.trim();
+                            if (name && name !== d.name)
+                              act(() => save("/api/devices", { ...d, name }));
+                            else e.target.value = d.name;
+                          }}
+                        />
+                      </td>
                       <td>
                         <select
                           aria-label={`${d.name} profile`}
+                          disabled={!!d.user_id}
                           value={d.profile_id}
                           onChange={(e) =>
                             act(() =>
@@ -410,8 +589,60 @@ export function Dashboard() {
                           ))}
                         </select>
                       </td>
-                      <td>{d.ip}</td>
                       <td>
+                        {d.ip}
+                        <small>
+                          {d.kind === "home" ? "Home network" : "VPN"}
+                        </small>
+                      </td>
+                      <td>
+                        {d.last_seen ? ago(d.last_seen) : "Never"}
+                        {d.diagnostics?.issues.length ? (
+                          <ul
+                            className="issues"
+                            aria-label={`${d.name} health`}
+                          >
+                            {d.diagnostics.issues.map((i) => (
+                              <li key={i.code} className={i.severity}>
+                                {i.message}
+                                {i.action ? <small>{i.action}</small> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </td>
+                      <td>
+                        {d.kind === "home" ? (
+                          <small>Not available</small>
+                        ) : d.location ? (
+                          <a
+                            href={`https://www.openstreetmap.org/?mlat=${d.location.latitude}&mlon=${d.location.longitude}#map=16/${d.location.latitude}/${d.location.longitude}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            ±{Math.round(d.location.accuracy)} m ·{" "}
+                            {ago(d.location.at)}
+                          </a>
+                        ) : (
+                          <small>None shared</small>
+                        )}
+                        {d.location_requested &&
+                        Date.now() / 1000 - d.location_requested < 3600 ? (
+                          <small> · waiting for device…</small>
+                        ) : null}
+                      </td>
+                      <td>
+                        {d.kind === "home" ? null : (
+                          <button
+                            onClick={() =>
+                              act(() =>
+                                save("/api/devices/locate", { ip: d.ip }),
+                              )
+                            }
+                          >
+                            Locate
+                          </button>
+                        )}
                         <button
                           onClick={() =>
                             act(() =>
@@ -437,7 +668,9 @@ export function Dashboard() {
                           onClick={() => {
                             if (
                               confirm(
-                                `Revoke ${d.name}'s VPN and device token?`,
+                                d.kind === "home"
+                                  ? `Stop managing ${d.name}?`
+                                  : `Revoke ${d.name}'s VPN and device token?`,
                               )
                             )
                               act(() =>
@@ -445,7 +678,7 @@ export function Dashboard() {
                               );
                           }}
                         >
-                          Revoke
+                          {d.kind === "home" ? "Remove" : "Revoke"}
                         </button>
                       </td>
                     </tr>
@@ -475,6 +708,53 @@ export function Dashboard() {
                 <option value={30}>Last 30 days</option>
               </select>
             </div>
+            <section className="comparison">
+              {state.profiles.map((p) => {
+                const cutoff = new Date(state.day + "T12:00:00Z");
+                cutoff.setUTCDate(cutoff.getUTCDate() - period + 1);
+                const boundary = cutoff.toISOString().slice(0, 10);
+                const sum = (current: boolean) => {
+                  const totals: Record<string, number> = {};
+                  for (const day of usage)
+                    if (day.day >= boundary === current)
+                      for (const [bucket, n] of Object.entries(
+                        day.profiles[p.id] ?? {},
+                      ))
+                        totals[bucket] = (totals[bucket] ?? 0) + n;
+                  return totals;
+                };
+                const now = sum(true),
+                  before = sum(false),
+                  total = now.total ?? 0,
+                  previous = before.total ?? 0;
+                const top = Object.entries(now)
+                  .filter(([bucket]) => bucket !== "total")
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 3);
+                return (
+                  <article key={p.id} aria-label={`${p.name} usage summary`}>
+                    <h3>
+                      {p.avatar} {p.name}
+                    </h3>
+                    <strong>{total} min</strong>
+                    <small>
+                      {previous
+                        ? `${total >= previous ? "▲" : "▼"} ${Math.abs(
+                            Math.round(((total - previous) / previous) * 100),
+                          )}% vs previous ${period === 1 ? "day" : `${period} days`}`
+                        : `No activity in the previous ${period === 1 ? "day" : `${period} days`}`}
+                    </small>
+                    <ol>
+                      {top.map(([bucket, n]) => (
+                        <li key={bucket}>
+                          {bucketLabel(bucket, p)} <span>{n} min</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </article>
+                );
+              })}
+            </section>
             <div className="table-wrap">
               <table>
                 <thead>
@@ -486,7 +766,7 @@ export function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {usage.map((day) => (
+                  {currentUsage.map((day) => (
                     <tr key={day.day}>
                       <td>{day.day}</td>
                       {state.profiles.map((p) => (
@@ -505,7 +785,7 @@ export function Dashboard() {
                 </tbody>
               </table>
             </div>
-            {usage.length === 0 ? (
+            {currentUsage.length === 0 ? (
               <div className="empty">No observed activity in this period.</div>
             ) : null}
           </>
@@ -642,13 +922,19 @@ export function Dashboard() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   const f = new FormData(e.currentTarget);
+                  const kind = f.get("kind");
                   act(() =>
                     save("/api/rewards", {
                       profile_id: Number(f.get("profile_id")),
-                      kind: f.get("kind"),
-                      minutes: Number(f.get("minutes")),
-                      bedtime: f.get("bedtime") || undefined,
-                      window_id: f.get("window_id") || undefined,
+                      kind,
+                      ...(kind === "extra_time"
+                        ? {
+                            minutes: Number(f.get("minutes")),
+                            scope: f.get("scope") || "total",
+                          }
+                        : kind === "late_bedtime"
+                          ? { bedtime: f.get("bedtime") || undefined }
+                          : { window_id: f.get("window_id") || undefined }),
                     }),
                   );
                 }}
@@ -687,6 +973,20 @@ export function Dashboard() {
                     />
                   </label>
                   <label>
+                    Extra time for
+                    <select name="scope">
+                      <option value="total">Daily allowance</option>
+                      {(
+                        profileById.get(selected ?? state.profiles[0]?.id)
+                          ?.app_limits ?? []
+                      ).map((g) => (
+                        <option key={g.id} value={"group:" + g.id}>
+                          {g.name} (shared app limit)
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
                     New bedtime
                     <input name="bedtime" type="time" />
                   </label>
@@ -714,8 +1014,16 @@ export function Dashboard() {
                 <article className="row-card" key={r.id}>
                   <span>
                     {profileById.get(r.profile_id)?.name}:{" "}
-                    {r.kind.replaceAll("_", " ")}{" "}
-                    {r.minutes ? `${r.minutes}m` : (r.bedtime ?? "")}
+                    {r.kind === "extra_time"
+                      ? `${r.minutes} extra minutes`
+                      : r.kind === "late_bedtime"
+                        ? `late bedtime ${r.bedtime}`
+                        : `skip ${
+                            profileById
+                              .get(r.profile_id)
+                              ?.schedules.find((s) => s.id === r.window_id)
+                              ?.name ?? "schedule"
+                          }`}
                   </span>
                   <button
                     onClick={() =>
@@ -845,6 +1153,137 @@ export function Dashboard() {
               </form>
             </section>
             <section>
+              <h2>Client users</h2>
+              <p>
+                Create a username/password and assign its family profile.
+                Clients sign in as that user; users cannot edit policy or
+                administer this website.
+              </p>
+              {parents.map((u) => (
+                <article className="row-card" key={u.id}>
+                  <div>
+                    <strong>{u.username}</strong>
+                    <small>{u.disabled ? "Disabled" : "Enabled"}</small>
+                  </div>
+                  <label>
+                    Family profile
+                    <select
+                      value={u.profile_id ?? ""}
+                      onChange={(e) =>
+                        act(async () => {
+                          await api("/api/users/update", {
+                            id: u.id,
+                            profile_id: Number(e.target.value),
+                          });
+                          await loadParents();
+                          await refresh();
+                        })
+                      }
+                    >
+                      <option value="" disabled>
+                        Assign a profile
+                      </option>
+                      {state.profiles.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div>
+                    <button
+                      onClick={() =>
+                        act(async () => {
+                          await api("/api/users/update", {
+                            id: u.id,
+                            disabled: !u.disabled,
+                          });
+                          await loadParents();
+                        })
+                      }
+                    >
+                      {u.disabled ? "Enable" : "Disable"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setResetError("");
+                        setResetUser(u);
+                      }}
+                    >
+                      Reset password
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Delete ${u.username} and revoke its devices?`,
+                          )
+                        )
+                          act(async () =>
+                            setParents(
+                              await api<ParentAccount[]>("/api/users/delete", {
+                                id: u.id,
+                              }),
+                            ),
+                          );
+                      }}
+                    >
+                      Delete user
+                    </button>
+                  </div>
+                </article>
+              ))}
+              <form
+                aria-label="Add client user"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const target = e.currentTarget;
+                  const f = Object.fromEntries(new FormData(target));
+                  act(async () => {
+                    await api("/api/users", {
+                      ...f,
+                      profile_id: Number(f.profile_id),
+                    });
+                    target.reset();
+                    await loadParents();
+                  });
+                }}
+              >
+                <div className="two">
+                  <label>
+                    Username
+                    <input
+                      name="username"
+                      required
+                      autoComplete="off"
+                      autoCapitalize="none"
+                    />
+                  </label>
+                  <label>
+                    Password
+                    <input
+                      name="password"
+                      type="password"
+                      minLength={10}
+                      required
+                      autoComplete="new-password"
+                    />
+                  </label>
+                  <label>
+                    Family profile
+                    <select name="profile_id" required>
+                      {state.profiles.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <button className="secondary">Create user</button>
+              </form>
+            </section>
+            <section>
               <h2>Portable backup</h2>
               <p>
                 Keep your policy and history independent of a hosting provider.
@@ -856,8 +1295,12 @@ export function Dashboard() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   const f = new FormData(e.currentTarget);
-                  const file = f.get("backup") as File;
+                  const input = e.currentTarget.elements.namedItem(
+                    "backup",
+                  ) as HTMLInputElement;
+                  const file = input.files?.[0];
                   act(async () => {
+                    if (!file) throw new Error("Choose a backup file");
                     await save("/api/import", {
                       confirm: f.get("confirm"),
                       backup: JSON.parse(await file.text()),
@@ -949,11 +1392,69 @@ export function Dashboard() {
           <span>Policy version {state.version}</span>
         </footer>
       </main>
+      {resetUser ? (
+        <dialog
+          className="editor"
+          ref={resetDialog}
+          onCancel={() => setResetUser(undefined)}
+        >
+          <form
+            aria-label="Reset client password"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const password = new FormData(e.currentTarget).get("password");
+              try {
+                await api("/api/users/update", { id: resetUser.id, password });
+                await loadParents();
+                setResetUser(undefined);
+              } catch (error) {
+                setResetError(
+                  error instanceof Error
+                    ? error.message
+                    : "Could not reset password",
+                );
+              }
+            }}
+          >
+            <h2>Reset password for {resetUser.username}</h2>
+            <p>Existing devices will be revoked and must sign in again.</p>
+            <label>
+              New password
+              <input
+                name="password"
+                type="password"
+                minLength={10}
+                maxLength={200}
+                autoComplete="new-password"
+                required
+              />
+            </label>
+            <p className="error" role="alert">
+              {resetError}
+            </p>
+            <div className="actions">
+              <button className="primary">Reset password</button>
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setResetUser(undefined)}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </dialog>
+      ) : null}
       {editing ? (
         <ProfileEditor
           profile={editing === true ? undefined : editing}
           onClose={() => setEditing(undefined)}
           onSave={(value) => save("/api/profiles", value)}
+          onDelete={
+            editing === true
+              ? undefined
+              : () => save("/api/profiles/delete", { id: editing.id })
+          }
         />
       ) : null}
     </>

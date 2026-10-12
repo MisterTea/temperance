@@ -1,13 +1,6 @@
 import { z } from "zod";
-import {
-  bearer,
-  hash,
-  isAdmin,
-  origin,
-  secrets,
-  session,
-  validateKey,
-} from "./auth";
+import * as accounts from "./accounts";
+import { bearer, hash, origin, secrets, validateKey } from "./auth";
 import { mutate, repository, type Repository } from "./database";
 import * as service from "./service";
 import type { State } from "./model";
@@ -82,22 +75,13 @@ export async function handle(
   try {
     if (path === "healthz") return json({ ok: true });
     const write = request.method === "POST";
-    if (write && path === "v1/login") {
-      const data = z.object({ token: z.string() }).parse(await body(request));
-      if (
-        request.headers.get("origin") !== origin() ||
-        (await hash(data.token)) !== (await hash(secrets().admin))
-      )
-        throw new HTTPError(401, "Invalid sign-in");
-      const cookie = await session(secrets().admin);
-      return json({}, 200, {
-        "Set-Cookie": `temperance_session=${cookie}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600${origin().startsWith("https:") ? "; Secure" : ""}`,
-      });
-    }
     repo ??= repository();
+    if (path === "v1/setup" || path === "v1/login" || path === "v1/logout")
+      return await accountRoute(request, path, repo);
     if (path.startsWith("api/")) {
-      if (!(await isAdmin(request)))
-        throw new HTTPError(401, "Administrator sign-in required");
+      const { state } = await repo.read();
+      const actor = await principal(request);
+      if (!actor) throw new HTTPError(401, "Administrator sign-in required");
       if (
         write &&
         !bearer(request) &&
@@ -105,10 +89,12 @@ export async function handle(
       )
         throw new HTTPError(403, "Same-origin requests required");
       if (!write) {
-        const { state } = await repo.read(),
-          url = new URL(request.url),
+        const url = new URL(request.url),
           today = service.snapshot(state).day;
         if (path === "api/state") return json(service.snapshot(state));
+        if (path === "api/me") return json({ role: "admin" });
+        if (path === "api/users")
+          return json(accounts.users(state).map(accounts.publicUser));
         if (path === "api/usage")
           return json(
             service.usageSummary(
@@ -180,7 +166,7 @@ export async function handle(
               format: "temperance",
               schema: 2,
               exported_at: Math.floor(Date.now() / 1000),
-              state,
+              state: { ...state, refresh_tokens: undefined },
             },
             200,
             {
@@ -192,6 +178,30 @@ export async function handle(
         const data = await body(request);
         const result = await mutate(repo, async (state) => {
           switch (path) {
+            case "api/users": {
+              const user = await accounts.createUser(state, data);
+              service.changed(
+                state,
+                "account",
+                `Client user ${user.username} created`,
+              );
+              return accounts.publicUser(user);
+            }
+            case "api/users/update": {
+              const user = await accounts.updateUser(state, data);
+              service.changed(
+                state,
+                "account",
+                `Client user ${user.username} updated`,
+              );
+              return accounts.publicUser(user);
+            }
+            case "api/users/delete": {
+              const id = z.object({ id: z.string() }).parse(data).id;
+              accounts.deleteUser(state, id);
+              service.changed(state, "account", "Client user removed");
+              return accounts.users(state).map(accounts.publicUser);
+            }
             case "api/profiles":
               return service.saveProfile(state, data);
             case "api/profiles/delete":
@@ -201,8 +211,15 @@ export async function handle(
               );
             case "api/devices":
               return service.saveDevice(state, data);
+            case "api/devices/home":
+              return service.addHomeDevice(state, data);
             case "api/devices/delete":
               return service.revokeDevice(
+                state,
+                z.object({ ip: z.string() }).parse(data).ip,
+              );
+            case "api/devices/locate":
+              return service.requestLocation(
                 state,
                 z.object({ ip: z.string() }).parse(data).ip,
               );
@@ -223,6 +240,8 @@ export async function handle(
               return service.answerRequest(state, data);
             case "api/settings":
               return service.settings(state, data);
+            case "api/setup/complete":
+              return service.completeSetup(state);
             case "api/feeds":
               return service.addFeed(state, data);
             case "api/events/read":
@@ -268,6 +287,35 @@ export async function handle(
         return json(result);
       }
     }
+    if (path === "v1/device/login" && write) {
+      const input = z
+        .object({
+          username: z.string().max(40),
+          password: z.string().max(200),
+          name: z.string().trim().min(1).max(80),
+          public_key: z.string().transform(validateKey),
+        })
+        .parse(await body(request));
+      const result = await mutate(repo, async (state) => {
+        const user = await accounts.authenticate(
+          state,
+          input.username,
+          input.password,
+        );
+        if (!user) return undefined;
+        const code = await service.issueCode(state, user.profile_id!);
+        const enrolled = await service.enroll(state, {
+          code: code.code,
+          name: input.name,
+          public_key: input.public_key,
+        });
+        const device = state.devices.find((d) => d.id === enrolled.device_id)!;
+        device.user_id = user.id;
+        return { ...enrolled, user: accounts.publicUser(user) };
+      });
+      if (!result) throw new HTTPError(401, "Invalid username or password");
+      return json(result);
+    }
     if (path === "v1/enroll" && write) {
       const data = await body(request);
       return json(await mutate(repo, (state) => service.enroll(state, data)));
@@ -276,8 +324,15 @@ export async function handle(
     if (path === "v1/gateway/state" || path === "v1/gateway/activity") {
       if ((await hash(bearer(request))) !== (await hash(secrets().gateway)))
         throw new HTTPError(401, "Unauthorized");
-      if (!write && path.endsWith("/state"))
+      if (!write && path.endsWith("/state")) {
+        const current = (await repo.read()).state;
+        if (
+          !current.gateway_seen ||
+          Date.now() / 1000 - current.gateway_seen >= service.GATEWAY_HEARTBEAT
+        )
+          await mutate(repo, (state) => service.gatewaySeen(state));
         return json(service.gatewayState((await repo.read()).state));
+      }
       if (write && path.endsWith("/activity")) {
         const data = await body(request);
         return json(
@@ -302,11 +357,33 @@ export async function handle(
           }),
         );
       }
+      if (write && path === "v1/device/location") {
+        const data = await body(request);
+        return json(
+          await mutate(repo, async (state) => {
+            const current = await service.authenticatedDevice(state, token);
+            if (!current) throw new HTTPError(401, "Device revoked");
+            return service.reportLocation(state, current, data);
+          }),
+        );
+      }
+      if (write && path === "v1/device/diagnostics") {
+        const data = await body(request);
+        return json(
+          await mutate(repo, async (state) => {
+            const current = await service.authenticatedDevice(state, token);
+            if (!current) throw new HTTPError(401, "Device revoked");
+            return service.reportDiagnostics(state, current, data);
+          }),
+        );
+      }
     }
     throw new HTTPError(404, "Not found");
   } catch (error) {
     if (error instanceof HTTPError)
       return json({ error: error.message }, error.status);
+    if (error instanceof accounts.AuthError)
+      return json({ error: error.message }, 400);
     if (error instanceof z.ZodError)
       return json(
         {
@@ -323,20 +400,58 @@ export async function handle(
       )
     )
       return json({ error: error.message }, 400);
+    console.error("Temperance request failed:", error);
     return json({ error: "Service configuration or storage unavailable" }, 503);
   }
+}
+const cookieName = "temperance_session";
+function sessionCookie(value: string, maxAge: number) {
+  return `${cookieName}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${origin().startsWith("https:") ? "; Secure" : ""}`;
+}
+function cookie(request: Request) {
+  return (request.headers.get("cookie") ?? "")
+    .split(";")
+    .map((s) => s.trim())
+    .find((s) => s.startsWith(cookieName + "="))
+    ?.slice(cookieName.length + 1);
+}
+// Only the administrator password/session can change family policies or IAM users.
+async function principal(request: Request) {
+  const token = bearer(request);
+  if (token && (await hash(token)) === (await hash(secrets().admin)))
+    return true;
+  return accounts.verifyAdminSession(cookie(request) ?? "");
+}
+function sameOrigin(request: Request) {
+  if (request.headers.get("origin") !== origin())
+    throw new HTTPError(403, "Same-origin requests required");
+}
+async function accountRoute(request: Request, path: string, repo: Repository) {
+  if (path === "v1/setup" && request.method === "GET")
+    return json({ needs_setup: false, auth: "admin_password" });
+  if (request.method !== "POST") throw new HTTPError(404, "Not found");
+  sameOrigin(request);
+  if (path === "v1/logout")
+    return json({}, 200, { "Set-Cookie": sessionCookie("", 0) });
+  if (path !== "v1/login") throw new HTTPError(404, "Not found");
+  const input = z
+    .object({ password: z.string().max(200) })
+    .parse(await body(request));
+  if ((await hash(input.password)) !== (await hash(secrets().admin)))
+    throw new HTTPError(401, "Invalid admin password");
+  return json({}, 200, {
+    "Set-Cookie": sessionCookie(await accounts.adminSession(), 3600),
+  });
 }
 function validateBackup(value: unknown): State {
   const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     id = z.number().int().positive(),
     stamp = z.number().finite().nonnegative();
-  const device = z.object({
+  const common = {
     id: z.string().uuid(),
-    ip: z.string().regex(/^10\.77\.0\.\d{1,3}$/),
     name: z.string().min(1).max(80),
     profile_id: id,
-    public_key: z.string().transform(validateKey),
-    token_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    user_id: z.string().uuid().optional(),
     revoked: z.boolean(),
     paused: z.boolean(),
     managed: z.boolean(),
@@ -349,8 +464,56 @@ function validateBackup(value: unknown): State {
         at: stamp,
       })
       .optional(),
+    location_requested: stamp.optional(),
+    diagnostics: z
+      .object({
+        at: stamp,
+        issues: z
+          .array(
+            z.object({
+              code: z.string().max(40),
+              severity: z.enum(["error", "warning", "info"]),
+              message: z.string().max(120),
+              action: z.string().max(200),
+            }),
+          )
+          .max(10),
+      })
+      .optional(),
+  };
+  // The home variant is tried first: validateKey throws rather than failing the union branch.
+  const device = z.union([
+    z.object({
+      ...common,
+      kind: z.literal("home"),
+      ip: z.string().refine(service.isHomeAddress),
+      public_key: z.literal(""),
+      token_hash: z.literal(""),
+    }),
+    z.object({
+      ...common,
+      kind: z.undefined().optional(),
+      ip: z.string().regex(/^10\.77\.0\.\d{1,3}$/),
+      public_key: z.string().transform(validateKey),
+      token_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    }),
+  ]);
+  const iamUser = z.object({
+    id: z.string().uuid(),
+    username: accounts.username,
+    password_hash: z
+      .string()
+      .regex(/^pbkdf2-sha256\$[0-9]+\$[a-f0-9]{32}\$[a-f0-9]{64}$/),
+    role: z.enum(["user", "owner", "parent"]),
+    profile_id: id.optional(),
+    disabled: z.boolean().optional(),
+    session_version: z.number().int().positive(),
+    created_at: stamp,
+    failed_logins: z.number().int().nonnegative(),
+    locked_until: stamp.optional(),
   });
   const schema = z.object({
+    users: z.array(iamUser).max(253).optional(),
     schema: z.literal(2),
     version: z.number().int().positive(),
     nextProfileId: id,
@@ -429,6 +592,7 @@ function validateBackup(value: unknown): State {
       .max(500),
     paused: z.boolean(),
     home_profile_id: id.optional(),
+    setup_completed_at: stamp.optional(),
     extra_domains: z.record(
       z.string(),
       z.array(z.string().max(253)).max(20000),
@@ -448,15 +612,31 @@ function validateBackup(value: unknown): State {
   )
     throw new HTTPError(400, "Invalid profile IDs");
   const ids = new Set(s.profiles.map((p) => p.id));
+  const users = s.users ?? [];
+  if (
+    new Set(users.map((u) => u.id)).size !== users.length ||
+    new Set(users.map((u) => u.username)).size !== users.length
+  )
+    throw new HTTPError(400, "Duplicate backup users");
+  for (const u of users)
+    if (
+      (u.role === "user" && !u.profile_id) ||
+      (u.profile_id && !ids.has(u.profile_id))
+    )
+      throw new HTTPError(400, "Invalid backup user profile");
+  for (const d of s.devices)
+    if (d.user_id && !users.some((u) => u.id === d.user_id))
+      throw new HTTPError(400, "Invalid backup device user");
+  const vpn = s.devices.filter((d) => d.kind !== "home");
   if (
     new Set(s.devices.map((d) => d.ip)).size !== s.devices.length ||
     new Set(s.devices.map((d) => d.id)).size !== s.devices.length ||
-    new Set(s.devices.map((d) => d.public_key)).size !== s.devices.length
+    new Set(vpn.map((d) => d.public_key)).size !== vpn.length
   )
     throw new HTTPError(400, "Duplicate backup devices");
   for (const d of s.devices) {
     const n = Number(d.ip.split(".").at(-1));
-    if (!ids.has(d.profile_id) || n < 2 || n > 254)
+    if (!ids.has(d.profile_id) || (d.kind !== "home" && (n < 2 || n > 254)))
       throw new HTTPError(400, "Invalid backup device");
   }
   for (const r of [...s.codes, ...s.rewards, ...s.requests])

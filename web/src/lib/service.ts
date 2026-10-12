@@ -17,13 +17,17 @@ import {
 const now = () => Math.floor(Date.now() / 1000);
 const publicDevice = (d: Device) => ({
   id: d.id,
+  kind: d.kind ?? ("vpn" as const),
   ip: d.ip,
   name: d.name,
   profile_id: d.profile_id,
+  user_id: d.user_id,
   paused: d.paused,
   managed: d.managed,
   last_seen: d.last_seen,
   location: d.location,
+  location_requested: d.location_requested,
+  diagnostics: d.diagnostics,
 });
 export function prune(state: State, at = now()) {
   const cutoff = localTime(at - state.retention_days * 86400, timezone()).day;
@@ -93,6 +97,8 @@ export function snapshot(state: State, at = now()) {
     home_profile_id: state.home_profile_id,
     retention_days: state.retention_days,
     offline_grace_seconds: state.offline_grace_seconds,
+    gateway_seen: state.gateway_seen,
+    needs_onboarding: !state.setup_completed_at && state.profiles.length === 0,
     total: profiles.reduce((sum, p) => sum + p.used, 0),
     blocked: profiles.filter((p) => p.access_reason !== "allowed").length,
     recent: state.history.slice(-100).reverse(),
@@ -112,10 +118,17 @@ function event(state: State, kind: string, message: string) {
     read: false,
   });
 }
-function changed(state: State, kind: string, message: string) {
+export function changed(state: State, kind: string, message: string) {
   state.version++;
   event(state, kind, message);
   prune(state);
+}
+export function completeSetup(state: State) {
+  if (!state.setup_completed_at) {
+    state.setup_completed_at = now();
+    changed(state, "account", "First-run setup finished");
+  }
+  return snapshot(state);
 }
 export function saveProfile(state: State, input: unknown) {
   const data = profileSchema.parse(input);
@@ -133,6 +146,8 @@ export function saveProfile(state: State, input: unknown) {
 }
 export function deleteProfile(state: State, id: number) {
   profile(state, id);
+  if ((state.users ?? []).some((u) => u.profile_id === id))
+    throw new Error("Reassign or delete this profile’s client users first");
   if (state.devices.some((d) => !d.revoked && d.profile_id === id))
     throw new Error("Reassign or revoke this profile’s devices first");
   state.profiles = state.profiles.filter((p) => p.id !== id);
@@ -152,8 +167,51 @@ export async function issueCode(state: State, id: number) {
   prune(state);
   return { code, expires_in: 600 };
 }
+export function isHomeAddress(ip: string) {
+  const parts = ip.split(".");
+  if (
+    parts.length !== 4 ||
+    parts.some((p) => !/^\d{1,3}$/.test(p) || Number(p) > 255)
+  )
+    return false;
+  const [a, b, c, d] = parts.map(Number);
+  if (d === 0 || d === 255 || (a === 10 && b === 77 && c === 0)) return false;
+  return (
+    a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+  );
+}
+const homeInput = z.object({
+  name: z.string().trim().min(1).max(80),
+  ip: z
+    .string()
+    .trim()
+    .refine(
+      isHomeAddress,
+      "Use the device's private home-network IPv4 address",
+    ),
+  profile_id: z.number().int().positive(),
+});
+export function addHomeDevice(state: State, input: unknown) {
+  const data = homeInput.parse(input);
+  profile(state, data.profile_id);
+  if (state.devices.some((d) => d.ip === data.ip && !d.revoked))
+    throw new Error("A device already uses that address");
+  state.devices = state.devices.filter((d) => d.ip !== data.ip);
+  state.devices.push({
+    id: crypto.randomUUID(),
+    kind: "home",
+    ...data,
+    public_key: "",
+    token_hash: "",
+    revoked: false,
+    paused: false,
+    managed: true,
+  });
+  changed(state, "new_device", `${data.name} added on the home network`);
+  return snapshot(state);
+}
 const deviceInput = z.object({
-  ip: z.string().regex(/^10\.77\.0\.(?:\d{1,3})$/),
+  ip: z.string().regex(/^(?:\d{1,3}\.){3}\d{1,3}$/),
   name: z.string().trim().min(1).max(80),
   profile_id: z.number().int().positive(),
   paused: z.boolean().optional(),
@@ -164,7 +222,12 @@ export function saveDevice(state: State, input: unknown) {
   profile(state, data.profile_id);
   const device = state.devices.find((d) => d.ip === data.ip && !d.revoked);
   if (!device) throw new Error("Enroll a VPN device first");
+  const owner =
+    device.user_id && (state.users ?? []).find((u) => u.id === device.user_id);
+  if (owner && owner.profile_id !== data.profile_id)
+    throw new Error("Change the client user's assigned profile in Settings");
   Object.assign(device, data);
+  if (device.kind === "home") delete device.location_requested;
   changed(state, "device", `Device ${device.name} updated`);
   return snapshot(state);
 }
@@ -175,18 +238,24 @@ export function revokeDevice(state: State, ip: string) {
   changed(state, "device", `Device ${device.name} revoked`);
   return snapshot(state);
 }
+/** `ipv4:port` or `hostname:port` (dynamic DNS for a home gateway). */
+export function vpnEndpoint(value = process.env.TEMPERANCE_VPN_ENDPOINT ?? "") {
+  const match = /^([a-zA-Z0-9.-]{1,253}):(\d{1,5})$/.exec(value);
+  const host = match?.[1].toLowerCase() ?? "";
+  const port = Number(match?.[2]);
+  const labels = host.split(".");
+  const valid = /^[\d.]+$/.test(host)
+    ? labels.length === 4 && labels.every((n) => n !== "" && Number(n) <= 255)
+    : labels.every((l) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l)) &&
+      !/^\d+$/.test(labels.at(-1)!);
+  if (!match || !valid || port < 1 || port > 65535)
+    throw new Error(
+      "Configure TEMPERANCE_VPN_ENDPOINT as host:port (IPv4 address or DNS name)",
+    );
+  return `${host}:${port}`;
+}
 export function provisioning(device: Device) {
-  const endpoint = process.env.TEMPERANCE_VPN_ENDPOINT ?? "";
-  if (
-    !/^(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}$/.test(endpoint) ||
-    endpoint
-      .split(":")[0]
-      .split(".")
-      .some((n) => Number(n) > 255) ||
-    Number(endpoint.split(":")[1]) < 1 ||
-    Number(endpoint.split(":")[1]) > 65535
-  )
-    throw new Error("Configure a numeric IPv4 VPN endpoint");
+  const endpoint = vpnEndpoint();
   const serverKey = validateKey(process.env.TEMPERANCE_VPN_PUBLIC_KEY);
   const octet = Number(device.ip.split(".").at(-1));
   return {
@@ -222,11 +291,88 @@ export function clientState(state: State, device: Device, at = now()) {
       observed_at: at,
     },
     requests: state.requests.filter((r) => r.device_id === device.id),
+    location_requested: locationPending(device, at),
   };
+}
+const LOCATION_REQUEST_TTL = 3600;
+const locationPending = (device: Device, at = now()) =>
+  !!device.location_requested &&
+  at - device.location_requested < LOCATION_REQUEST_TTL;
+export function requestLocation(state: State, ip: string) {
+  const device = state.devices.find((d) => d.ip === ip && !d.revoked);
+  if (!device) throw new Error("Device does not exist");
+  if (device.kind === "home")
+    throw new Error("Home devices cannot share a location");
+  device.location_requested = now();
+  event(state, "location", `Location requested from ${device.name}`);
+  return snapshot(state);
+}
+const locationInput = z.union([
+  z.object({
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    accuracy: z.number().nonnegative().max(1e6),
+  }),
+  z.object({ unavailable: z.string().trim().min(1).max(120) }),
+]);
+export function reportLocation(state: State, device: Device, input: unknown) {
+  const data = locationInput.parse(input);
+  if (!locationPending(device))
+    throw new Error("No location request is pending");
+  delete device.location_requested;
+  if ("unavailable" in data) {
+    event(
+      state,
+      "location",
+      `${device.name} could not share its location: ${data.unavailable}`,
+    );
+    return { ok: true };
+  }
+  device.location = { ...data, at: now() };
+  event(state, "location", `${device.name} shared its location`);
+  return { ok: true };
+}
+const issueSchema = z.object({
+  code: z.string().regex(/^[a-z_]{1,40}$/),
+  severity: z.enum(["error", "warning", "info"]),
+  message: z.string().trim().min(1).max(120),
+  action: z.string().trim().max(200).default(""),
+});
+const diagnosticsInput = z.object({ issues: z.array(issueSchema).max(10) });
+export function reportDiagnostics(
+  state: State,
+  device: Device,
+  input: unknown,
+) {
+  const { issues } = diagnosticsInput.parse(input);
+  const before = new Set(device.diagnostics?.issues.map((i) => i.code));
+  for (const issue of issues)
+    if (issue.severity !== "info" && !before.has(issue.code))
+      event(state, "device_health", `${device.name}: ${issue.message}`);
+  device.diagnostics = { at: now(), issues };
+  return { ok: true };
+}
+export const GATEWAY_HEARTBEAT = 60;
+export function gatewaySeen(state: State, at = now()) {
+  if (state.gateway_seen && at - state.gateway_seen < GATEWAY_HEARTBEAT)
+    return false;
+  if (state.gateway_seen && at - state.gateway_seen > 5 * GATEWAY_HEARTBEAT)
+    event(state, "gateway", "VPN gateway reconnected");
+  state.gateway_seen = at;
+  return true;
 }
 export async function authenticatedDevice(state: State, token: string) {
   const tokenHash = await hash(token);
-  return state.devices.find((d) => !d.revoked && d.token_hash === tokenHash);
+  return state.devices.find(
+    (d) =>
+      !d.revoked &&
+      d.token_hash === tokenHash &&
+      (!d.user_id ||
+        (state.users ?? []).some(
+          (u) =>
+            u.id === d.user_id && !u.disabled && u.profile_id === d.profile_id,
+        )),
+  );
 }
 export async function enroll(state: State, input: unknown) {
   const data = z
@@ -272,11 +418,20 @@ export function gatewayState(state: State, at = now()) {
     policy_schema: 2,
     offline_grace_seconds: state.offline_grace_seconds,
     peers: state.devices
-      .filter((d) => !d.revoked)
+      .filter((d) => !d.revoked && d.kind !== "home")
       .map((d) => ({
         id: d.id,
         ip: d.ip,
         public_key: d.public_key,
+        profile_id: d.profile_id,
+        paused: d.paused,
+        managed: d.managed,
+      })),
+    lan_devices: state.devices
+      .filter((d) => !d.revoked && d.kind === "home")
+      .map((d) => ({
+        id: d.id,
+        ip: d.ip,
         profile_id: d.profile_id,
         paused: d.paused,
         managed: d.managed,
@@ -290,7 +445,7 @@ const activityInput = z.object({
       z.object({
         device_id: z.string(),
         minute: z.number().int().optional(),
-        buckets: z.array(z.string().max(300)).max(20).default(["total"]),
+        buckets: z.array(z.string().max(300)).max(40).default(["total"]),
       }),
     )
     .max(1000)
@@ -338,7 +493,10 @@ export function account(state: State, input: unknown) {
     const daily = (state.usage[day] ??= {});
     const usage = (daily[p.id] ??= {});
     for (const bucket of entry.buckets) {
-      if (bucket !== "total" && !/^(category|site):[a-z0-9.-]+$/.test(bucket))
+      if (
+        bucket !== "total" &&
+        !/^((category|site):[a-z0-9.-]+|group:[a-z0-9-]+)$/.test(bucket)
+      )
         throw new Error("Invalid usage bucket");
       const list = (usage[bucket] ??= []);
       if (!list.includes(minute)) list.push(minute);
@@ -376,7 +534,7 @@ const rewardSchema = z.object({
   window_id: z.string().optional(),
   scope: z
     .string()
-    .regex(/^(total|category:[a-z]+|site:[a-z0-9.-]+)$/)
+    .regex(/^(total|category:[a-z]+|site:[a-z0-9.-]+|group:[a-z0-9-]+)$/)
     .default("total"),
 });
 export function reward(state: State, input: unknown) {
@@ -392,7 +550,14 @@ export function reward(state: State, input: unknown) {
   )
     throw new Error("Choose a schedule to skip");
   const value = {
-    ...data,
+    profile_id: data.profile_id,
+    kind: data.kind,
+    scope: data.scope,
+    ...(data.kind === "extra_time"
+      ? { minutes: data.minutes }
+      : data.kind === "late_bedtime"
+        ? { bedtime: data.bedtime }
+        : { window_id: data.window_id }),
     id: data.id ?? crypto.randomUUID(),
     day: localTime(now(), timezone()).day,
   };

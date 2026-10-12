@@ -7,4 +7,5 @@ if [ ! -d Vendor/wireguard-apple ]; then
 fi
 git -C Vendor/wireguard-apple checkout 2fec12a6e1f6e3460b6ee483aa00ad29cddadab1
 python3 patch-dependency.py
+../../core/build-bindings.sh apple
 xcodegen generate

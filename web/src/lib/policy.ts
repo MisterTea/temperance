@@ -118,6 +118,14 @@ export const windowSchema = z
       .default([]),
   })
   .refine((v) => v.start !== v.end, "Window start/end must differ");
+/** A named group of apps/sites that draw down one shared daily budget. */
+export const appLimitSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]{1,40}$/),
+  name: z.string().trim().min(1).max(60),
+  domains: z.array(domain).min(1).max(100),
+  minutes: minutes.refine((n) => n > 0, "Set a group limit above 0 minutes"),
+});
+export type AppLimit = z.output<typeof appLimitSchema>;
 export const profileSchema = z
   .object({
     id: z.number().int().positive().optional(),
@@ -159,6 +167,7 @@ export const profileSchema = z
           Object.entries(v).map(([d, n]) => [normalizeDomain(d), n]),
         ),
       ),
+    app_limits: z.array(appLimitSchema).max(20).default([]),
   })
   .superRefine((p, ctx) => {
     if (
@@ -176,7 +185,25 @@ export const profileSchema = z
         path: ["schedules"],
         message: "Schedule IDs must be unique",
       });
+    if (new Set(p.app_limits.map((g) => g.id)).size !== p.app_limits.length)
+      ctx.addIssue({
+        code: "custom",
+        path: ["app_limits"],
+        message: "App group IDs must be unique",
+      });
   });
+/** Usage buckets whose limits apply to `host`, in evaluation order. */
+export function limitScopes(p: Profile, host: string, category: string) {
+  return [
+    "category:" + category,
+    ...Object.keys(p.site_limits)
+      .filter((d) => matches(host, d))
+      .map((d) => "site:" + d),
+    ...(p.app_limits ?? [])
+      .filter((g) => g.domains.some((d) => matches(host, d)))
+      .map((g) => "group:" + g.id),
+  ];
+}
 export type Profile = z.output<typeof profileSchema> & { id: number };
 export interface Reward {
   id: string;
@@ -260,7 +287,10 @@ export function dailyLimit(
       ? (p.weekday_limits[String(day.weekday)] ?? p.limit)
       : scope.startsWith("category:")
         ? (p.category_limits[scope.slice(9) as Category] ?? 0)
-        : (p.site_limits[scope.slice(5)] ?? 0);
+        : scope.startsWith("group:")
+          ? ((p.app_limits ?? []).find((g) => g.id === scope.slice(6))
+              ?.minutes ?? 0)
+          : (p.site_limits[scope.slice(5)] ?? 0);
   if (base === 0) return 0;
   return Math.min(
     1440,
@@ -355,13 +385,7 @@ export function domainReason(
   )
     return "focus time";
   if (p.filter_level === "none") return "allowed";
-  const scopes = [
-    "category:" + category,
-    ...Object.keys(p.site_limits)
-      .filter((d) => matches(host, d))
-      .map((d) => "site:" + d),
-  ];
-  for (const scope of scopes) {
+  for (const scope of limitScopes(p, host, category)) {
     const limit = dailyLimit(p, at, zone, rewards, scope);
     if (limit > 0 && used(usage, localTime(at, zone).day, p.id, scope) >= limit)
       return "limit " + scope;
