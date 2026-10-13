@@ -47,10 +47,20 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
 }
 
 @MainActor final class Client: ObservableObject {
-    @Published var status = "Enroll to install your family's VPN."
+    /// A short message about the last action, empty when there's nothing to say.
+    @Published var status = ""
     @Published var child: ChildStatus?
+    /// The profile's avatar and name, e.g. "🦊 Riley".
+    @Published var profile = ""
+    /// `nil` until checked; `false` until the child allows the family VPN.
+    @Published var vpnInstalled: Bool?
+    /// Notifications or location permission hasn't been asked for yet.
+    @Published var canAskPermissions = false
     @Published var busy = false
     @Published var health: [Diagnostic] = []
+    /// Recent alerts, newest first, also shown in the app: a notification
+    /// doesn't appear while the app is open, or once the child dismisses it.
+    @Published var alerts: [String] = []
     private var reported: [String]?
     private var connected = false
     private let send: (HttpRequest) async throws -> (UInt16, String)
@@ -66,8 +76,12 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
         self.send = send ?? { try await transport.send($0) }
         self.store = store; self.vpn = vpn; self.notifier = notifier; self.clock = clock
         self.location = location ?? LocationResponder()
-        do { if let state = try store.load()?.state { child = try childStatus(state: state, now: clock()) } }
+        do { if let state = try store.load()?.state { try show(state) } }
         catch { status = error.localizedDescription }
+    }
+    private func show(_ state: DeviceState) throws {
+        child = try childStatus(state: state, now: clock())
+        profile = [state.policy.avatar, state.policy.name].filter { !$0.isEmpty }.joined(separator: " ")
     }
     func enroll(service: String, username: String, password: String, name: String) async {
         busy = true; defer { busy = false }
@@ -79,8 +93,9 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
             let identity = try enrolledIdentity(service: origin, keys: keys, status: statusCode, body: body)
             _ = try tunnelConfiguration(identity)
             try store.save(identity)
-            child = try childStatus(state: identity.state!, now: clock())
-            status = "Enrolled. Install VPN to connect."
+            try show(identity.state!)
+            vpnInstalled = await vpn.status()?.enabled == true
+            status = ""
         } catch { status = error.localizedDescription }
     }
     func refresh() async {
@@ -91,28 +106,32 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
             let alerts = childAlerts(previous: identity.state, current: latest, now: clock())
             let next = try refreshedIdentity(identity: identity, latest: latest, connected: connected)
             try store.save(next)
-            child = try childStatus(state: next.state!, now: clock())
-            status = "Policy \(next.state!.version)"
+            try show(next.state!)
+            status = ""
             alerts.forEach(notifier.post)
+            self.alerts = Array((alerts.reversed() + self.alerts).prefix(5))
             if latest.locationRequested { try await shareLocation(next) }
             await checkHealth(next, policyReachable: true)
         } catch {
-            status = "Policy refresh unavailable; existing VPN remains configured."
+            status = "Can't reach your family's Temperance right now. The last rules stay in effect."
             if let identity = try? store.load() { await checkHealth(identity, policyReachable: false) }
         }
     }
     /// Gathers platform facts; the shared core decides what they mean. Reports changes to parents.
     private func checkHealth(_ identity: Identity, policyReachable: Bool) async {
         let vpnStatus = await vpn.status()
+        let notificationsAllowed = await notifier.allowed()
         let facts = DeviceFacts(
             vpnPermission: vpnStatus?.enabled ?? false,
             tunnelUp: vpnStatus?.connected ?? false,
             secondsSinceHandshake: nil,
             connectivity: nil,
             policyReachable: policyReachable,
-            notificationsAllowed: await notifier.allowed(),
+            notificationsAllowed: notificationsAllowed,
             locationAllowed: location.allowed,
             portalSignInUntil: nil)
+        vpnInstalled = vpnStatus?.enabled == true
+        canAskPermissions = notificationsAllowed == nil || location.allowed == nil
         health = diagnose(facts: facts, now: clock())
         let codes = health.map(\.code)
         guard policyReachable, codes != reported, let request = try? diagnosticsRequest(identity: identity, diagnostics: health) else { return }
@@ -129,7 +148,8 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
         try parseOk(status: statusCode, body: body)
         notifier.post("A parent viewed this device's location")
     }
-    func askForTime(minutes: UInt32, message: String) async {
+    /// `true` once the request reached the parents.
+    @discardableResult func askForTime(minutes: UInt32, message: String) async -> Bool {
         busy = true; defer { busy = false }
         do {
             guard let identity = try store.load() else { throw ClientError.message("Enroll first") }
@@ -137,7 +157,8 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
             _ = try parseTimeRequest(status: statusCode, body: body)
             await refresh()
             status = "Request sent to your parents."
-        } catch { status = error.localizedDescription }
+            return true
+        } catch { status = error.localizedDescription; return false }
     }
     func install() async {
         busy = true; defer { busy = false }
@@ -145,11 +166,13 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
             guard let state = try store.load()?.state else { throw ClientError.message("Enroll first") }
             try await vpn.install(endpoint: state.tunnel.endpoint)
             connected = true
-            status = "VPN installed. Connection status appears in system VPN settings."
+            await refresh()
+            vpnInstalled = true
         } catch { status = error.localizedDescription }
     }
     func allowAlerts() {
         notifier.requestPermission()
         location.requestPermission()
+        canAskPermissions = false
     }
 }

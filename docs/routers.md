@@ -7,6 +7,8 @@ Temperance tries to do both for you. Check **Settings → Remote access** in the
 - **Port forwarding (UPnP)** is on by default. The gateway asks the router to forward the port, renews the request every 20 minutes and removes it when Temperance stops. If the status line is green, you can skip the router steps below.
 - **Dynamic DNS** keeps a free [Dynu](https://www.dynu.com/) hostname pointed at your home's public address.
 
+Parents' phones that open the dashboard away from home ([parent phones](remote-parents.md)) use the same UDP port, so there is nothing extra to forward for them.
+
 ## Before you start
 
 1. **Give the Temperance machine a fixed LAN address.** Port forwards point at an address, so reserve one for the machine in the router's DHCP settings ("address reservation", "IP reservation" or "static lease"). Every section below starts there.

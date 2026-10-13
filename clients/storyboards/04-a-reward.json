@@ -1,0 +1,21 @@
+{
+  "title": "A reward from a parent",
+  "subtitle": "Extra time or a later bedtime shows up on Riley's {{device}} as soon as a parent gives it.",
+  "steps": [
+    { "profile": { "name": "Riley", "bedtime": { "start": "{{clock+90}}", "end": "07:00" } } },
+    { "refresh": true },
+    { "show": "/Bedtime starts in/" },
+    { "say": "Riley finished the science project, so a parent sends a reward from the dashboard." },
+    { "reward": { "kind": "extra_time", "minutes": 20 } },
+    { "refresh": true },
+    { "show": "alert.extra" },
+    { "say": "Riley sees the reward and has 20 more minutes today." },
+    { "show": "/\\b[45]\\d min(utes)? left/" },
+    { "reward": { "kind": "late_bedtime", "bedtime": "{{clock+150}}" } },
+    { "refresh": true },
+    { "say": "It's Friday, so bedtime moves an hour later too, for tonight only." },
+    { "show": "alert.bedtime" },
+    { "show": "/Bedtime starts in/" },
+    { "say": "Tomorrow, the usual rules come back on their own." }
+  ]
+}

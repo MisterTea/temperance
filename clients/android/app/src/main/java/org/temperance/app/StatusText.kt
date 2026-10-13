@@ -14,10 +14,8 @@ object StatusText {
         else -> e.message ?: e.javaClass.simpleName
     }
 
-    fun detail(child: ChildStatus): String = listOfNotNull(
-        child.detail.takeIf { it.isNotBlank() },
+    fun remaining(child: ChildStatus): String = listOfNotNull(
         child.remainingMinutes?.let { if (it == 1u) "1 minute left today" else "$it minutes left today" } ?: "No daily limit",
-        child.nextChange,
         if (child.pendingRequest) "Your request is waiting for a parent." else null,
     ).joinToString("\n")
 

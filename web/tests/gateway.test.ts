@@ -159,6 +159,28 @@ describe("embedded gateway loop", () => {
     gateway.stop();
   });
 
+  it("gives parent access a fresh secret and records the gateway's pin", async () => {
+    const fake = fakeAddon();
+    const repo = new TestRepository();
+    const gateway = await startGateway({
+      env,
+      addon: fake.addon,
+      repo,
+      intervalMs: 60_000,
+    });
+    const secret = env.TEMPERANCE_FORWARD_SECRET!;
+    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+    expect(fake.configs[0].remote).toEqual({
+      key_file: path.join(dir, "parent.key"),
+      secret,
+      target: "http://127.0.0.1:3000",
+    });
+    fake.report({ activity: [], history: [], remote: { pin: "PIN" } });
+    await gateway.tick();
+    expect((await repo.read()).state.remote_pin).toBe("PIN");
+    gateway.stop();
+  });
+
   it("still refreshes policy when a batch is rejected", async () => {
     const fake = fakeAddon();
     const repo = new TestRepository();
@@ -236,10 +258,30 @@ describe("gateway configuration", () => {
         uplink: "eth1",
       },
       public_port: 51820,
+      remote: null,
     });
     expect(() =>
       gatewayConfig({ TEMPERANCE_GATEWAY_ROUTER: "eth0" }, "k"),
     ).toThrow(/lan_interface/);
+  });
+
+  it("serves parent phones unless turned off", () => {
+    const remote = (extra: Record<string, string>) =>
+      gatewayConfig(
+        { TEMPERANCE_DATA_DIR: "/data", PORT: "8080", ...extra },
+        "k",
+      ).remote;
+    expect(remote({ TEMPERANCE_FORWARD_SECRET: "s" })).toEqual({
+      key_file: path.join("/data", "parent.key"),
+      secret: "s",
+      target: "http://127.0.0.1:8080",
+    });
+    expect(
+      remote({
+        TEMPERANCE_FORWARD_SECRET: "s",
+        TEMPERANCE_REMOTE_PARENTS: "off",
+      }),
+    ).toBeNull();
   });
 
   it("maps the router port from the advertised endpoint", () => {

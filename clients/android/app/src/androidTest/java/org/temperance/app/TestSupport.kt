@@ -36,7 +36,8 @@ object TestSupport {
         app.health = emptyList()
         app.status = ""
         app.transport = server
-        app.getSharedPreferences("ui", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        app.getSharedPreferences("ui", android.content.Context.MODE_PRIVATE).edit().clear().putString("mode", "child").commit()
+        app.unpair()
         dismissNotResponding()
         shell("settings put secure show_ime_with_hard_keyboard 1")
         shell("appops set $PACKAGE ACTIVATE_VPN default")

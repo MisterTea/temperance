@@ -1,0 +1,87 @@
+{
+  "title": "Asking for more time",
+  "subtitle": "Children ask from the app; parents answer from the dashboard",
+  "steps": [
+    {
+      "device": {
+        "as": "phone",
+        "path": "/v1/device/requests",
+        "body": {
+          "minutes": 20,
+          "message": "Can I have 20 more minutes to finish my science project?"
+        }
+      }
+    },
+    {
+      "say": "A dot on Requests means someone is waiting for an answer."
+    },
+    {
+      "show": {
+        "css": "button.nav .dot"
+      }
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Requests",
+        "exact": true
+      }
+    },
+    {
+      "show": {
+        "css": ".row-card",
+        "hasText": "science project"
+      },
+      "hold": 2500
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Approve",
+        "within": {
+          "css": ".row-card",
+          "hasText": "science project"
+        }
+      }
+    },
+    {
+      "say": "Approving adds the minutes to today's allowance, and Jordan's phone hears back right away."
+    },
+    {
+      "show": {
+        "section": "Today’s rewards"
+      },
+      "hold": 2500
+    },
+    {
+      "say": "You can also hand out extra time yourself, say for finished chores."
+    },
+    {
+      "select": {
+        "label": "Profile"
+      },
+      "option": "Jordan"
+    },
+    {
+      "fill": {
+        "label": "Extra minutes"
+      },
+      "value": "30"
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Send reward"
+      }
+    },
+    {
+      "say": "Rewards last until midnight. Cancel one here if plans change."
+    },
+    {
+      "show": {
+        "section": "Today’s rewards"
+      },
+      "hold": 2500
+    }
+  ]
+}

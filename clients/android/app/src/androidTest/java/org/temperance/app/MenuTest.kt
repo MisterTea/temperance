@@ -85,7 +85,7 @@ class MenuTest {
         server.version = 9; server.remaining = 5
         menu(R.string.menu_refresh)
         waitFor(what = "refresh") { server.paths().contains("GET /v1/device/state") }
-        eventually { onView(withId(R.id.detail)).check(matches(withText(containsString("5 minutes left today")))) }
+        eventually { onView(withId(R.id.remaining)).check(matches(withText(containsString("5 minutes left today")))) }
         eventually { onView(withId(R.id.status_line)).check(matches(withText(R.string.refreshed))) }
     }
 
@@ -106,8 +106,8 @@ class MenuTest {
         val body = server.requests.first { it.url.endsWith("/v1/device/requests") }.body!!
         assertTrue(body, body.contains("\"minutes\":30") && body.contains("Finishing homework video"))
         eventually { onView(withId(R.id.status_line)).check(matches(withText(R.string.request_sent))) }
-        eventually { onView(withId(R.id.detail)).check(matches(withText(containsString("waiting for a parent")))) }
-        eventually { onView(withId(R.id.ask_time)).check(matches(not(isEnabled()))) }
+        eventually { onView(withId(R.id.remaining)).check(matches(withText(containsString("waiting for a parent")))) }
+        eventually { onView(withId(R.id.ask_time)).check(matches(not(isDisplayed()))) }
     }
 
     @Test fun askForMoreTimeButtonAndCancel() {

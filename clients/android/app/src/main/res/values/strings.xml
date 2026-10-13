@@ -2,22 +2,23 @@
     <string name="app_name">Temperance</string>
 
     <string name="setup_title">Connect this device</string>
-    <string name="setup_intro">Sign in with the username and password created for you on the Temperance website. Your family profile is assigned automatically. Your password is not saved on this device.</string>
-    <string name="server_label">Temperance server</string>
-    <string name="server_hint">temperance.example.com</string>
+    <string name="setup_intro">Sign in with the username and password a parent created for you on the family dashboard. Your family profile is assigned automatically. Your password is not saved on this device.</string>
+    <string name="server_label">Family dashboard address</string>
+    <string name="server_hint">myhome.example.com</string>
     <string name="username_label">Username</string>
     <string name="password_label">Password</string>
     <string name="sign_in">Sign in</string>
     <string name="signing_in">Signing in…</string>
 
     <string name="vpn_title">Allow the family VPN</string>
-    <string name="vpn_intro">Android will ask whether Temperance may set up a VPN connection. Tap OK so your family\'s rules apply on this device.</string>
+    <string name="vpn_intro">Tap Allow VPN connection. Android then asks whether Temperance may set up a VPN connection. Tap OK so your family\'s rules apply on this device.</string>
     <string name="allow_vpn">Allow VPN connection</string>
     <string name="vpn_denied">Without the VPN, family rules cannot apply on this device. Tap Allow VPN connection to try again.</string>
 
     <string name="wifi_sign_in">Sign in to Wi-Fi</string>
     <string name="ask_time">Ask for more time</string>
-    <string name="always_on_note">For tamper resistance, turn on Always-on VPN and Block connections without VPN from the menu\'s Always-on VPN settings.</string>
+    <string name="recent_alerts">Recent alerts</string>
+    <string name="always_on_note">Parents: so the VPN can\'t be switched off, open the menu, choose Always-on VPN settings, and turn on Always-on VPN and Block connections without VPN.</string>
 
     <string name="menu_refresh">Refresh</string>
     <string name="menu_vpn_settings">Always-on VPN settings</string>
@@ -37,4 +38,26 @@
     <string name="location_off">Location sharing stays off.</string>
     <string name="refreshed">Rules updated</string>
     <string name="about_text">Temperance %1$s\nCore %2$s\nServer %3$s</string>
+
+    <string name="choose_title">Welcome to Temperance</string>
+    <string name="choose_intro">Is this your child\'s device, or are you a parent? A child\'s device installs the family VPN. A parent\'s phone opens the family dashboard from anywhere, with no VPN.</string>
+    <string name="choose_child">This is my child\'s device</string>
+    <string name="choose_parent">I\'m a parent</string>
+    <string name="parent_instead">I\'m a parent instead</string>
+    <string name="child_instead">This is a child\'s device instead</string>
+
+    <string name="pair_title">Pair this phone</string>
+    <string name="pair_intro">On the family dashboard at home, open Settings → Parent devices and tap Pair a parent device. Then scan the code, or paste the link.</string>
+    <string name="scan">Scan the QR code</string>
+    <string name="link_label">Pairing link</string>
+    <string name="link_hint">temperance://pair#…</string>
+    <string name="phone_name_label">Name for this phone</string>
+    <string name="pair">Pair</string>
+    <string name="pairing">Pairing…</string>
+    <string name="camera_needed">Temperance needs the camera to scan the code. You can paste the link instead.</string>
+    <string name="scan_hint">Point the camera at the code on the dashboard</string>
+    <string name="menu_reload">Reload</string>
+    <string name="menu_unpair">Unpair this phone</string>
+    <string name="unpair_confirm">This phone will stop opening the family dashboard. To use it again, pair it from the dashboard at home.</string>
+    <string name="unpair">Unpair</string>
 </resources>

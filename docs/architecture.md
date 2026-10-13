@@ -69,6 +69,7 @@ The service retains usage minutes for 30 days. The gateway batches domain decisi
 ```sh
 (cd web && npm run test:coverage)                                # TypeScript, >=80% gate
 (cd web && npm run build && npx playwright test)                 # Feature/UX + layout audits
+(cd clients/desktop && npm ci && npm run build && npm run coverage)  # Desktop UI, >=80% gate
 (cd core && cargo llvm-cov --workspace --fail-under-lines 80)    # Rust core, gateway + desktop
 clients/android/e2e/real-server.sh                               # Android app through the real gateway
 ```
@@ -82,7 +83,7 @@ docker build -f deploy/Dockerfile.test -t temperance-test .
 docker run --rm --privileged temperance-test
 ```
 
-It verifies routing and counting a registered home device, DNS redirection and filtering, pause and resume without touching unregistered devices, and failing closed when the lease lapses or the gateway stops. Client build and CI jobs separately verify Android APK compilation, macOS/iOS unsigned builds, and desktop cross-compilation. Physical-client VPN consent, boot recovery, platform signing, and managed-device lockdown still require device acceptance testing.
+It verifies routing and counting a registered home device, DNS redirection and filtering, pause and resume without touching unregistered devices, and failing closed when the lease lapses or the gateway stops. Client build and CI jobs separately verify Android APK compilation, macOS/iOS unsigned builds, and Tauri desktop installers for Windows and Linux. Physical-client VPN consent, boot recovery, platform signing, and managed-device lockdown still require device acceptance testing.
 
 ## Version-two policy additions
 

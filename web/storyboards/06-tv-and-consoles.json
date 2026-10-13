@@ -1,0 +1,59 @@
+{
+  "title": "TVs and game consoles",
+  "subtitle": "Protect devices that can't run the app",
+  "steps": [
+    {
+      "click": {
+        "role": "button",
+        "name": "Devices",
+        "exact": true
+      }
+    },
+    {
+      "say": "TVs, consoles and speakers are protected through the home network instead of the app."
+    },
+    {
+      "show": {
+        "section": "Add a home-network device"
+      },
+      "hold": 2500
+    },
+    {
+      "fill": {
+        "label": "Device name"
+      },
+      "value": "Living room Xbox"
+    },
+    {
+      "fill": {
+        "label": "Home-network IPv4 address"
+      },
+      "value": "192.168.1.40"
+    },
+    {
+      "select": {
+        "label": "Home device profile"
+      },
+      "option": "Jordan"
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Add home device"
+      }
+    },
+    {
+      "show": {
+        "css": "tr",
+        "has": {
+          "label": "Living room Xbox name"
+        }
+      },
+      "hold": 2000
+    },
+    {
+      "say": "Reserve that address in your router and point the router's DNS at Temperance. The Xbox now follows Jordan's rules.",
+      "hold": 4500
+    }
+  ]
+}

@@ -9,6 +9,8 @@
 
         <TextView android:id="@+id/headline" style="@style/Title" android:accessibilityHeading="true" />
         <TextView android:id="@+id/detail" style="@style/Body" android:textColor="@color/ink" />
+        <TextView android:id="@+id/remaining" style="@style/Body" android:textColor="@color/ink" />
+        <TextView android:id="@+id/next_change" style="@style/Body" android:textColor="@color/ink" android:visibility="gone" />
 
         <TextView
             android:id="@+id/vpn_state"
@@ -26,6 +28,17 @@
             android:padding="16dp"
             android:textColor="@color/warning_ink"
             android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/alerts"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+            <TextView style="@style/Label" android:layout_marginTop="0dp" android:accessibilityHeading="true" android:text="@string/recent_alerts" />
+            <LinearLayout android:id="@+id/alerts_list" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:orientation="vertical" />
+        </LinearLayout>
 
         <Button android:id="@+id/wifi_sign_in" style="@style/Secondary" android:text="@string/wifi_sign_in" android:visibility="gone" />
         <Button android:id="@+id/ask_time" style="@style/Primary" android:text="@string/ask_time" />

@@ -1,3 +1,6 @@
 .vercel
 .env
 .env*.local
+
+# storyboard videos
+storyboards/out/

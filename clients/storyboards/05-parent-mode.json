@@ -1,0 +1,27 @@
+{
+  "title": "The dashboard in a parent's pocket",
+  "subtitle": "Pair a parent's {{device}} once, then open the family dashboard from anywhere, with no VPN.",
+  "fresh": true,
+  "steps": [
+    { "pairingLink": true },
+    { "childRequest": { "name": "Riley's tablet", "profile": "Riley", "minutes": 15, "message": "One more episode please" } },
+    { "say": "This time the {{device}} belongs to Jordan, a parent." },
+    { "tap": "choose.parent" },
+    { "say": "On the dashboard at home, Jordan opened Settings → Parent devices and chose Pair a parent device." },
+    { "show": "pair.scan" },
+    { "say": { "default": "A phone can scan the QR code. Here, Jordan pastes the pairing link instead.", "macos": "On a Mac, Jordan copies the pairing link from the dashboard and pastes it here.", "windows": "On a PC, Jordan copies the pairing link from the dashboard and pastes it here." } },
+    { "type": "pair.link", "text": "{{link}}", "secret": true },
+    { "type": "pair.name", "text": "Jordan's {{device}}" },
+    { "tap": "pair.submit" },
+    { "say": "The {{device}} is paired. The dashboard opens through the home gateway, with no VPN to install." },
+    { "show": "dashboard.away" },
+    { "say": "Riley's tablet just asked for 15 more minutes. Jordan answers from wherever they are." },
+    { "tap": "dashboard.approve" },
+    { "say": "Approved. It's the same dashboard as at home, just reached from away." },
+    { "tap": "dashboard.close" },
+    { "show": "paired.open" },
+    { "say": { "default": "Next time, Jordan opens it straight from here.", "android": "Next time, Jordan just opens the app and lands on the dashboard." } },
+    { "say": "To stop using the {{device}}, Jordan unpairs it here. If it's ever lost, Jordan removes it from Settings → Parent devices at home, and it stops working at once.", "hold": 4500 },
+    { "show": "paired.unpair", "hold": 4500 }
+  ]
+}

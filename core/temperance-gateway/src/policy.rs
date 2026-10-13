@@ -50,6 +50,9 @@ pub struct State {
     /// UPnP and dynamic DNS settings; absent means UPnP on, no dynamic DNS.
     #[serde(default)]
     pub network: Option<crate::reach::Settings>,
+    /// Paired parent phones allowed to reach the dashboard.
+    #[serde(default)]
+    pub parents: Vec<crate::parent::Paired>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

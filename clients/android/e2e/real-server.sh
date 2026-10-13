@@ -39,15 +39,19 @@ openssl x509 -req -in "$WORK/server.csr" -CA "$WORK/ca.pem" -CAkey "$WORK/ca.key
 cp "$WORK/ca.pem" "$WORK/res/raw/e2e_ca.pem"
 cat > "$WORK/res/xml/e2e_network.xml" <<'EOF'
 <network-security-config>
+  <base-config cleartextTrafficPermitted="false" />
   <domain-config cleartextTrafficPermitted="false">
     <domain includeSubdomains="false">localhost</domain>
     <trust-anchors><certificates src="@raw/e2e_ca" /></trust-anchors>
   </domain-config>
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="false">127.0.0.1</domain>
+  </domain-config>
 </network-security-config>
 EOF
 cat > "$WORK/AndroidManifest.xml" <<'EOF'
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <application android:networkSecurityConfig="@xml/e2e_network" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+  <application android:networkSecurityConfig="@xml/e2e_network" tools:replace="android:networkSecurityConfig" />
 </manifest>
 EOF
 

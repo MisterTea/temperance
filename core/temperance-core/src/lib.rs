@@ -3,6 +3,8 @@
 pub mod api;
 pub mod diagnostics;
 pub mod policy;
+#[cfg(feature = "remote")]
+pub mod remote;
 pub mod status;
 pub mod tunnel;
 

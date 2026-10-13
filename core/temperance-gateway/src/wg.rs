@@ -1,12 +1,13 @@
 //! WireGuard on one UDP socket: a boringtun session per enrolled device.
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use boringtun::noise::{handshake::parse_handshake_anon, Packet, Tunn, TunnResult};
 use boringtun::x25519::{PublicKey, StaticSecret};
+use temperance_core::remote::{is_quic, is_wireguard};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
@@ -46,6 +47,8 @@ pub struct Wireguard {
     public: PublicKey,
     pub socket: Arc<UdpSocket>,
     peers: RwLock<Peers>,
+    /// Parent phones' QUIC datagrams arrive on the same port.
+    quic: OnceLock<crate::parent::Datagrams>,
 }
 
 fn buffer(len: usize) -> Vec<u8> {
@@ -60,7 +63,12 @@ impl Wireguard {
             secret,
             socket: Arc::new(socket),
             peers: RwLock::default(),
+            quic: OnceLock::new(),
         }
+    }
+
+    pub fn hand_quic_to(&self, quic: crate::parent::Datagrams) {
+        let _ = self.quic.set(quic);
     }
 
     pub fn public_key(&self) -> String {
@@ -132,6 +140,12 @@ impl Wireguard {
             let Ok((n, from)) = self.socket.recv_from(&mut datagram).await else {
                 continue;
             };
+            if !is_wireguard(&datagram[..n]) {
+                if let Some(quic) = self.quic.get().filter(|_| is_quic(&datagram[..n])) {
+                    let _ = quic.try_send((from, datagram[..n].to_vec()));
+                }
+                continue;
+            }
             let Some(peer) = self.lookup(&datagram[..n]) else {
                 continue;
             };

@@ -7,7 +7,8 @@ Each application enrolls a locally generated WireGuard public key through the po
 | macOS 13+ | Native SwiftUI app + WireGuardKit Network Extension | `apple/bootstrap.sh`, Xcode `TemperanceMac` |
 | iOS 16+ | Native SwiftUI app + WireGuardKit Network Extension | Same project, Xcode `TemperanceIOS` |
 | Android 8+ | Kotlin app + embedded official WireGuard GoBackend + foreground session service | `cd android && ./gradlew assembleDebug` |
-| Windows | Rust application with localhost browser UI + WireGuard tunnel service | `desktop/build.sh`, elevated `desktop/install-windows.ps1` |
+| Windows 10+ | Tauri app (Rust + React UI) + official WireGuard tunnel service; child or parent mode | `npx tauri build` (NSIS installer) |
+| Linux | The same Tauri app, parent mode only | `npx tauri build` (`.deb`, AppImage) |
 
 ## Shared Rust core
 
@@ -15,7 +16,7 @@ Client business logic lives once in [`core/temperance-core`](../core/temperance-
 
 **Wi-Fi sign-in pages.** On the desktop app, "Sign in to Wi-Fi" appears only when the tunnel cannot reach the gateway. It lowers the tunnel for at most five minutes, probes `connectivitycheck.gstatic.com` outside the tunnel, restores protection as soon as the network is online, and parents are told afterwards. Android detects the captive-portal state itself and its sign-in flow runs outside the VPN (the app's button opens Wi-Fi settings); on Apple platforms `includeAllNetworks` always exempts captive-network sign-in traffic.
 
-- **Windows desktop**: `core/temperance-desktop` links the crate natively (it also builds on macOS for development).
+- **Windows and Linux desktop**: the Tauri backend in `core/temperance-desktop` links the crate natively (it also runs on macOS for development, in parent mode).
 - **iOS / macOS apps**: `core/build-bindings.sh apple` builds `clients/apple/Core/TemperanceCoreFFI.xcframework` (device, simulator, macOS universal) and UniFFI Swift bindings; `apple/bootstrap.sh` runs it.
 - **Android**: `core/build-bindings.sh android` builds `jniLibs` for arm64-v8a, armeabi-v7a, x86_64, x86 with `cargo-ndk` and generates Kotlin bindings; Gradle's `preBuild` runs it (set `TEMPERANCE_SKIP_RUST=1` to use prebuilt libraries).
 
@@ -52,16 +53,25 @@ Tests (from `clients/android`):
 - `./gradlew connectedDebugAndroidTest`: on a booted emulator or device, runs the setup flow, including Android's real VPN consent dialog and a live WireGuard tunnel, plus every menu item. A layout audit fails on clipped or ellipsized text, content under the action bar, system bars, or keyboard, overlapping views, and tap targets under 48dp. It runs on phone, small phone, landscape, 130% and 200% text, and tablet. Screenshots are written to `/data/local/tmp/temperance-shots` on the device.
 - `e2e/real-server.sh`: needs `npm run build` in `web/` first. It starts a fresh local policy service behind HTTPS with a throwaway CA that only this debug test build trusts, signs in through the UI, connects, and checks the result on the server.
 
-## Windows
+## Windows and Linux
 
-There is no Linux device app. Protect a Linux computer by adding it as a home-network device so the gateway enforces it by LAN address (see `docs/deployment.md`).
+One [Tauri](https://tauri.app) app serves both. Its Rust backend is `core/temperance-desktop`; its React UI is `clients/desktop`, shown in the system web view (WebView2 on Windows, WebKitGTK on Linux). The UI calls two commands, `view` and `act`, and the backend pushes a fresh view every five seconds. On first launch the app asks whether this is a child's computer or a parent's.
 
+- **Child mode (Windows only)**: sign in with the client username and password, then **Start protection** installs the WireGuard tunnel service. It persists across reboots and closing the app. Children see their status, Wi-Fi sign-in help and device health, and can ask for more time.
+- **Parent mode (Windows and Linux)**: paste a pairing link and the family dashboard opens in its own window (see [remote parents](../docs/remote-parents.md)). That window loads only the paired dashboard and has no access to the app's commands; other links open in the browser.
 
-Build with Rust using `clients/desktop/build.sh` (cross targets use `cargo-zigbuild`; override with `TARGETS="rust-target:os:arch ..."`). Windows binaries go to `build/`. Installers use these local build outputs, never an unverified remote binary. Children can see their status and send an "ask for more time" request from the desktop UI.
+Protect a Linux computer by adding it as a home-network device so the gateway enforces it by LAN address (see `docs/deployment.md`).
 
-On Windows, run `clients/desktop/install-windows.ps1` in elevated PowerShell. It installs WireGuard from the official winget package if needed, secures the app/state directory to SYSTEM and administrators, and creates a desktop shortcut. Launch the shortcut, open its printed localhost URL, enroll, then install/start the tunnel. The WireGuard tunnel service persists across reboots and closing the app. Administrator privilege is required for installation/removal. The desktop application is a compiled executable with a local browser interface, not a WPF/GTK window.
+Build (Node 24 and Rust; on Linux also `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev`; for Windows on ARM also LLVM's `clang`, which `ring` needs):
 
-Windows private keys and device tokens reside in restricted state files. Run through the installers so the directory permissions/ACLs are correct. Client routes capture both IP families; the gateway currently blocks captured IPv6. Full-tunnel WireGuard on Windows applies its default-route firewall semantics. Cross-compilation proves buildability, not successful VPN installation on a physical Windows client.
+```sh
+(cd clients/desktop && npm ci)
+cd core/temperance-desktop && ../../clients/desktop/node_modules/.bin/tauri build
+```
+
+The bundles land in `core/target/release/bundle/` (`nsis/` on Windows, `deb/` and `appimage/` on Linux). For development, `tauri dev` from the same directory serves the UI with hot reload; `npm test` in `clients/desktop` runs the UI tests.
+
+The Windows installer is per-machine and the app asks for administrator rights, because installing the tunnel service needs them. The installer installs WireGuard from the official winget package if it is missing and restricts `%ProgramData%\Temperance`, where private keys and device tokens are stored, to SYSTEM and administrators. Uninstalling removes the tunnel service. Client routes capture both IP families; the gateway currently blocks captured IPv6. Full-tunnel WireGuard on Windows applies its default-route firewall semantics.
 
 ## Protocol references
 

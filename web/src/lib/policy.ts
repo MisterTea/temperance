@@ -325,6 +325,19 @@ export function activeWindows(
       ),
   );
 }
+/** The day a bedtime that runs past midnight started on, so that a late
+ * bedtime given in the evening still counts after midnight. */
+export function bedtimeNight(
+  p: Pick<Profile, "bedtime">,
+  at: number,
+  zone: string,
+) {
+  const { start, end } = p.bedtime;
+  const local = localTime(at, zone);
+  return start > end && local.clock < end
+    ? localTime(at - 86400, zone).day
+    : local.day;
+}
 export function accessReason(
   p: Profile,
   at: number,
@@ -337,10 +350,11 @@ export function accessReason(
   if (householdPaused) return "household pause";
   if (p.paused) return "paused";
   const day = localTime(at, zone).day;
+  const night = bedtimeNight(p, at, zone);
   const bedtimeReward = rewards
     .filter(
       (r) =>
-        r.profile_id === p.id && r.day === day && r.kind === "late_bedtime",
+        r.profile_id === p.id && r.day === night && r.kind === "late_bedtime",
     )
     .at(-1);
   if (

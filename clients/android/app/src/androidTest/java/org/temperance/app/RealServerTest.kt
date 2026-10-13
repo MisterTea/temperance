@@ -49,11 +49,12 @@ class RealServerTest {
         closeSoftKeyboard()
         onView(withId(R.id.sign_in)).perform(scrollTo(), click())
 
+        eventually { onView(withId(R.id.allow_vpn)).perform(click()) }
         tapSystem("OK")
         tapSystem("Allow")
         waitForScreen(scenario, MainActivity.Screen.STATUS)
         waitFor(20_000, "the WireGuard tunnel to come up") { app.connected }
-        onView(withId(R.id.detail)).check(matches(withText(containsString("60 minutes left today"))))
+        onView(withId(R.id.remaining)).check(matches(withText(containsString("60 minutes left today"))))
         TestSupport.screenshot("real-server-status")
 
         onView(withText(R.string.menu_refresh)).perform(click())
@@ -74,7 +75,7 @@ class RealServerTest {
         onView(withText(R.string.minutes_30)).perform(click())
         onView(withText(R.string.send)).perform(click())
         eventually { onView(withId(R.id.status_line)).check(matches(withText(R.string.request_sent))) }
-        eventually { onView(withId(R.id.detail)).check(matches(withText(containsString("waiting for a parent")))) }
+        eventually { onView(withId(R.id.remaining)).check(matches(withText(containsString("waiting for a parent")))) }
         TestSupport.screenshot("real-server-requested")
         assertTrue("still blocked while the request is pending", !browse())
 

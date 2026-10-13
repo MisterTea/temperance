@@ -97,6 +97,16 @@ export interface NetworkStatus {
   ddns: ReachStatus | null;
   reported_at: number;
 }
+/** A parent's phone paired to open the dashboard through the gateway. */
+export interface Parent {
+  id: string;
+  name: string;
+  /** Fingerprint of the phone's key, as the gateway sees it. */
+  key: string;
+  created_at: number;
+  last_seen?: number;
+  revoked?: boolean;
+}
 export interface State {
   users?: User[];
   refresh_tokens?: RefreshToken[];
@@ -121,6 +131,10 @@ export interface State {
   network?: NetworkSettings;
   /** The gateway's latest report on UPnP and dynamic DNS. */
   network_status?: NetworkStatus;
+  parents?: Parent[];
+  parent_codes?: { hash: string; expires: number }[];
+  /** Fingerprint of the gateway's key for parent phones, as it last reported. */
+  remote_pin?: string;
   /** Set when the first-run wizard is finished or skipped. */
   setup_completed_at?: number;
 }

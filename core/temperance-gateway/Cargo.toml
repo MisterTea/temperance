@@ -20,7 +20,8 @@ node = ["dep:napi", "dep:napi-derive"]
 cli = []
 
 [dependencies]
-temperance-core = { path = "../temperance-core" }
+temperance-core = { path = "../temperance-core", features = ["remote"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
 boringtun = "0.7"
 ipstack = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }

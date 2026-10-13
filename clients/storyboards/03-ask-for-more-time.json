@@ -1,0 +1,25 @@
+{
+  "title": "Ask for more time",
+  "subtitle": "When the day's time runs out, Riley can ask, and a parent answers from anywhere.",
+  "steps": [
+    { "profile": { "name": "Riley", "bedtime": { "start": "", "end": "" } } },
+    { "used": 120 },
+    { "refresh": true },
+    { "say": "Riley has used all of today's time, and the homework isn't done." },
+    { "show": "Time's up for today" },
+    { "say": "Riley asks for half an hour and says why." },
+    { "tap": "ask.open" },
+    { "type": "ask.message", "text": "Finishing my science project" },
+    { "tap": "ask.30" },
+    { "tap": "ask.send" },
+    { "show": "ask.pending" },
+    { "say": "The request goes straight to the parents, on the dashboard at home or on a parent's phone." },
+    { "approve": 30 },
+    { "refresh": true },
+    { "say": "A parent approves it, and Riley gets the answer right away." },
+    { "show": "alert.approved" },
+    { "show": "You're online" },
+    { "say": "Thirty more minutes, and the internet is back on." },
+    { "show": "status.remaining" }
+  ]
+}

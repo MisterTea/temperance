@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { isIPv4 } from "node:net";
 import path from "node:path";
+import { randomToken } from "./auth";
 import { dataDir, mutate, repository, type Repository } from "./database";
 import { account, gatewaySeen, gatewayState, vpnEndpoint } from "./service";
 
@@ -59,6 +60,7 @@ export function gatewayConfig(env: Env, privateKey: string) {
     .map((v) => (v ? hostname(v) : ""))
     .filter((h) => h && !isIPv4(h) && h !== "localhost");
   const host = env.HOSTNAME;
+  const web = `${host && isIPv4(host) && host !== "0.0.0.0" ? host : "127.0.0.1"}:${env.PORT || 3000}`;
   let publicPort: number | null = null;
   try {
     publicPort = Number(
@@ -72,7 +74,7 @@ export function gatewayConfig(env: Env, privateKey: string) {
     private_key: privateKey,
     dns_upstream: env.TEMPERANCE_GATEWAY_DNS_UPSTREAM || "1.1.1.1:53",
     management_domains: [...new Set(management)],
-    web: `${host && isIPv4(host) && host !== "0.0.0.0" ? host : "127.0.0.1"}:${env.PORT || 3000}`,
+    web,
     home_dns: env.TEMPERANCE_GATEWAY_HOME_DNS || null,
     lan_networks: (env.TEMPERANCE_GATEWAY_LAN_NETWORKS ?? "")
       .split(",")
@@ -86,6 +88,15 @@ export function gatewayConfig(env: Env, privateKey: string) {
         }
       : null,
     public_port: publicPort,
+    // Parent phones reach the dashboard over the WireGuard port.
+    remote:
+      env.TEMPERANCE_FORWARD_SECRET && env.TEMPERANCE_REMOTE_PARENTS !== "off"
+        ? {
+            key_file: path.join(dataDir(env), "parent.key"),
+            secret: env.TEMPERANCE_FORWARD_SECRET,
+            target: `http://${web}`,
+          }
+        : null,
   };
 }
 
@@ -93,7 +104,12 @@ export function gatewayConfig(env: Env, privateKey: string) {
 export async function syncGateway(handle: GatewayHandle, repo: Repository) {
   const batch = JSON.parse(handle.drainActivity());
   const state = await mutate(repo, (s) => {
-    if (batch.activity?.length || batch.history?.length || batch.network) {
+    if (
+      batch.activity?.length ||
+      batch.history?.length ||
+      batch.network ||
+      (batch.remote && batch.remote.pin !== s.remote_pin)
+    ) {
       // A rejected batch must never keep the policy from refreshing.
       try {
         account(s, batch);
@@ -129,6 +145,9 @@ export async function startGateway({
     );
   // provisioning() hands this key to devices.
   env.TEMPERANCE_VPN_PUBLIC_KEY = publicKey;
+  // The dashboard trusts parent requests carrying this; it never leaves the process.
+  env.TEMPERANCE_FORWARD_SECRET ||= randomToken();
+  fs.mkdirSync(dataDir(env), { recursive: true, mode: 0o700 });
   const handle = addon.GatewayHandle.start(
     JSON.stringify(gatewayConfig(env, key)),
   );

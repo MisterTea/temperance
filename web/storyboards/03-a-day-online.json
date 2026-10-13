@@ -1,0 +1,126 @@
+{
+  "title": "A day online",
+  "subtitle": "What you see while the gateway enforces Jordan's rules",
+  "steps": [
+    {
+      "browse": {
+        "as": "phone",
+        "minutes": 48,
+        "buckets": ["total", "category:video"],
+        "sites": [
+          {
+            "domain": "www.wikipedia.org",
+            "category": "reference"
+          },
+          {
+            "domain": "www.youtube.com",
+            "category": "video"
+          },
+          {
+            "domain": "www.tiktok.com",
+            "blocked": true,
+            "reason": "social",
+            "category": "social"
+          },
+          {
+            "domain": "classroom.google.com",
+            "category": "education"
+          },
+          {
+            "domain": "www.instagram.com",
+            "blocked": true,
+            "reason": "social",
+            "category": "social"
+          },
+          {
+            "domain": "tracker.example-advertising-network.com",
+            "blocked": true,
+            "reason": "ads",
+            "category": "ads"
+          },
+          {
+            "domain": "www.youtube.com",
+            "category": "video"
+          }
+        ]
+      }
+    },
+    {
+      "say": "Jordan has been online this afternoon. Minutes of network activity count against today's allowance."
+    },
+    {
+      "show": {
+        "css": "article.profile",
+        "hasText": "Jordan"
+      },
+      "hold": 2500
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "History",
+        "exact": true
+      }
+    },
+    {
+      "say": "History lists the sites Jordan's devices looked up, and why each was allowed or blocked."
+    },
+    {
+      "show": {
+        "css": "table"
+      },
+      "hold": 2500
+    },
+    {
+      "say": "Filter to see only what was blocked."
+    },
+    {
+      "select": {
+        "label": "Decision"
+      },
+      "optionValue": "true"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "select": {
+        "label": "Decision"
+      },
+      "optionValue": "all"
+    },
+    {
+      "say": "Spending too long on YouTube? One click turns a site into a rule."
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "deny",
+        "within": {
+          "role": "row",
+          "name": "/youtube\\.com/"
+        }
+      }
+    },
+    {
+      "say": "YouTube is now blocked for Jordan on every device."
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Usage",
+        "exact": true
+      }
+    },
+    {
+      "say": "Usage adds up minutes by day and by kind of site."
+    },
+    {
+      "show": {
+        "role": "article",
+        "name": "Jordan usage summary"
+      },
+      "hold": 2500
+    }
+  ]
+}

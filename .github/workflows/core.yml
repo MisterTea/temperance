@@ -27,6 +27,14 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Tauri system libraries
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Desktop UI (embedded by the desktop crate at compile time)
+        working-directory: clients/desktop
+        run: npm ci && npm run build
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy -p temperance-gateway --all-targets --features node,cli -- -D warnings
@@ -99,37 +107,58 @@ jobs:
           name: gateway-${{ matrix.name }}
           path: build/
 
+  desktop-ui:
+    name: Desktop UI tests and coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npx prettier --check src tests vite.config.ts
+      - run: npm run build
+      - run: npm run coverage
+
   desktop:
-    name: Desktop ${{ matrix.target }}
+    name: Desktop ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, artifact: temperance-windows-amd64.exe }
-          - { os: windows-latest, target: aarch64-pc-windows-msvc, artifact: temperance-windows-arm64.exe, cross: true }
-          - { os: macos-latest, target: aarch64-apple-darwin, artifact: temperance-macos-arm64 }
+          - { os: windows-latest, name: windows-x64, target: x86_64-pc-windows-msvc, bundles: nsis }
+          - { os: windows-latest, name: windows-arm64, target: aarch64-pc-windows-msvc, bundles: nsis, cross: true }
+          - { os: ubuntu-22.04, name: linux-x64, target: x86_64-unknown-linux-gnu, bundles: 'deb,appimage' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
-          key: ${{ matrix.target }}
+          key: desktop-${{ matrix.target }}
+      - if: ${{ runner.os == 'Linux' }}
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - working-directory: clients/desktop
+        run: npm ci && npm run build
       - if: ${{ !matrix.cross }}
-        run: cargo test --workspace
-      - run: cargo build --release -p temperance-desktop --target ${{ matrix.target }}
-      - shell: bash
-        env:
-          TARGET: ${{ matrix.target }}
-          ARTIFACT: ${{ matrix.artifact }}
-        run: |
-          src=target/$TARGET/release/temperance
-          [[ "$TARGET" == *windows* ]] && src="$src.exe"
-          mkdir -p ../build && cp "$src" "../build/$ARTIFACT"
+        run: cargo test -p temperance-desktop
+      - name: Installer
+        working-directory: core/temperance-desktop
+        run: ../../clients/desktop/node_modules/.bin/tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: build/${{ matrix.artifact }}
+          name: desktop-${{ matrix.name }}
+          path: |
+            core/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            core/target/${{ matrix.target }}/release/bundle/deb/*.deb
+            core/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+          if-no-files-found: error

@@ -3,12 +3,14 @@ import { hash, randomToken, validateKey } from "./auth";
 import {
   type Device,
   type NetworkSettings,
+  type Parent,
   type ReachStatus,
   type State,
 } from "./model";
 import {
   accessReason,
   activeWindows,
+  bedtimeNight,
   CATALOG,
   classify,
   dailyLimit,
@@ -17,6 +19,7 @@ import {
   profileSchema,
   used,
   type Profile,
+  type Reward,
 } from "./policy";
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -42,9 +45,11 @@ export function prune(state: State, at = now()) {
   for (const day of Object.keys(state.usage))
     if (day < cutoff) delete state.usage[day];
   state.rewards = state.rewards.filter(
-    (r) => r.day >= localTime(at, timezone()).day,
+    (r) => r.day >= localTime(at - 86400, timezone()).day,
   );
   state.codes = state.codes.filter((c) => c.expires > at);
+  if (state.parent_codes)
+    state.parent_codes = state.parent_codes.filter((c) => c.expires > at);
   state.events = state.events.slice(-500);
   state.requests = state.requests.slice(-500);
 }
@@ -52,6 +57,14 @@ export function timezone() {
   const zone = process.env.TEMPERANCE_TIMEZONE ?? "UTC";
   new Intl.DateTimeFormat("en", { timeZone: zone });
   return zone;
+}
+/** Today's rewards, plus a late bedtime for a night that started yesterday. */
+function currentReward(state: State, r: Reward, at: number) {
+  if (r.day === localTime(at, timezone()).day) return true;
+  const p = state.profiles.find((p) => p.id === r.profile_id);
+  return (
+    r.kind === "late_bedtime" && !!p && r.day === bedtimeNight(p, at, timezone())
+  );
 }
 export function effectiveProfile(state: State, profile: Profile, at = now()) {
   const day = localTime(at, timezone()).day;
@@ -66,7 +79,7 @@ export function effectiveProfile(state: State, profile: Profile, at = now()) {
       ]),
     ),
     rewards: state.rewards.filter(
-      (r) => r.profile_id === profile.id && r.day === day,
+      (r) => r.profile_id === profile.id && currentReward(state, r, at),
     ),
     access_reason: accessReason(
       profile,
@@ -90,7 +103,7 @@ export function snapshot(state: State, at = now()) {
     vpn: true,
     profiles,
     devices: state.devices.filter((d) => !d.revoked).map(publicDevice),
-    rewards: state.rewards.filter((r) => r.day === day),
+    rewards: state.rewards.filter((r) => currentReward(state, r, at)),
     requests: state.requests,
     events: state.events,
     categories: Object.fromEntries(
@@ -106,6 +119,11 @@ export function snapshot(state: State, at = now()) {
     network: publicNetwork(state),
     network_status: state.network_status ?? null,
     vpn_endpoint: configuredEndpoint(),
+    parents: activeParents(state).map(publicParent),
+    parent_access: {
+      available: !!state.remote_pin && !!remoteEndpoint(state),
+      host: remoteEndpoint(state)?.host ?? null,
+    },
     needs_onboarding: !state.setup_completed_at && state.profiles.length === 0,
     total: profiles.reduce((sum, p) => sum + p.used, 0),
     blocked: profiles.filter((p) => p.access_reason !== "allowed").length,
@@ -134,6 +152,109 @@ function configuredEndpoint() {
   } catch {
     return null;
   }
+}
+/** Where parent phones find home: the Dynu hostname when set, on the VPN port. */
+function remoteEndpoint(state: State) {
+  const endpoint = configuredEndpoint();
+  if (!endpoint) return null;
+  const split = endpoint.lastIndexOf(":");
+  return {
+    host: network(state).ddns?.hostname ?? endpoint.slice(0, split),
+    port: Number(endpoint.slice(split + 1)),
+  };
+}
+const activeParents = (state: State) =>
+  (state.parents ?? []).filter((p) => !p.revoked);
+const publicParent = (p: Parent) => ({
+  id: p.id,
+  name: p.name,
+  created_at: p.created_at,
+  last_seen: p.last_seen,
+});
+const household = () => process.env.TEMPERANCE_HOUSEHOLD_NAME?.trim() ?? "";
+function base64url(text: string) {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+/** A one-use link (shown as a QR code) that pairs a parent's phone for ten minutes. */
+export async function issueParentCode(state: State) {
+  const endpoint = remoteEndpoint(state);
+  if (!state.remote_pin)
+    throw new Error(
+      "Parent devices connect through the home gateway, which hasn’t checked in yet",
+    );
+  if (!endpoint)
+    throw new Error(
+      "Set TEMPERANCE_VPN_ENDPOINT so parent devices know where to find home",
+    );
+  const code = randomToken();
+  (state.parent_codes ??= []).push({
+    hash: await hash(code),
+    expires: now() + 600,
+  });
+  prune(state);
+  const payload = {
+    v: 1,
+    host: endpoint.host,
+    port: endpoint.port,
+    pin: state.remote_pin,
+    code,
+    household: household(),
+  };
+  return {
+    link: "temperance://pair#" + base64url(JSON.stringify(payload)),
+    expires_in: 600,
+  };
+}
+const pairInput = z.object({
+  code: z.string().max(100),
+  name: z.string().trim().min(1).max(80),
+  key: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+});
+/** Called by the gateway once a phone has proved it holds `key`. */
+export async function pairParent(state: State, input: unknown) {
+  const data = pairInput.parse(input);
+  const codeHash = await hash(data.code);
+  const code = (state.parent_codes ?? []).find(
+    (c) => c.hash === codeHash && c.expires > now(),
+  );
+  if (!code)
+    throw new Error(
+      "That pairing code has expired or was already used. Create a new one in Settings.",
+    );
+  state.parent_codes = state.parent_codes!.filter((c) => c !== code);
+  const parents = (state.parents ??= []);
+  if (parents.some((p) => !p.revoked && p.key === data.key))
+    throw new Error("This phone is already paired");
+  const parent: Parent = {
+    id: "par_" + crypto.randomUUID(),
+    name: data.name,
+    key: data.key,
+    created_at: now(),
+  };
+  parents.push(parent);
+  changed(
+    state,
+    "account",
+    `${parent.name} can now open the dashboard away from home`,
+  );
+  return { id: parent.id, household: household() };
+}
+export function activeParent(state: State, id: string) {
+  return activeParents(state).find((p) => p.id === id);
+}
+export function revokeParent(state: State, id: string) {
+  const parent = activeParent(state, id);
+  if (!parent) throw new Error("That parent device is not paired");
+  parent.revoked = true;
+  changed(
+    state,
+    "account",
+    `${parent.name} can no longer open the dashboard away from home`,
+  );
+  return snapshot(state);
 }
 function profile(state: State, id: number) {
   const found = state.profiles.find((p) => p.id === id);
@@ -457,6 +578,7 @@ export function gatewayState(state: State, at = now()) {
     policy_schema: 2,
     offline_grace_seconds: state.offline_grace_seconds,
     network: { upnp: network(state).upnp, ddns: network(state).ddns ?? null },
+    parents: activeParents(state).map((p) => ({ id: p.id, key: p.key })),
     peers: state.devices
       .filter((d) => !d.revoked && d.kind !== "home")
       .map((d) => ({
@@ -513,6 +635,7 @@ const activityInput = z.object({
   network: z
     .object({ upnp: reachStatus.nullable(), ddns: reachStatus.nullable() })
     .optional(),
+  remote: z.object({ pin: z.string().max(100) }).optional(),
 });
 /** Store the gateway's reachability report; problems and recoveries become events. */
 function recordNetwork(
@@ -540,6 +663,7 @@ export function account(state: State, input: unknown) {
   const data = activityInput.parse(input),
     at = now();
   if (data.network) recordNetwork(state, data.network, at);
+  if (data.remote) state.remote_pin = data.remote.pin;
   const entries = [
     ...data.active_devices.map((device_id) => ({
       device_id,
@@ -631,7 +755,10 @@ export function reward(state: State, input: unknown) {
         ? { bedtime: data.bedtime }
         : { window_id: data.window_id }),
     id: data.id ?? crypto.randomUUID(),
-    day: localTime(now(), timezone()).day,
+    day:
+      data.kind === "late_bedtime"
+        ? bedtimeNight(p, now(), timezone())
+        : localTime(now(), timezone()).day,
   };
   state.rewards = state.rewards.filter((r) => r.id !== value.id);
   state.rewards.push(value);

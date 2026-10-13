@@ -65,11 +65,13 @@ class TemperanceAppTest {
         app.connect()
         app.wireGuard.handshake = System.currentTimeMillis() - 5_000
         server.version = 4; server.remaining = 10
+        app.status = "Can't reach your family's Temperance right now. The last rules stay in effect."
         app.refresh()
-        assertEquals("Policy 4", app.status)
+        assertEquals("a successful refresh clears the status line", "", app.status)
         assertEquals(10u, app.child?.remainingMinutes)
         assertEquals(4uL, app.vault.load()?.state?.version)
         assertEquals(listOf("10 minutes left today"), notifications())
+        assertEquals("alerts are kept for the app too", listOf("10 minutes left today"), app.alerts.map { it.message })
         assertEquals(1, bodies("/v1/device/diagnostics").size)
 
         app.wireGuard.handshake = null
@@ -107,6 +109,18 @@ class TemperanceAppTest {
         })
         app.refresh()
         assertTrue(bodies("/v1/device/location").last().contains("41.88"))
+    }
+
+    @Test fun `location sharing is only reported as off once the child has been asked`() {
+        signIn()
+        app.refresh()
+        assertFalse(app.health.any { it.code == "location_off" })
+        app.askedLocation = true
+        app.refresh()
+        assertTrue(app.health.any { it.code == "location_off" })
+        shadowOf(app).grantPermissions(Manifest.permission.ACCESS_COARSE_LOCATION)
+        app.refresh()
+        assertFalse(app.health.any { it.code == "location_off" })
     }
 
     @Test fun `asking for time sends the request and shows it as pending`() {

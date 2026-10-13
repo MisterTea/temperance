@@ -311,7 +311,7 @@ describe("overview", () => {
       .getByRole("heading", { name: "Alex" })
       .closest("article")!;
     expect(alex.textContent).toContain("30");
-    expect(alex.textContent).toContain("Bedtime 21:00–07:00");
+    expect(alex.textContent).toContain("Bedtime 9:00 PM–7:00 AM");
 
     await user.click(screen.getByRole("button", { name: "Pause family" }));
     await screen.findByRole("button", { name: "Resume family" });
@@ -709,17 +709,17 @@ describe("usage and history", () => {
     });
     await waitFor(() => expect(alex.textContent).toContain("30 min"));
     expect(alex.textContent).toContain("▲ 50% vs previous 7 days");
-    expect(alex.textContent).toMatch(/video\s*30 min/);
+    expect(alex.textContent).toMatch(/Video & streaming\s*30 min/);
     expect(
       screen.getByRole("article", { name: "Sam usage summary" }).textContent,
-    ).toContain("No activity in the previous 7 days");
+    ).toContain("no activity in the 7 days before");
     expect(screen.getByRole("table").textContent).toContain(
-      "category:video: 30m",
+      "Video & streaming 30 min",
     );
 
     await user.selectOptions(screen.getByLabelText("Usage period"), "1");
     await waitFor(() =>
-      expect(alex.textContent).toContain("No activity in the previous day"),
+      expect(alex.textContent).toContain("no activity the day before"),
     );
     await user.selectOptions(screen.getByLabelText("Usage period"), "30");
     await waitFor(() => expect(alex.textContent).toContain("50 min"));
@@ -744,13 +744,13 @@ describe("usage and history", () => {
 
     const row = screen.getByText("games.example").closest("tr")!;
     await user.click(
-      within(row as HTMLElement).getByRole("button", { name: "allow" }),
+      within(row as HTMLElement).getByRole("button", { name: "Allow" }),
     );
     await waitFor(async () =>
       expect((await state()).profiles[0].allow).toEqual(["games.example"]),
     );
     await user.click(
-      within(row as HTMLElement).getByRole("button", { name: "unmanaged" }),
+      within(row as HTMLElement).getByRole("button", { name: "Unmanaged" }),
     );
     await waitFor(async () => {
       const p = (await state()).profiles[0];
@@ -766,6 +766,20 @@ describe("usage and history", () => {
 });
 
 describe("requests and rewards", () => {
+  it("answers pending requests from the overview", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    const waiting = screen.getByRole("region", { name: "Waiting for you" });
+    expect(waiting.textContent).toMatch(/asks for \d+ more minutes/);
+    expect(waiting.textContent).toContain("“Finishing a project”");
+    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Waiting for you" })).toBeNull(),
+    );
+    expect((await state()).requests[0].status).toBe("denied");
+  });
+
   it("sends and cancels rewards, answers requests, and clears notifications", async () => {
     await seedHousehold();
     await signIn();
@@ -795,7 +809,7 @@ describe("requests and rewards", () => {
 
     expect(screen.getByText("Finishing a project")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Approve" }));
-    await screen.findByText("approved");
+    await screen.findByText("Approved");
     expect((await state()).rewards.some((r) => r.minutes === 20)).toBe(true);
     expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
 
@@ -810,7 +824,7 @@ describe("requests and rewards", () => {
     const user = await openDashboard();
     await tab(user, "Requests");
     await user.click(screen.getByRole("button", { name: "Decline" }));
-    await screen.findByText("denied");
+    await screen.findByText("Declined");
   });
 });
 
@@ -888,6 +902,9 @@ describe("settings", () => {
     await signIn();
     const user = await openDashboard();
     await tab(user, "Settings");
+    expect(
+      screen.getByText(/Parent devices connect through the home gateway/),
+    ).toBeTruthy();
     const section = screen
       .getByRole("heading", { name: "Remote access" })
       .closest("section")!;
@@ -959,6 +976,103 @@ describe("settings", () => {
     await waitFor(async () =>
       expect((await state()).network).toEqual({ upnp: false }),
     );
+  });
+
+  it("pairs a parent phone with a QR code and removes it", async () => {
+    process.env.TEMPERANCE_FORWARD_SECRET = "f".repeat(64);
+    await seedHousehold();
+    await api("v1/gateway/activity", { remote: { pin: "PIN" } }, GATEWAY);
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Settings");
+    const view = within(
+      screen
+        .getByRole("heading", { name: "Parent devices" })
+        .closest("section")!,
+    );
+    await user.click(view.getByRole("button", { name: "Pair a parent device" }));
+    const qr = await view.findByRole("img", { name: /QR code/ });
+    expect(qr.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+    expect(view.getByRole("timer").textContent).toMatch(/10:00 more/);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    await user.click(view.getByRole("button", { name: "Copy pairing link" }));
+    const link: string = writeText.mock.calls[0][0];
+    expect(link).toMatch(/^temperance:\/\/pair#/);
+    expect(view.getByRole("button", { name: "Copied" })).toBeTruthy();
+
+    const { code } = JSON.parse(
+      atob(link.split("#")[1].replace(/-/g, "+").replace(/_/g, "/")),
+    );
+    const response = await handle(
+      new Request(`${ORIGIN}/v1/gateway/parents/pair`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-temperance-forwarded": "f".repeat(64),
+        },
+        body: JSON.stringify({
+          code,
+          name: "Robin's Pixel",
+          key: "k".repeat(43),
+        }),
+      }),
+      "v1/gateway/parents/pair",
+      repo,
+    );
+    expect(response.status).toBe(200);
+    await view.findByText(/Robin's Pixel is paired/, {}, { timeout: 5000 });
+    expect(view.queryByRole("img")).toBeNull();
+    await user.click(view.getByRole("button", { name: "Revoke" }));
+    await waitFor(async () =>
+      expect((await state()).parents?.[0].revoked).toBe(true),
+    );
+    expect(view.queryByText("Robin's Pixel")).toBeNull();
+  });
+
+  it("opens through a paired phone without Sign out or self-removal", async () => {
+    const FORWARD = "f".repeat(64);
+    process.env.TEMPERANCE_FORWARD_SECRET = FORWARD;
+    await setupOwner();
+    await api("v1/gateway/activity", { remote: { pin: "PIN" } }, GATEWAY);
+    const { link } = await api("api/parents/pairing", {}, ADMIN);
+    const { code } = JSON.parse(
+      Buffer.from(link.split("#")[1], "base64url").toString(),
+    );
+    const pair = (name: string, key: string) =>
+      handle(
+        new Request(`${ORIGIN}/v1/gateway/parents/pair`, {
+          method: "POST",
+          headers: { "x-temperance-forwarded": FORWARD },
+          body: JSON.stringify({ code, name, key }),
+        }),
+        "v1/gateway/parents/pair",
+        repo,
+      ).then((r) => r.json());
+    const { id } = await pair("Robin's Pixel", "k".repeat(43));
+    vi.stubGlobal(
+      "fetch",
+      (input: RequestInfo | URL, init: RequestInit = {}) => {
+        const headers = new Headers(init.headers);
+        headers.set("x-temperance-forwarded", FORWARD);
+        headers.set("x-temperance-parent", id);
+        return browserFetch(input, { ...init, headers });
+      },
+    );
+    const user = await openDashboard();
+    await screen.findByText("AWAY FROM HOME · ROBIN'S PIXEL");
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+    await tab(user, "Settings");
+    const view = within(
+      screen
+        .getByRole("heading", { name: "Parent devices" })
+        .closest("section")!,
+    );
+    expect(view.getByText("This phone")).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Revoke" })).toBeNull();
   });
 
   it("creates client users with assigned profiles and allows admin revocation", async () => {

@@ -1,0 +1,96 @@
+{
+  "title": "Pause and bedtime",
+  "subtitle": "Turn the internet off now, or on a schedule",
+  "steps": [
+    {
+      "say": "Dinner time? Pause one person instantly."
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Pause",
+        "exact": true,
+        "within": {
+          "css": "article.profile",
+          "hasText": "Jordan"
+        }
+      }
+    },
+    {
+      "say": "Every device on Jordan's profile is offline until you resume.",
+      "hold": 2600
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Resume",
+        "exact": true,
+        "within": {
+          "css": "article.profile",
+          "hasText": "Jordan"
+        }
+      }
+    },
+    {
+      "say": "Or pause the whole family at once."
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Pause family"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Resume family"
+      }
+    },
+    {
+      "say": "Bedtime and school-hours schedules switch the internet off automatically."
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Edit rules",
+        "within": {
+          "css": "article.profile",
+          "hasText": "Jordan"
+        }
+      }
+    },
+    {
+      "fill": {
+        "label": "Starts",
+        "exact": true
+      },
+      "value": "21:30"
+    },
+    {
+      "fill": {
+        "label": "Ends",
+        "exact": true
+      },
+      "value": "07:00"
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Save profile"
+      }
+    },
+    {
+      "say": "Jordan's overview card now shows the later 9:30 PM bedtime."
+    },
+    {
+      "show": {
+        "css": "article.profile",
+        "hasText": "Bedtime 9:30 PM–7:00 AM"
+      },
+      "hold": 2500
+    }
+  ]
+}

@@ -40,7 +40,7 @@ class MainActivityTest {
     private lateinit var controller: ActivityController<MainActivity>
     private val activity get() = controller.get()
 
-    @Before fun useFakeServer() { app.transport = server; ShadowVpnService.setPrepareResult(null) }
+    @Before fun useFakeServer() { app.transport = server; app.mode = "child"; ShadowVpnService.setPrepareResult(null) }
     @After fun close() { if (::controller.isInitialized) controller.pause().stop().destroy() }
 
     private fun launch() { controller = Robolectric.buildActivity(MainActivity::class.java).setup() }
@@ -70,6 +70,8 @@ class MainActivityTest {
         app.settle()
         assertEquals("robolectric", server.enrolledName)
         assertEquals(MainActivity.Screen.VPN, activity.screen)
+        assertEquals("the explanation shows before Android's dialog", null, shadowOf(activity).nextStartedActivityForResult)
+        view<Button>(R.id.allow_vpn).performClick()
         val prepare = shadowOf(activity).nextStartedActivityForResult
         assertEquals(MainActivity.REQUEST_VPN, prepare.requestCode)
         shadowOf(activity).receiveResult(prepare.intent, Activity.RESULT_CANCELED, null)
@@ -93,15 +95,30 @@ class MainActivityTest {
         assertEquals(MainActivity.Screen.STATUS, activity.screen)
         assertEquals(SessionService::class.java.name, shadowOf(activity).nextStartedService.component?.className)
         assertEquals(app.child!!.headline, text(R.id.headline))
+        assertEquals("the remaining time has its own line", app.child!!.detail, text(R.id.detail))
+        assertEquals(StatusText.remaining(app.child!!), text(R.id.remaining))
         assertEquals(StatusText.vpn(false, true), text(R.id.vpn_state))
         assertFalse(visible(R.id.health))
         assertFalse(visible(R.id.wifi_sign_in))
 
+        assertFalse(visible(R.id.next_change))
+        assertFalse(visible(R.id.alerts))
+        app.child = app.child!!.copy(nextChange = "Bedtime starts in 5 min")
+        val at = java.util.GregorianCalendar(2026, 9, 12, 9, 5).timeInMillis
+        app.alerts = listOf(TemperanceApp.Alert(at, "Your request for 30 minutes was approved"), TemperanceApp.Alert(at, "10 minutes left today"))
         app.connected = true
         app.health = diagnose(DeviceFacts(true, true, 600u, Connectivity.CaptivePortal(null), false, true, true, null), System.currentTimeMillis() / 1000)
         app.status = "Policy 3"
         shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(1))
         assertEquals(StatusText.vpn(true, true), text(R.id.vpn_state))
+        assertEquals("Bedtime starts in 5 min", text(R.id.next_change))
+        assertTrue(visible(R.id.next_change))
+        assertTrue(visible(R.id.alerts))
+        val clock = android.text.format.DateFormat.getTimeFormat(activity).format(java.util.Date(at))
+        val rows = view<android.view.ViewGroup>(R.id.alerts_list)
+        assertEquals("one row per alert, newest first", listOf("Your request for 30 minutes was approved", "10 minutes left today"),
+            (0 until rows.childCount).map { rows.getChildAt(it).findViewById<TextView>(R.id.alert_message).text.toString() })
+        assertEquals(clock, rows.getChildAt(0).findViewById<TextView>(R.id.alert_time).text.toString())
         assertTrue(visible(R.id.health))
         assertTrue(text(R.id.health).contains(app.health.first().message))
         assertEquals("Policy 3", text(R.id.status_line))
@@ -121,7 +138,7 @@ class MainActivityTest {
         app.settle()
         assertTrue(server.requests.last { it.url.endsWith("/v1/device/requests") }.body!!.contains("\"minutes\":30"))
         assertEquals("Request sent to your parents.", text(R.id.status_line))
-        assertFalse(view<Button>(R.id.ask_time).isEnabled)
+        assertFalse("a pending request hides the button", visible(R.id.ask_time))
         assertFalse(menu().findItem(R.id.menu_ask_time).isEnabled)
 
         select(R.id.menu_ask_time)
@@ -147,6 +164,7 @@ class MainActivityTest {
         assertEquals(Settings.ACTION_VPN_SETTINGS, nextActivity())
 
         select(R.id.menu_location)
+        assertTrue(app.askedLocation)
         val asked = shadowOf(activity).lastRequestedPermission
         assertEquals(MainActivity.REQUEST_LOCATION, asked.requestCode)
         activity.onRequestPermissionsResult(MainActivity.REQUEST_LOCATION, asked.requestedPermissions, intArrayOf(PackageManager.PERMISSION_GRANTED, PackageManager.PERMISSION_DENIED))

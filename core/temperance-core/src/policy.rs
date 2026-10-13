@@ -319,11 +319,25 @@ pub fn active_windows(p: &Profile, at: i64, tz: Tz) -> Vec<Window> {
         .collect()
 }
 
+/// The day a bedtime that runs past midnight started on, so that a late
+/// bedtime given in the evening still counts after midnight.
+pub fn bedtime_night(p: &Profile, at: i64, tz: Tz) -> String {
+    let (start, end) = (&p.bedtime.start, &p.bedtime.end);
+    let l = local(at, tz);
+    if start > end && l.clock.as_str() < end.as_str() {
+        local(at - 86_400, tz).day
+    } else {
+        l.day
+    }
+}
+
 fn bedtime_start(p: &Profile, at: i64, tz: Tz) -> String {
-    todays_rewards(p, at, tz)
-        .filter(|r| r.kind == "late_bedtime")
-        .filter_map(|r| r.bedtime.clone())
-        .last()
+    let night = bedtime_night(p, at, tz);
+    p.rewards
+        .iter()
+        .rev()
+        .filter(|r| r.kind == "late_bedtime" && r.day == night)
+        .find_map(|r| r.bedtime.clone())
         .unwrap_or_else(|| p.bedtime.start.clone())
 }
 

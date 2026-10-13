@@ -1,0 +1,107 @@
+{
+  "title": "Reaching home from anywhere",
+  "subtitle": "Automatic port forwarding and a free Dynu hostname",
+  "steps": [
+    {
+      "gateway": {
+        "network": {
+          "upnp": {
+            "state": "ok",
+            "ip": "203.0.113.25",
+            "message": "Router forwards UDP 51820 to this gateway",
+            "at": "{{now-30}}"
+          },
+          "ddns": null
+        }
+      }
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Settings",
+        "exact": true
+      }
+    },
+    {
+      "say": "Phones away from home connect back over the internet. The gateway asked the router to open its port automatically, using UPnP."
+    },
+    {
+      "show": {
+        "section": "Remote access"
+      },
+      "hold": 1500
+    },
+    {
+      "show": {
+        "role": "list",
+        "name": "Remote access status"
+      },
+      "hold": 2500
+    },
+    {
+      "say": "Most home internet addresses change now and then. A free Dynu hostname keeps pointing at your house."
+    },
+    {
+      "fill": {
+        "label": "/^Dynu hostname/"
+      },
+      "value": "jordanshouse.ddnsfree.com"
+    },
+    {
+      "fill": {
+        "label": "Dynu username"
+      },
+      "value": "family"
+    },
+    {
+      "fill": {
+        "label": "/^Dynu IP update password/"
+      },
+      "value": "ip-update-secret"
+    },
+    {
+      "gateway": {
+        "network": {
+          "upnp": {
+            "state": "ok",
+            "ip": "203.0.113.25",
+            "message": "Router forwards UDP 51820 to this gateway",
+            "at": "{{now-30}}"
+          },
+          "ddns": {
+            "state": "ok",
+            "ip": "203.0.113.25",
+            "message": "jordanshouse.ddnsfree.com points to 203.0.113.25",
+            "at": "{{now}}"
+          }
+        }
+      }
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Save remote access"
+      }
+    },
+    {
+      "say": "Once saved, the gateway keeps the hostname up to date and reports back here."
+    },
+    {
+      "show": {
+        "role": "list",
+        "name": "Remote access status"
+      },
+      "hold": 3000
+    },
+    {
+      "say": "Router without UPnP? The router guide covers TP-Link, eero and Netgear step by step."
+    },
+    {
+      "show": {
+        "role": "link",
+        "name": "Router guide"
+      },
+      "hold": 2500
+    }
+  ]
+}

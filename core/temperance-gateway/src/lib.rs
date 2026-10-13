@@ -7,6 +7,7 @@ pub mod dns;
 pub mod gateway;
 pub mod home;
 pub mod net;
+pub mod parent;
 pub mod policy;
 pub mod reach;
 pub mod wg;

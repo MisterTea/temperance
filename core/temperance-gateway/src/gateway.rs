@@ -21,6 +21,7 @@ use tokio::time::timeout;
 use crate::dns::{self, Destinations};
 use crate::home::{self, Router};
 use crate::net::{self, forwardable, Net, GATEWAY_IP, MTU, TCP, UDP};
+use crate::parent::{self, Parents};
 use crate::policy::{HistoryEntry, Policy, State, Verdict};
 use crate::reach;
 use crate::wg::{decode_key, Wireguard};
@@ -63,6 +64,9 @@ pub struct Config {
     /// UPnP discovery and dynamic DNS addresses (tests).
     #[serde(default)]
     pub reach: reach::Endpoints,
+    /// Parent phones reaching the dashboard over QUIC on the listen port.
+    #[serde(default)]
+    pub remote: Option<parent::Config>,
 }
 
 pub struct Flow {
@@ -87,6 +91,7 @@ pub struct Shared {
     router_counters: Mutex<home::Counters>,
     reach: Mutex<Option<std::sync::mpsc::Sender<reach::Command>>>,
     reach_report: Arc<Mutex<reach::Report>>,
+    parents: Option<Arc<Parents>>,
 }
 
 impl Shared {
@@ -225,6 +230,9 @@ impl Shared {
             let network = state.network.clone().unwrap_or_default();
             let _ = tx.send(reach::Command::Configure(network));
         }
+        if let Some(parents) = &self.parents {
+            parents.set_paired(&state.parents);
+        }
         let policy = Policy::new(
             state,
             &self.config.lan_networks,
@@ -296,6 +304,9 @@ impl Shared {
             .take_changed()
         {
             batch["network"] = network;
+        }
+        if let Some(parents) = &self.parents {
+            batch["remote"] = json!({"pin": parents.pin()});
         }
         batch
     }
@@ -660,8 +671,19 @@ impl Gateway {
             config.public_port.unwrap_or(local_addr.port()),
             reach_report.clone(),
         ));
+        let wg = Arc::new(Wireguard::new(key, socket));
+        let parents = match &config.remote {
+            Some(remote) => {
+                let _entered = runtime.enter();
+                let (parents, quic) = Parents::start(remote.clone(), wg.socket.clone())?;
+                wg.hand_quic_to(quic);
+                Some(parents)
+            }
+            None => None,
+        };
         let shared = Arc::new(Shared {
-            wg: Arc::new(Wireguard::new(key, socket)),
+            wg,
+            parents,
             config,
             policy: RwLock::default(),
             applied: Mutex::default(),
@@ -708,7 +730,15 @@ impl Gateway {
         self.shared.open_flows()
     }
 
+    /// Fingerprint parent phones pin, when parent access is on.
+    pub fn parent_pin(&self) -> Option<String> {
+        self.shared.parents.as_ref().map(|p| p.pin().to_string())
+    }
+
     pub fn stop(&mut self) {
+        if let Some(parents) = &self.shared.parents {
+            parents.stop();
+        }
         if let Some(runtime) = self.runtime.take() {
             runtime.shutdown_timeout(Duration::from_secs(1));
             let _ = self.shared.route_home(true);

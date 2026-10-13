@@ -3,8 +3,10 @@ import * as accounts from "./accounts";
 import { bearer, hash, origin, secrets, validateKey } from "./auth";
 import { mutate, repository, type Repository } from "./database";
 import * as service from "./service";
-import type { State } from "./model";
+import type { Parent, State } from "./model";
 import { localTime } from "./policy";
+
+const FORWARDED = "x-temperance-forwarded";
 
 class HTTPError extends Error {
   constructor(
@@ -80,19 +82,26 @@ export async function handle(
       return await accountRoute(request, path, repo);
     if (path.startsWith("api/")) {
       const { state } = await repo.read();
-      const actor = await principal(request);
+      const actor = await principal(request, state);
       if (!actor) throw new HTTPError(401, "Administrator sign-in required");
       if (
         write &&
+        actor.role === "admin" &&
         !bearer(request) &&
         request.headers.get("origin") !== origin()
       )
         throw new HTTPError(403, "Same-origin requests required");
+      if (actor.role === "parent") await seen(repo, actor.parent);
       if (!write) {
         const url = new URL(request.url),
           today = service.snapshot(state).day;
         if (path === "api/state") return json(service.snapshot(state));
-        if (path === "api/me") return json({ role: "admin" });
+        if (path === "api/me")
+          return json(
+            actor.role === "parent"
+              ? { role: "parent", id: actor.parent.id, name: actor.parent.name }
+              : { role: "admin" },
+          );
         if (path === "api/users")
           return json(accounts.users(state).map(accounts.publicUser));
         if (path === "api/usage")
@@ -223,6 +232,17 @@ export async function handle(
                 state,
                 z.object({ ip: z.string() }).parse(data).ip,
               );
+            case "api/parents/pairing":
+              return service.issueParentCode(state);
+            case "api/parents/revoke": {
+              const id = z.object({ id: z.string() }).parse(data).id;
+              if (actor.role === "parent" && actor.parent.id === id)
+                throw new HTTPError(
+                  400,
+                  "Remove this phone from another device, or from the dashboard at home",
+                );
+              return service.revokeParent(state, id);
+            }
             case "api/enrollment":
               return service.issueCode(
                 state,
@@ -320,6 +340,14 @@ export async function handle(
       const data = await body(request);
       return json(await mutate(repo, (state) => service.enroll(state, data)));
     }
+    if (path === "v1/gateway/parents/pair" && write) {
+      if (!(await fromGateway(request)))
+        throw new HTTPError(401, "Unauthorized");
+      const data = await body(request);
+      return json(
+        await mutate(repo, (state) => service.pairParent(state, data)),
+      );
+    }
     // Enrollment body is read outside the optimistic retry so it is replayable.
     if (path === "v1/gateway/state" || path === "v1/gateway/activity") {
       if ((await hash(bearer(request))) !== (await hash(secrets().gateway)))
@@ -415,12 +443,76 @@ function cookie(request: Request) {
     .find((s) => s.startsWith(cookieName + "="))
     ?.slice(cookieName.length + 1);
 }
-// Only the administrator password/session can change family policies or IAM users.
-async function principal(request: Request) {
+type Actor = { role: "admin" } | { role: "parent"; parent: Parent };
+/** The gateway proves it forwarded a request with its own secret: the per-run
+ * one the embedded gateway was started with, or the standalone gateway's token. */
+async function fromGateway(request: Request) {
+  const presented = request.headers.get(FORWARDED) ?? (bearer(request) || null);
+  if (presented === null) return false;
+  const digest = await hash(presented);
+  for (const secret of [
+    process.env.TEMPERANCE_FORWARD_SECRET,
+    process.env.TEMPERANCE_GATEWAY_TOKEN,
+  ])
+    if (secret && secret.length >= 32 && digest === (await hash(secret)))
+      return true;
+  return false;
+}
+// Only the administrator password/session, or a parent phone paired by it, can
+// change family policies or IAM users.
+async function principal(
+  request: Request,
+  state: State,
+): Promise<Actor | null> {
+  if (request.headers.has(FORWARDED)) {
+    if (!(await fromGateway(request))) return null;
+    const parent = service.activeParent(
+      state,
+      request.headers.get("x-temperance-parent") ?? "",
+    );
+    return parent ? { role: "parent", parent } : null;
+  }
   const token = bearer(request);
   if (token && (await hash(token)) === (await hash(secrets().admin)))
-    return true;
-  return accounts.verifyAdminSession(cookie(request) ?? "");
+    return { role: "admin" };
+  return (await accounts.verifyAdminSession(cookie(request) ?? ""))
+    ? { role: "admin" }
+    : null;
+}
+/** Last-seen for the dashboard's list; written at most once a minute. */
+async function seen(repo: Repository, parent: Parent) {
+  const at = Math.floor(Date.now() / 1000);
+  if (parent.last_seen && at - parent.last_seen < 60) return;
+  await mutate(repo, (state) => {
+    const current = service.activeParent(state, parent.id);
+    if (current) current.last_seen = at;
+  });
+}
+const FAILED_LOGIN_WINDOW = 15 * 60 * 1000;
+const failedLogins = new Map<string, number[]>();
+function recentFailures(key: string, at: number) {
+  const recent = (failedLogins.get(key) ?? []).filter(
+    (t) => at - t < FAILED_LOGIN_WINDOW,
+  );
+  if (recent.length) failedLogins.set(key, recent);
+  else failedLogins.delete(key);
+  return recent;
+}
+/** Ten wrong passwords from one address, or a hundred overall, pause sign-in for 15 minutes. */
+function loginAllowed(request: Request, at = Date.now()) {
+  const address =
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "direct";
+  return {
+    ok:
+      recentFailures(address, at).length < 10 &&
+      recentFailures("*", at).length < 100,
+    fail() {
+      for (const key of [address, "*"])
+        failedLogins.set(key, [...recentFailures(key, at), at]);
+    },
+  };
 }
 function sameOrigin(request: Request) {
   if (request.headers.get("origin") !== origin())
@@ -437,8 +529,16 @@ async function accountRoute(request: Request, path: string, repo: Repository) {
   const input = z
     .object({ password: z.string().max(200) })
     .parse(await body(request));
-  if ((await hash(input.password)) !== (await hash(secrets().admin)))
+  const limit = loginAllowed(request);
+  if (!limit.ok)
+    throw new HTTPError(
+      429,
+      "Too many wrong passwords. Wait 15 minutes, then try again.",
+    );
+  if ((await hash(input.password)) !== (await hash(secrets().admin))) {
+    limit.fail();
     throw new HTTPError(401, "Invalid admin password");
+  }
   return json({}, 200, {
     "Set-Cookie": sessionCookie(await accounts.adminSession(), 3600),
   });
@@ -615,6 +715,19 @@ function validateBackup(value: unknown): State {
           })
           .optional(),
       })
+      .optional(),
+    parents: z
+      .array(
+        z.object({
+          id: z.string().max(100),
+          name: z.string().max(80),
+          key: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+          created_at: stamp,
+          last_seen: stamp.optional(),
+          revoked: z.boolean().optional(),
+        }),
+      )
+      .max(100)
       .optional(),
   });
   const s = schema.parse(value) as State;

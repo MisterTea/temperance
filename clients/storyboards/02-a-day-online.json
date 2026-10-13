@@ -1,0 +1,27 @@
+{
+  "title": "A day on Riley's {{device}}",
+  "subtitle": "Riley can always see how much time is left and what comes next.",
+  "steps": [
+    { "used": 95 },
+    { "profile": { "name": "Riley", "bedtime": { "start": "{{clock+40}}", "end": "07:00" } } },
+    { "refresh": true },
+    { "say": "It's afternoon, and Riley has used most of today's two hours." },
+    { "show": "/\\b2\\d min(utes)? left/" },
+    { "say": "Bedtime is set on the family dashboard. Riley sees it coming instead of being cut off by surprise." },
+    { "show": "/Bedtime starts in/" },
+    { "used": 107 },
+    { "refresh": true },
+    { "say": "With a quarter of an hour to go, Temperance gives Riley a heads-up." },
+    { "show": "alert.fifteen" },
+    { "say": "Dinner's ready, so a parent pauses Riley from the dashboard." },
+    { "profile": { "name": "Riley", "paused": true } },
+    { "refresh": true },
+    { "show": "Internet paused" },
+    { "say": "The {{device}} says why the internet stopped, so there's nothing to argue with." },
+    { "show": "status.paused" },
+    { "say": "After dinner, the pause ends and Riley picks up right where they left off." },
+    { "profile": { "name": "Riley", "paused": false } },
+    { "refresh": true },
+    { "show": "You're online" }
+  ]
+}

@@ -81,7 +81,8 @@ pub fn child_status(state: DeviceState, now: i64) -> Result<ChildStatus, CoreErr
         remaining_minutes: state.status.remaining_minutes,
         next_change,
         pending_request: pending,
-        can_request_time: !pending && reason != "unmanaged" && p.managed,
+        // Extra time doesn't lift a pause.
+        can_request_time: !pending && !paused && reason != "unmanaged" && p.managed,
     })
 }
 
@@ -134,27 +135,37 @@ pub fn child_alerts(previous: Option<DeviceState>, current: DeviceState, now: i6
             alerts.push(format!("{} in {minutes} min", describe(&next)));
         }
     }
+    let answered: Vec<_> = current
+        .requests
+        .iter()
+        .filter(|r| {
+            r.status != "pending"
+                && prev
+                    .requests
+                    .iter()
+                    .any(|p| p.id == r.id && p.status == "pending")
+        })
+        .collect();
     for r in &current.policy.rewards {
-        if !prev.policy.rewards.iter().any(|p| p.id == r.id) {
+        // An approved request arrives as extra time too; its own alert says so.
+        let approval = r.kind == "extra_time"
+            && answered
+                .iter()
+                .any(|a| a.status == "approved" && Some(a.minutes) == r.minutes);
+        if !approval && !prev.policy.rewards.iter().any(|p| p.id == r.id) {
             alerts.push(reward_message(r));
         }
     }
-    for r in &current.requests {
-        let was_pending = prev
-            .requests
-            .iter()
-            .any(|p| p.id == r.id && p.status == "pending");
-        if was_pending && r.status != "pending" {
-            let verdict = if r.status == "approved" {
-                "approved"
-            } else {
-                "declined"
-            };
-            alerts.push(format!(
-                "Your request for {} minutes was {verdict}",
-                r.minutes
-            ));
-        }
+    for r in answered {
+        let verdict = if r.status == "approved" {
+            "approved"
+        } else {
+            "declined"
+        };
+        alerts.push(format!(
+            "Your request for {} minutes was {verdict}",
+            r.minutes
+        ));
     }
     alerts
 }

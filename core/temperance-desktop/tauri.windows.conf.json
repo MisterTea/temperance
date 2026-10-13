@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": { "windows/setup.ps1": "setup.ps1" },
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper" },
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
+  }
+}

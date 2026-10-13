@@ -1,0 +1,170 @@
+{
+  "choose.child": {
+    "android": "This is my child's device",
+    "ios": "This is my child's device",
+    "macos": "This is my child's device",
+    "windows": "This is my child's computer"
+  },
+  "choose.parent": {
+    "android": "I'm a parent",
+    "ios": "I'm a parent",
+    "macos": "I'm a parent",
+    "windows": "I'm a parent"
+  },
+  "signin.server": {
+    "android": { "id": "server" },
+    "ios": { "field": "Family dashboard address" },
+    "macos": { "field": "Family dashboard address" },
+    "windows": { "field": "Family dashboard address" }
+  },
+  "signin.username": {
+    "android": { "id": "username" },
+    "ios": { "field": "Username" },
+    "macos": { "field": "Username" },
+    "windows": { "field": "Username" }
+  },
+  "signin.password": {
+    "android": { "id": "password" },
+    "ios": { "field": "Password", "secure": true },
+    "macos": { "field": "Password", "secure": true },
+    "windows": { "field": "Password" }
+  },
+  "signin.name": {
+    "android": null,
+    "ios": { "field": "Name for this phone" },
+    "macos": { "field": "Name for this Mac" },
+    "windows": { "field": "Name for this computer" }
+  },
+  "signin.submit": {
+    "android": "Sign in",
+    "ios": "Sign in",
+    "macos": "Sign in",
+    "windows": "Sign in"
+  },
+  "vpn.allow": {
+    "android": "Allow VPN connection",
+    "ios": "Allow VPN connection",
+    "macos": "Allow VPN connection",
+    "windows": null
+  },
+  "status.remaining": {
+    "android": "/\\d+ minutes? left today/",
+    "ios": "/\\d+ min left today/",
+    "macos": "/\\d+ min left today/",
+    "windows": "/\\d+ min left today/"
+  },
+  "status.paused": {
+    "android": "/A parent paused/",
+    "ios": "/A parent paused/",
+    "macos": "/A parent paused/",
+    "windows": "/A parent paused/"
+  },
+  "alert.fifteen": {
+    "android": { "regex": "/\\d+ minutes left today/", "shade": true },
+    "ios": "/\\d+ minutes left today/",
+    "macos": "/\\d+ minutes left today/",
+    "windows": "/\\d+ minutes left today/"
+  },
+  "alert.approved": {
+    "android": { "text": "Your request for 30 minutes was approved", "shade": true },
+    "ios": "Your request for 30 minutes was approved",
+    "macos": "Your request for 30 minutes was approved",
+    "windows": "Your request for 30 minutes was approved"
+  },
+  "alert.extra": {
+    "android": "A parent gave you 20 extra minutes today",
+    "ios": "A parent gave you 20 extra minutes today",
+    "macos": "A parent gave you 20 extra minutes today",
+    "windows": "A parent gave you 20 extra minutes today"
+  },
+  "alert.bedtime": {
+    "android": "/A parent moved bedtime to \\d\\d:\\d\\d tonight/",
+    "ios": "/A parent moved bedtime to \\d\\d:\\d\\d tonight/",
+    "macos": "/A parent moved bedtime to \\d\\d:\\d\\d tonight/",
+    "windows": "/A parent moved bedtime to \\d\\d:\\d\\d tonight/"
+  },
+  "ask.open": {
+    "android": "Ask for more time",
+    "ios": null,
+    "macos": null,
+    "windows": "Ask for more time"
+  },
+  "ask.message": {
+    "android": { "id": "time_message" },
+    "ios": { "field": "Why do you need more time?" },
+    "macos": { "field": "Why do you need more time?" },
+    "windows": { "field": "Why do you need more time?" }
+  },
+  "ask.30": {
+    "android": "30 minutes",
+    "ios": "+30 min",
+    "macos": "+30 min",
+    "windows": "Ask for 30 min"
+  },
+  "ask.send": {
+    "android": "Send",
+    "ios": null,
+    "macos": null,
+    "windows": null
+  },
+  "ask.pending": {
+    "android": "/waiting for a parent/",
+    "ios": "/waiting for a parent/",
+    "macos": "/waiting for a parent/",
+    "windows": "/waiting for a parent/"
+  },
+  "pair.scan": {
+    "android": "Scan the QR code",
+    "ios": null,
+    "macos": null,
+    "windows": null
+  },
+  "pair.link": {
+    "android": { "id": "link" },
+    "ios": { "field": "Or paste the pairing link" },
+    "macos": { "field": "Paste the pairing link" },
+    "windows": { "field": "Pairing link" }
+  },
+  "pair.name": {
+    "android": { "id": "phone_name" },
+    "ios": { "field": "Name for this phone" },
+    "macos": { "field": "Name for this Mac" },
+    "windows": { "field": "Name for this computer" }
+  },
+  "pair.submit": {
+    "android": "Pair",
+    "ios": "Pair",
+    "macos": "Pair",
+    "windows": "Pair and open the dashboard"
+  },
+  "dashboard.away": {
+    "android": "/away from home/i",
+    "ios": "/away from home/i",
+    "macos": "/away from home/i",
+    "windows": { "regex": "/away from home/i", "window": "dashboard" }
+  },
+  "dashboard.approve": {
+    "android": "Approve",
+    "ios": "Approve",
+    "macos": "Approve",
+    "windows": { "text": "Approve", "window": "dashboard" }
+  },
+  "dashboard.close": {
+    "android": null,
+    "ios": "Done",
+    "macos": "Done",
+    "windows": { "close": "dashboard" }
+  },
+  "paired.open": {
+    "android": null,
+    "ios": "Open dashboard",
+    "macos": "Open dashboard",
+    "windows": "Open family dashboard"
+  },
+  "paired.unpair": {
+    "android": { "text": "Unpair this phone", "menu": true },
+    "ios": "Unpair this phone",
+    "macos": "Unpair this Mac",
+    "windows": "Unpair this computer"
+  }
+}

@@ -15,6 +15,7 @@ import android.provider.Settings
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
@@ -24,9 +25,42 @@ import android.widget.TextView
 import android.widget.Toast
 import uniffi.temperance_core.coreVersion
 
+/** Edge-to-edge is enforced on Android 15+; keep content clear of bars and the keyboard and centred on tablets. */
+internal fun Activity.fitSystemBars(screen: View) {
+    val column = findViewById<View?>(R.id.column)
+    val base = column?.paddingStart ?: 0
+    fun centre(width: Int) {
+        column ?: return
+        val maxWidth = (640 * resources.displayMetrics.density).toInt()
+        val side = maxOf(base, (width - maxWidth) / 2)
+        if (side != column.paddingStart) column.setPaddingRelative(side, column.paddingTop, side, column.paddingBottom)
+    }
+    // The framework action bar already pads android.R.id.content; only the insets passed down remain.
+    // Margins rather than padding, so ScrollView's scroll-to-focus keeps fields above the keyboard.
+    screen.setOnApplyWindowInsetsListener { view, insets ->
+        val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        val ime = insets.getInsets(WindowInsets.Type.ime())
+        val params = view.layoutParams as android.view.ViewGroup.MarginLayoutParams
+        val bottom = maxOf(bars.bottom, ime.bottom)
+        if (params.leftMargin != bars.left || params.topMargin != bars.top || params.rightMargin != bars.right || params.bottomMargin != bottom) {
+            params.setMargins(bars.left, bars.top, bars.right, bottom)
+            view.layoutParams = params
+        }
+        insets
+    }
+    screen.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or, _ -> if (r - l != or - ol) screen.post { centre(r - l) } }
+    screen.requestApplyInsets()
+}
+
+internal fun defaultDeviceName(): String {
+    val model = Build.MODEL.orEmpty()
+    val maker = Build.MANUFACTURER.orEmpty().replaceFirstChar { it.uppercase() }
+    return (if (model.startsWith(maker, ignoreCase = true)) model else "$maker $model").trim().take(80).ifEmpty { "Android device" }
+}
+
 class MainActivity : Activity() {
     enum class Screen(val layout: Int) {
-        SETUP(R.layout.screen_setup), VPN(R.layout.screen_vpn), STATUS(R.layout.screen_status)
+        CHOOSE(R.layout.screen_choose), SETUP(R.layout.screen_setup), VPN(R.layout.screen_vpn), STATUS(R.layout.screen_status)
     }
 
     private val app get() = application as TemperanceApp
@@ -36,14 +70,17 @@ class MainActivity : Activity() {
     private var busy = false
     private var error: String? = null
     private var vpnDenied = false
-    private var askedVpn = false
 
     val screen: Screen? get() = shown
     /** The dialog currently on screen, if any. */
     var dialog: AlertDialog? = null
         private set
 
+    /** A parent's phone never asks for the VPN; an enrolled child device never leaves child mode. */
+    private fun parentMode() = !app.enrolled && (app.paired || app.mode == "parent")
+
     private fun current() = when {
+        !app.enrolled && app.mode == null -> Screen.CHOOSE
         !app.enrolled -> Screen.SETUP
         !app.vpnPermission() -> Screen.VPN
         else -> Screen.STATUS
@@ -51,7 +88,6 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        askedVpn = savedInstanceState?.getBoolean("askedVpn") ?: false
         vpnDenied = savedInstanceState?.getBoolean("vpnDenied") ?: false
         show()
         if (app.enrolled && app.vpnPermission()) startVpn()
@@ -59,10 +95,15 @@ class MainActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean("askedVpn", askedVpn); outState.putBoolean("vpnDenied", vpnDenied)
+        outState.putBoolean("vpnDenied", vpnDenied)
     }
 
     private fun show() {
+        if (parentMode()) {
+            handler.removeCallbacks(tick)
+            startActivity(Intent(this, ParentActivity::class.java))
+            return finish()
+        }
         val next = current()
         if (next != shown) {
             val restore = shown == null
@@ -71,6 +112,7 @@ class MainActivity : Activity() {
             setContentView(next.layout)
             fitSystemBars((findViewById<android.view.ViewGroup>(android.R.id.content)).getChildAt(0))
             when (next) {
+                Screen.CHOOSE -> bindChoose()
                 Screen.SETUP -> bindSetup()
                 Screen.VPN -> bindVpn()
                 Screen.STATUS -> bindStatus()
@@ -78,32 +120,6 @@ class MainActivity : Activity() {
             invalidateOptionsMenu()
         }
         render()
-    }
-
-    /** Edge-to-edge is enforced on Android 15+; keep content clear of bars and the keyboard and centred on tablets. */
-    private fun fitSystemBars(screen: View) {
-        val column = findViewById<View>(R.id.column)
-        val base = column.paddingStart
-        fun centre(width: Int) {
-            val maxWidth = (640 * resources.displayMetrics.density).toInt()
-            val side = maxOf(base, (width - maxWidth) / 2)
-            if (side != column.paddingStart) column.setPaddingRelative(side, column.paddingTop, side, column.paddingBottom)
-        }
-        // The framework action bar already pads android.R.id.content; only the insets passed down remain.
-        // Margins rather than padding, so ScrollView's scroll-to-focus keeps fields above the keyboard.
-        screen.setOnApplyWindowInsetsListener { view, insets ->
-            val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-            val ime = insets.getInsets(WindowInsets.Type.ime())
-            val params = view.layoutParams as android.view.ViewGroup.MarginLayoutParams
-            val bottom = maxOf(bars.bottom, ime.bottom)
-            if (params.leftMargin != bars.left || params.topMargin != bars.top || params.rightMargin != bars.right || params.bottomMargin != bottom) {
-                params.setMargins(bars.left, bars.top, bars.right, bottom)
-                view.layoutParams = params
-            }
-            insets
-        }
-        screen.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or, _ -> if (r - l != or - ol) screen.post { centre(r - l) } }
-        screen.requestApplyInsets()
     }
 
     private fun showError(view: TextView, message: String?) {
@@ -129,17 +145,16 @@ class MainActivity : Activity() {
             run { app.signIn(values.first, values.second, values.third, defaultDeviceName()) }
         }
         password.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_GO).also { if (it) submit.performClick() } }
+        findViewById<Button>(R.id.parent_instead).setOnClickListener { app.mode = "parent"; show() }
     }
 
-    private fun defaultDeviceName(): String {
-        val model = Build.MODEL.orEmpty()
-        val maker = Build.MANUFACTURER.orEmpty().replaceFirstChar { it.uppercase() }
-        return (if (model.startsWith(maker, ignoreCase = true)) model else "$maker $model").trim().take(80).ifEmpty { "Android device" }
+    private fun bindChoose() {
+        findViewById<Button>(R.id.choose_child).setOnClickListener { app.mode = "child"; show() }
+        findViewById<Button>(R.id.choose_parent).setOnClickListener { app.mode = "parent"; show() }
     }
 
     private fun bindVpn() {
         findViewById<Button>(R.id.allow_vpn).setOnClickListener { requestVpn() }
-        if (!askedVpn) { askedVpn = true; requestVpn() }
     }
 
     private fun requestVpn() {
@@ -175,6 +190,7 @@ class MainActivity : Activity() {
                 button.setText(if (busy) R.string.signing_in else R.string.sign_in)
                 showError(findViewById(R.id.error), error)
             }
+            Screen.CHOOSE -> {}
             Screen.VPN -> showError(findViewById(R.id.error), if (vpnDenied) getString(R.string.vpn_denied) else error)
             Screen.STATUS -> renderStatus()
             null -> {}
@@ -184,7 +200,9 @@ class MainActivity : Activity() {
     private fun renderStatus() {
         val child = app.child ?: return
         findViewById<TextView>(R.id.headline).text = child.headline
-        findViewById<TextView>(R.id.detail).text = StatusText.detail(child)
+        findViewById<TextView>(R.id.detail).apply { text = child.detail; visibility = if (child.detail.isBlank()) View.GONE else View.VISIBLE }
+        findViewById<TextView>(R.id.remaining).text = StatusText.remaining(child)
+        findViewById<TextView>(R.id.next_change).apply { text = child.nextChange; visibility = if (child.nextChange.isNullOrBlank()) View.GONE else View.VISIBLE }
         val vpn = findViewById<TextView>(R.id.vpn_state)
         vpn.text = StatusText.vpn(app.connected, app.vpnPermission())
         vpn.compoundDrawableTintList = ColorStateList.valueOf(getColor(if (app.connected) R.color.brand else R.color.error))
@@ -201,7 +219,24 @@ class MainActivity : Activity() {
         }
         health.visibility = if (issues.isEmpty()) View.GONE else View.VISIBLE
         findViewById<View>(R.id.wifi_sign_in).visibility = if (StatusText.needsWifiSignIn(issues)) View.VISIBLE else View.GONE
-        findViewById<Button>(R.id.ask_time).isEnabled = child.canRequestTime && !child.pendingRequest && !busy
+        val alerts = app.alerts
+        val list = findViewById<ViewGroup>(R.id.alerts_list)
+        if (list.tag != alerts) {
+            val clock = android.text.format.DateFormat.getTimeFormat(this)
+            list.removeAllViews()
+            for (alert in alerts) {
+                val row = layoutInflater.inflate(R.layout.alert_row, list, false)
+                row.findViewById<TextView>(R.id.alert_time).text = clock.format(java.util.Date(alert.at))
+                row.findViewById<TextView>(R.id.alert_message).text = alert.message
+                list.addView(row)
+            }
+            list.tag = alerts
+        }
+        findViewById<View>(R.id.alerts).visibility = if (alerts.isEmpty()) View.GONE else View.VISIBLE
+        findViewById<Button>(R.id.ask_time).apply {
+            visibility = if (child.canRequestTime && !child.pendingRequest) View.VISIBLE else View.GONE
+            isEnabled = !busy
+        }
         val line = error ?: app.status
         findViewById<TextView>(R.id.status_line).apply { text = line; visibility = if (line.isBlank()) View.GONE else View.VISIBLE }
     }
@@ -223,7 +258,7 @@ class MainActivity : Activity() {
             R.id.menu_ask_time -> askForTime()
             R.id.menu_wifi -> openWifi()
             R.id.menu_vpn_settings -> startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
-            R.id.menu_location -> requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), REQUEST_LOCATION)
+            R.id.menu_location -> { app.askedLocation = true; requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), REQUEST_LOCATION) }
             R.id.menu_about -> about()
             else -> return super.onOptionsItemSelected(item)
         }

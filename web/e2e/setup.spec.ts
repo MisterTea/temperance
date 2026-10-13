@@ -37,7 +37,7 @@ test("a fresh install walks the parent through the admin account and first rules
     name: "Starting rules for your first family member",
   });
   await expect(rules).toBeVisible();
-  const progress=page.getByRole("list",{name:"Setup progress"});
+  const progress = page.getByRole("list", { name: "Setup progress" });
   await expect(progress.locator('[aria-current="step"]')).toContainText(
     "Family rules",
   );

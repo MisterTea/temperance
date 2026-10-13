@@ -12,6 +12,7 @@ const AGES = [
 ] as const;
 const OPTIONAL: Category[] = ["social", "video", "gaming", "shopping", "ads"];
 type Age = (typeof AGES)[number]["value"];
+const minutes = (text: string) => (text === "" ? "" : Number(text));
 
 /**
  * First-run experience. `mode="account"` starts on a fresh install (no parent
@@ -30,14 +31,14 @@ export function Onboarding({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [age, setAge] = useState<Age>("kid");
-  const [limit, setLimit] = useState(90);
+  const [limit, setLimit] = useState<number | "">(90);
   const [bedtime, setBedtime] = useState(true);
   const [start, setStart] = useState("21:00");
   const [end, setEnd] = useState("07:00");
   const [blocked, setBlocked] = useState<Category[]>([]);
   const [safe, setSafe] = useState(true);
   const [games, setGames] = useState(true);
-  const [gameMinutes, setGameMinutes] = useState(45);
+  const [gameMinutes, setGameMinutes] = useState<number | "">(45);
   const [gameDomains, setGameDomains] = useState([...CATALOG.gaming.domains]);
   const [saved, setSaved] = useState<string>();
 
@@ -151,7 +152,7 @@ export function Onboarding({
               await api("/api/profiles", {
                 name,
                 filter_level: age,
-                limit,
+                limit: Number(limit),
                 categories: blocked,
                 safe_search: safe,
                 youtube_restricted: safe,
@@ -165,7 +166,7 @@ export function Onboarding({
                           id: "games",
                           name: "Games",
                           domains: gameDomains,
-                          minutes: gameMinutes,
+                          minutes: Number(gameMinutes),
                         },
                       ]
                     : [],
@@ -196,7 +197,12 @@ export function Onboarding({
                     <small>
                       Blocks{" "}
                       {PRESETS[a.value]
-                        .map((c) => CATALOG[c].name.toLowerCase())
+                        .map((c) => CATALOG[c].name)
+                        .map((n) =>
+                          /^[A-Z]{2}/.test(n)
+                            ? n
+                            : n[0].toLowerCase() + n.slice(1),
+                        )
                         .join(", ")}
                     </small>
                   </span>
@@ -211,8 +217,9 @@ export function Onboarding({
                 type="number"
                 min={0}
                 max={1440}
+                required
                 value={limit}
-                onChange={(e) => setLimit(Number(e.target.value))}
+                onChange={(e) => setLimit(minutes(e.target.value))}
               />
               <small>0 means no daily limit.</small>
             </label>
@@ -301,7 +308,7 @@ export function Onboarding({
                     max={1440}
                     required
                     value={gameMinutes}
-                    onChange={(e) => setGameMinutes(Number(e.target.value))}
+                    onChange={(e) => setGameMinutes(minutes(e.target.value))}
                   />
                 </label>
                 <DomainList

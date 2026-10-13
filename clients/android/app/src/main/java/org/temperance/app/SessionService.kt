@@ -14,9 +14,9 @@ class SessionService : Service() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("vpn", "Family VPN", NotificationManager.IMPORTANCE_LOW))
-        startForeground(1, Notification.Builder(this, "vpn").setContentTitle("Temperance VPN").setContentText("Family rules apply at your gateway").setSmallIcon(android.R.drawable.ic_lock_lock).build())
+        startForeground(1, Notification.Builder(this, "vpn").setContentTitle("Temperance VPN").setContentText("Your family's rules apply on this device").setSmallIcon(android.R.drawable.ic_lock_lock).build())
         val app = application as TemperanceApp
-        scheduler.scheduleWithFixedDelay({ try { app.refresh() } catch (_: Exception) { app.status = "Policy refresh unavailable; VPN stays connected" } }, 30, 30, TimeUnit.SECONDS)
+        scheduler.scheduleWithFixedDelay({ try { app.refresh() } catch (_: Exception) { app.status = "Can't reach your family's Temperance right now. The last rules stay in effect." } }, 30, 30, TimeUnit.SECONDS)
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = application as TemperanceApp

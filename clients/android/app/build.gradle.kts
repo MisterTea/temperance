@@ -43,7 +43,7 @@ val buildRustCore by tasks.registering(Exec::class) {
 // JVM unit tests load the host build of the same core.
 val buildRustHost by tasks.registering(Exec::class) {
     workingDir = rootDir.resolve("../../core")
-    commandLine("cargo", "build", "-p", "temperance-core")
+    commandLine("cargo", "build", "-p", "temperance-core", "--features", "remote")
 }
 tasks.named("preBuild") { dependsOn(buildRustCore) }
 
@@ -67,6 +67,11 @@ tasks.register<JacocoCoverageVerification>("unitTestCoverageCheck") {
 dependencies {
     implementation("com.wireguard.android:tunnel:1.0.20260102")
     implementation("net.java.dev.jna:jna:5.17.0@aar")
+    // Parent mode: scan the dashboard's pairing QR code.
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     testImplementation("junit:junit:4.13.2")

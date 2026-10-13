@@ -63,6 +63,7 @@ class SetupFlowTest {
     @Test fun signInEnrollsAsksForVpnPermissionAndConnects() {
         val scenario = launch()
         signIn()
+        onView(withId(R.id.allow_vpn)).perform(click())
         // Android's own VPN consent dialog, then the notification permission prompt.
         tapSystem("OK")
         tapSystem("Allow")
@@ -79,6 +80,7 @@ class SetupFlowTest {
     @Test fun decliningVpnPermissionExplainsAndCanRetry() {
         val scenario = launch()
         signIn()
+        onView(withId(R.id.allow_vpn)).perform(click())
         tapSystem("Cancel")
         waitForScreen(scenario, MainActivity.Screen.VPN)
         onView(withId(R.id.error)).check(matches(withText(R.string.vpn_denied)))
@@ -91,6 +93,7 @@ class SetupFlowTest {
     @Test fun setupSurvivesRotation() {
         val scenario = launch()
         signIn()
+        onView(withId(R.id.allow_vpn)).perform(click())
         tapSystem("Cancel")
         waitForScreen(scenario, MainActivity.Screen.VPN)
         TestSupport.device.setOrientationLeft()

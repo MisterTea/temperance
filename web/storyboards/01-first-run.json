@@ -1,0 +1,98 @@
+{
+  "title": "Setting up Temperance",
+  "subtitle": "From a fresh install to the first family rules",
+  "signedIn": false,
+  "steps": [
+    {
+      "say": "Temperance runs on a computer at home. Open its dashboard and sign in with the admin password the installer printed."
+    },
+    {
+      "fill": {
+        "label": "Admin password"
+      },
+      "value": "{{admin}}"
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Sign in"
+      }
+    },
+    {
+      "say": "The first time you sign in, a short wizard sets up your first family member."
+    },
+    {
+      "fill": {
+        "label": "Their name"
+      },
+      "value": "Jordan"
+    },
+    {
+      "say": "Pick an age. Each preset fills in sensible filters and a daily screen-time limit."
+    },
+    {
+      "check": {
+        "label": "/^Teen/"
+      }
+    },
+    {
+      "show": {
+        "label": "/Daily screen-time limit/"
+      }
+    },
+    {
+      "say": "Block whole categories of sites, like social media…"
+    },
+    {
+      "check": {
+        "label": "Social media"
+      }
+    },
+    {
+      "say": "…and give all of Jordan's games one shared daily budget."
+    },
+    {
+      "fill": {
+        "label": "Minutes per day for all games together"
+      },
+      "value": "60"
+    },
+    {
+      "fill": {
+        "label": "Games in the group"
+      },
+      "value": "roblox.com\nminecraft.net\nfortnite.com"
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Save rules"
+      }
+    },
+    {
+      "say": "Jordan's rules are saved. Next you would connect a device; for now, head to the dashboard."
+    },
+    {
+      "show": {
+        "role": "heading",
+        "name": "/rules are ready/"
+      }
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Go to dashboard"
+      }
+    },
+    {
+      "say": "The overview shows each family member's day at a glance: time used, time left and what is blocked."
+    },
+    {
+      "show": {
+        "css": "article.profile",
+        "hasText": "Jordan"
+      },
+      "hold": 2500
+    }
+  ]
+}

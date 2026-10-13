@@ -1,0 +1,161 @@
+{
+  "title": "The dashboard away from home",
+  "subtitle": "Pair a parent's phone once, then answer from work or mobile data",
+  "steps": [
+    {
+      "gateway": {
+        "remote": {
+          "pin": "kQ7xR2vN9pL4mZ8sT1wY6bC3dF5gH0jK2nP7qS9uV4w"
+        }
+      }
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Settings",
+        "exact": true
+      }
+    },
+    {
+      "say": "Rules sometimes need changing when no one is home. A parent's phone can open this dashboard from anywhere, through the same gateway port."
+    },
+    {
+      "show": {
+        "section": "Parent devices"
+      },
+      "hold": 2000
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Pair a parent device"
+      }
+    },
+    {
+      "say": "On the parent's phone, install Temperance, choose I'm a parent and scan the code. No VPN, nothing to forward, no certificates."
+    },
+    {
+      "show": {
+        "role": "img",
+        "name": "QR code to pair a parent device"
+      },
+      "hold": 2500
+    },
+    {
+      "say": "Each code works once, for ten minutes. On a computer, copy the link and paste it into the app."
+    },
+    {
+      "show": {
+        "role": "timer"
+      },
+      "hold": 1500
+    },
+    {
+      "parentPair": {
+        "as": "robin",
+        "name": "Robin's phone"
+      }
+    },
+    {
+      "wait": 3500
+    },
+    {
+      "show": {
+        "text": "/is paired and can open the dashboard/"
+      },
+      "hold": 2500
+    },
+    {
+      "title": "Later, at work",
+      "subtitle": "Robin's phone is on mobile data, far from home"
+    },
+    {
+      "device": {
+        "as": "phone",
+        "path": "/v1/device/requests",
+        "body": {
+          "minutes": 15,
+          "message": "Can I have 15 more minutes? My group call ran long."
+        }
+      }
+    },
+    {
+      "parentView": "robin"
+    },
+    {
+      "say": "The app opens the same dashboard. It knows it's a parent's phone away from home."
+    },
+    {
+      "show": {
+        "text": "/away from home/i",
+        "within": {
+          "css": "header"
+        }
+      },
+      "hold": 2500
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Requests",
+        "exact": true
+      }
+    },
+    {
+      "show": {
+        "css": ".row-card",
+        "hasText": "group call"
+      },
+      "hold": 2000
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Approve",
+        "within": {
+          "css": ".row-card",
+          "hasText": "group call"
+        }
+      }
+    },
+    {
+      "say": "Approved from the office. Jordan's phone hears back right away."
+    },
+    {
+      "parentView": null
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Settings",
+        "exact": true
+      }
+    },
+    {
+      "say": "Lost a phone? Revoke it here, and it stops reaching home within seconds."
+    },
+    {
+      "show": {
+        "css": ".row-card",
+        "hasText": "Robin's phone"
+      },
+      "hold": 2000
+    },
+    {
+      "click": {
+        "role": "button",
+        "name": "Revoke",
+        "within": {
+          "css": ".row-card",
+          "hasText": "Robin's phone"
+        }
+      }
+    },
+    {
+      "show": {
+        "section": "Parent devices"
+      },
+      "hold": 2500
+    }
+  ]
+}

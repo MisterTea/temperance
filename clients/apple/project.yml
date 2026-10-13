@@ -7,6 +7,9 @@ settings:
     DEVELOPMENT_TEAM: ''
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: NO
+    # Generated Info.plists take their versions from these; iOS won't install a bundle without them.
+    MARKETING_VERSION: 0.5.0
+    CURRENT_PROJECT_VERSION: 1
 packages:
   WireGuardKit:
     path: Vendor/wireguard-apple
@@ -23,6 +26,7 @@ targetTemplates:
         INFOPLIST_KEY_CFBundleDisplayName: Temperance
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: Your parents can ask where this device is. Temperance shares one location only when they ask, and tells you when it does.
         INFOPLIST_KEY_NSLocationUsageDescription: Your parents can ask where this device is. Temperance shares one location only when they ask, and tells you when it does.
+        INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing code on your family dashboard to open it from anywhere.
         INFOPLIST_KEY_KeychainAccessGroup: $(AppIdentifierPrefix)org.temperance.shared
         CODE_SIGN_ENTITLEMENTS: App/App.entitlements
     preBuildScripts:
@@ -83,6 +87,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.temperance.ios
         INFOPLIST_KEY_TunnelBundleIdentifier: org.temperance.ios.tunnel
+        # Without a launch screen iOS letterboxes the app at an old iPhone size.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         TARGETED_DEVICE_FAMILY: '1,2'
     dependencies:
       - target: TemperanceIOSTunnel
@@ -117,7 +123,27 @@ targets:
       - name: Build WireGuard Go bridge
         script: '"$SRCROOT/build-bridge.sh"'
         basedOnDependencyAnalysis: false
+  # Remote control for recording the client storyboards (clients/storyboards).
+  TemperanceIOSStoryboard:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: '16.0'
+    sources: [Storyboard]
+    dependencies:
+      - target: TemperanceIOS
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: org.temperance.ios.storyboard
+        TEST_TARGET_NAME: TemperanceIOS
 schemes:
+  TemperanceIOSStoryboard:
+    build:
+      targets:
+        TemperanceIOS: all
+        TemperanceIOSStoryboard: [test]
+    test:
+      targets: [TemperanceIOSStoryboard]
   TemperanceMac:
     build:
       targets:

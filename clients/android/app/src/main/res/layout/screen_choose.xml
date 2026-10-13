@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/screen_choose"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout style="@style/Screen" android:id="@+id/column">
+
+        <TextView style="@style/Title" android:text="@string/choose_title" android:accessibilityHeading="true" />
+        <TextView style="@style/Body" android:text="@string/choose_intro" />
+
+        <Button android:id="@+id/choose_child" style="@style/Primary" android:text="@string/choose_child" />
+        <Button android:id="@+id/choose_parent" style="@style/Primary" android:text="@string/choose_parent" />
+    </LinearLayout>
+</ScrollView>

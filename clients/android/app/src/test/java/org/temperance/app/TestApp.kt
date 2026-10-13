@@ -16,6 +16,7 @@ class TestApp : TemperanceApp() {
     val wireGuard = FakeBackend()
     override fun createBackend() = wireGuard
     override fun createVault() = Vault(this) { SecretKeySpec(ByteArray(32) { it.toByte() }, "AES") }
+    override fun createParentVault() = Sealed(this, "parent_vault") { SecretKeySpec(ByteArray(32) { it.toByte() }, "AES") }
 
     companion object {
         val current get() = RuntimeEnvironment.getApplication() as TestApp

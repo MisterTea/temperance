@@ -8,6 +8,7 @@
   color: #203c36;
   background: #f6f8f5;
   font-synthesis: none;
+  accent-color: #26715d;
   --green: #26715d;
   --muted: #71847b;
   --line: #e2e9e2;
@@ -335,8 +336,33 @@ td {
   padding: 14px 19px;
   border-top: 1px solid #eff2ed;
 }
-td button {
+td button,
+.row-card button {
   padding: 5px 9px;
+  margin: 2px 6px 2px 0;
+  background: white;
+  color: #395f4e;
+  border-color: #d6e1d6;
+}
+.row-card button {
+  padding: 8px 12px;
+}
+td button.on {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+}
+.devices th,
+.devices td {
+  white-space: nowrap;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.devices .inline-name {
+  min-width: 11em;
+}
+.devices .issues {
+  white-space: normal;
 }
 .domain {
   font-family: ui-monospace, monospace;
@@ -479,6 +505,34 @@ legend {
   font-size: 13px;
   margin-bottom: 24px;
 }
+.notice.success,
+section > .notice[role="status"] {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+.pairing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.pairing img {
+  border: 1px solid var(--line, #e3e6df);
+  border-radius: 9px;
+  background: #fff;
+}
+.pairing ol {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.pairing small {
+  display: block;
+  color: var(--muted);
+}
 .issues {
   list-style: none;
   margin: 6px 0 0;
@@ -518,6 +572,10 @@ legend {
   min-width: 9em;
   width: 100%;
   max-width: 220px;
+  margin-top: 0;
+}
+td select {
+  margin-top: 0;
 }
 td select {
   min-width: 8em;
@@ -679,7 +737,7 @@ td select {
 .two {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 0 16px;
 }
 .checks {
   display: flex;
@@ -708,6 +766,10 @@ input[type="radio"] {
   input[type="radio"] {
     width: 24px;
     height: 24px;
+  }
+  td a {
+    display: inline-block;
+    line-height: 24px;
   }
 }
 .editor {
@@ -795,7 +857,12 @@ td small {
   color: var(--muted);
 }
 .row-card small {
+  display: block;
   font-size: 11px;
+  margin-top: 4px;
+}
+.row-card label {
+  margin: 0;
 }
 .banner {
   padding: 15px;
@@ -806,6 +873,10 @@ td small {
 }
 main > section {
   margin-bottom: 30px;
+}
+main > section > p {
+  font-size: 14px;
+  line-height: 1.5;
 }
 button:disabled {
   opacity: 0.6;
@@ -846,10 +917,26 @@ select {
   .enrollment {
     display: block;
   }
+  aside {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 10px 14px;
+  }
+  .brand {
+    flex: none;
+    margin-right: 8px;
+  }
+  .brand small {
+    display: none;
+  }
   .nav {
     display: inline-block;
-    margin: 4px;
-    padding: 8px;
+    flex: none;
+    margin: 0;
+    padding: 8px 10px;
+    white-space: nowrap;
   }
   .row-card {
     align-items: flex-start;

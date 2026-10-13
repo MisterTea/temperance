@@ -595,3 +595,228 @@ fn chrono_today() -> String {
     let y = yoe + era * 400 + i64::from(m <= 2);
     format!("{y:04}-{m:02}-{d:02}")
 }
+
+/// A stand-in dashboard: pairs code "good" when the gateway's secret comes
+/// with it, and echoes every other request back as JSON.
+fn dashboard(secret: &'static str) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let keys = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let paired = keys.clone();
+    thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut data = Vec::new();
+            let mut buf = [0u8; 4096];
+            let (head, body) = loop {
+                let n = stream.read(&mut buf).unwrap_or(0);
+                if n == 0 {
+                    break (String::new(), Vec::new());
+                }
+                data.extend_from_slice(&buf[..n]);
+                let Some(end) = data.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&data[..end]).to_string();
+                let length = head
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length: ")
+                            .map(str::to_string)
+                    })
+                    .and_then(|l| l.parse::<usize>().ok())
+                    .unwrap_or(0);
+                if data.len() >= end + 4 + length {
+                    break (head, data[end + 4..end + 4 + length].to_vec());
+                }
+            };
+            let mut lines = head.lines();
+            let start: Vec<&str> = lines.next().unwrap_or("").split(' ').collect();
+            let headers: serde_json::Map<String, Value> = lines
+                .filter_map(|l| l.split_once(": "))
+                .map(|(n, v)| (n.to_ascii_lowercase(), json!(v)))
+                .collect();
+            let (status, reply) = if start.get(1) == Some(&"/v1/gateway/parents/pair") {
+                let request: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                if headers.get("x-temperance-forwarded") == Some(&json!(secret))
+                    && request["code"] == "good"
+                {
+                    paired
+                        .lock()
+                        .unwrap()
+                        .push(request["key"].as_str().unwrap().to_string());
+                    (200, json!({"id": "par_1", "household": "The Riveras"}))
+                } else {
+                    (400, json!({"error": "That pairing code has expired."}))
+                }
+            } else {
+                (
+                    200,
+                    json!({"method": start[0], "path": start.get(1), "headers": headers,
+                             "body": String::from_utf8_lossy(&body)}),
+                )
+            };
+            let reply = reply.to_string();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                reply.len()
+            );
+        }
+    });
+    (url, keys)
+}
+
+/// One request to the phone's loopback proxy; returns the status and body.
+fn through_proxy(url: &str, request: &str) -> (u16, String) {
+    let port: u16 = url
+        .strip_prefix("http://127.0.0.1:")
+        .and_then(|r| r.split('/').next())
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .unwrap();
+    let request = request.replace(
+        "{host}",
+        &format!("Host: 127.0.0.1:{port}\r\nConnection: close"),
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut out = String::new();
+    let _ = stream.read_to_string(&mut out);
+    let status = out
+        .split(' ')
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    (
+        status,
+        out.split_once("\r\n\r\n")
+            .map(|(_, b)| b.to_string())
+            .unwrap_or_default(),
+    )
+}
+
+#[test]
+fn parent_phones_pair_and_reach_the_dashboard_over_the_wireguard_port() {
+    use temperance_core::remote::{format_pairing_link, pair_parent, PairingLink, RemoteSession};
+    const SECRET: &str = "parent-forwarding-secret-0123456789abcdef";
+    let (target, keys) = dashboard(SECRET);
+    let dir = std::env::temp_dir().join(format!("temperance-parents-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let echo_port = echo_server();
+    let phone_key = generate_private_key();
+    let phone_public = public_key(&phone_key).unwrap();
+    let config: Config = serde_json::from_value(json!({
+        "listen": "127.0.0.1:0",
+        "private_key": generate_private_key(),
+        "dns_upstream": dns_server().to_string(),
+        "connect_map": {ALLOWED.to_string(): "127.0.0.1"},
+        "remote": {"key_file": dir.join("parent.key"), "secret": SECRET, "target": target},
+    }))
+    .unwrap();
+    let mut gateway = Gateway::start(config).unwrap();
+    let with_parents = |parents: Value| {
+        let mut state: Value = serde_json::from_str(&state(&phone_public, 0, json!([]))).unwrap();
+        state["parents"] = parents;
+        state.to_string()
+    };
+    gateway.apply_state(&with_parents(json!([]))).unwrap();
+    let mut phone = Phone::new(&phone_key, &gateway.public_key(), gateway.local_addr());
+
+    // The dashboard learns the pin for its pairing codes from the activity batch.
+    let pin = gateway.drain_activity()["remote"]["pin"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(gateway.parent_pin().as_deref(), Some(pin.as_str()));
+    let link = |code: &str| {
+        format_pairing_link(&PairingLink {
+            v: 1,
+            host: "127.0.0.1".into(),
+            port: gateway.local_addr().port(),
+            pin: pin.clone(),
+            code: code.into(),
+            household: String::new(),
+        })
+    };
+    let refused = pair_parent(link("stale"), "Sam's phone".into()).unwrap_err();
+    assert!(refused.to_string().contains("expired"), "{refused}");
+    let identity = pair_parent(link("good"), "Sam's phone".into()).unwrap();
+    assert!(identity.contains("The Riveras"));
+    let key = keys.lock().unwrap()[0].clone();
+
+    // A child's WireGuard tunnel keeps working on the same socket.
+    let open = phone.connect(ALLOWED, echo_port);
+    assert!(
+        phone.echo(open, b"still browsing"),
+        "WireGuard shares the port"
+    );
+
+    let session = RemoteSession::start(identity).unwrap();
+    let url = session.url();
+    let token = url.split("t=").nth(1).unwrap().to_string();
+    let cookie = format!("Cookie: temperance_proxy={token}");
+    let (status, _) = through_proxy(
+        &url,
+        &format!("GET /__temperance/start?t={token} HTTP/1.1\r\n{{host}}\r\n\r\n"),
+    );
+    assert_eq!(status, 302);
+
+    let (status, body) = through_proxy(
+        &url,
+        &format!("GET /api/state HTTP/1.1\r\n{{host}}\r\n{cookie}\r\nX-Temperance-Parent: admin\r\nX-Temperance-Forwarded: guess\r\n\r\n"),
+    );
+    assert_eq!(status, 200, "{body}");
+    let echoed: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(echoed["path"], "/api/state");
+    assert_eq!(
+        echoed["headers"]["x-temperance-parent"], "par_1",
+        "the gateway names the parent"
+    );
+    assert_eq!(
+        echoed["headers"]["x-temperance-forwarded"], SECRET,
+        "spoofed headers are replaced"
+    );
+    let (_, body) = through_proxy(
+        &url,
+        &format!("POST /api/profiles/1/pause HTTP/1.1\r\n{{host}}\r\n{cookie}\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{{\"paused\":true}}"),
+    );
+    let echoed: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        (echoed["method"].as_str(), echoed["body"].as_str()),
+        (Some("POST"), Some("{\"paused\":true}"))
+    );
+    let (status, _) = through_proxy(
+        &url,
+        &format!("GET /v1/gateway/state HTTP/1.1\r\n{{host}}\r\n{cookie}\r\n\r\n"),
+    );
+    assert_eq!(
+        status, 404,
+        "gateway routes are not reachable through a parent phone"
+    );
+
+    // Listed in the state it keeps working; once it is gone, it is cut off.
+    gateway
+        .apply_state(&with_parents(json!([{"id": "par_1", "key": key}])))
+        .unwrap();
+    let (status, _) = through_proxy(
+        &url,
+        &format!("GET / HTTP/1.1\r\n{{host}}\r\n{cookie}\r\n\r\n"),
+    );
+    assert_eq!(status, 200);
+    gateway.apply_state(&with_parents(json!([]))).unwrap();
+    let (status, body) = through_proxy(
+        &url,
+        &format!("GET / HTTP/1.1\r\n{{host}}\r\n{cookie}\r\n\r\n"),
+    );
+    assert_eq!(status, 502);
+    assert!(body.contains("removed from the family"), "{body}");
+    assert!(phone.echo(open, b"children are unaffected"));
+
+    session.stop();
+    gateway.stop();
+    std::fs::remove_dir_all(&dir).unwrap();
+}

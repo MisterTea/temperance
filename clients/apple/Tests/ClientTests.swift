@@ -25,7 +25,9 @@ import XCTest
 
     func testEnrollingSavesTheIdentityWithoutThePassword() async throws {
         let client = await enrolled()
-        XCTAssertEqual(client.status, "Enrolled. Install VPN to connect.")
+        XCTAssertEqual(client.status, "")
+        XCTAssertEqual(client.profile, "Alex")
+        XCTAssertEqual(client.vpnInstalled, false, "the child allows the VPN next")
         XCTAssertFalse(client.busy)
         XCTAssertEqual(client.child?.remainingMinutes, 40)
         XCTAssertEqual(store.identity?.state?.token, "device-token")
@@ -54,7 +56,7 @@ import XCTest
     func testTheDefaultTransportOnlyTalksHTTPS() async {
         let client = Client(store: store, vpn: vpn, notifier: notifier, location: location)
         await client.enroll(service: "https://127.0.0.1:9", username: "alex", password: "correct horse", name: "Mac")
-        XCTAssertNotEqual(client.status, "Enrolled. Install VPN to connect.")
+        XCTAssertFalse(client.status.isEmpty)
         XCTAssertNil(store.identity)
     }
 
@@ -66,7 +68,9 @@ import XCTest
         vpn.current = (true, true); notifier.permission = true; location.allowed = true
         service.version = 4; service.remaining = 10
         await client.refresh()
-        XCTAssertEqual(client.status, "Policy 4")
+        XCTAssertEqual(client.status, "")
+        XCTAssertEqual(client.vpnInstalled, true)
+        XCTAssertFalse(client.canAskPermissions, "both permissions were answered")
         XCTAssertEqual(store.identity?.state?.version, 4)
         XCTAssertEqual(client.child?.remainingMinutes, 10)
         XCTAssertEqual(notifier.posted, ["10 minutes left today"])
@@ -84,7 +88,7 @@ import XCTest
         let client = await enrolled()
         service.unreachable = true
         await client.refresh()
-        XCTAssertEqual(client.status, "Policy refresh unavailable; existing VPN remains configured.")
+        XCTAssertEqual(client.status, "Can't reach your family's Temperance right now. The last rules stay in effect.")
         XCTAssertFalse(client.health.isEmpty)
         XCTAssertTrue(service.bodies("/v1/device/diagnostics").isEmpty)
     }
@@ -103,10 +107,12 @@ import XCTest
 
     func testAskingForTimeSendsTheRequestAndShowsItPending() async {
         let client = client()
-        await client.askForTime(minutes: 15, message: "")
+        let refused = await client.askForTime(minutes: 15, message: "")
+        XCTAssertFalse(refused)
         XCTAssertEqual(client.status, "Enroll first")
         await client.enroll(service: "https://family.example", username: "alex", password: "correct horse", name: "Mac")
-        await client.askForTime(minutes: 30, message: "homework")
+        let sent = await client.askForTime(minutes: 30, message: "homework")
+        XCTAssertTrue(sent)
         XCTAssertEqual(client.status, "Request sent to your parents.")
         XCTAssertTrue(client.child!.pendingRequest)
         XCTAssertTrue(service.bodies("/v1/device/requests").first!.contains("\"minutes\":30"))
@@ -121,16 +127,22 @@ import XCTest
         vpn.failure = ClientError.message("Permission denied")
         await client.install()
         XCTAssertEqual(client.status, "Permission denied")
+        XCTAssertEqual(client.vpnInstalled, false)
         vpn.failure = nil
         await client.install()
         XCTAssertEqual(vpn.installed, ["192.0.2.1:51820"])
-        XCTAssertEqual(client.status, "VPN installed. Connection status appears in system VPN settings.")
+        XCTAssertEqual(client.status, "")
+        XCTAssertEqual(client.vpnInstalled, true)
     }
 
-    func testAllowingAlertsAsksForNotificationsAndLocation() {
-        client().allowAlerts()
+    func testAllowingAlertsAsksForNotificationsAndLocation() async {
+        let client = await enrolled()
+        await client.refresh()
+        XCTAssertTrue(client.canAskPermissions)
+        client.allowAlerts()
         XCTAssertEqual(notifier.permissionRequests, 1)
         XCTAssertEqual(location.permissionRequests, 1)
+        XCTAssertFalse(client.canAskPermissions)
     }
 
     func testABuildWithoutTheTunnelExtensionCannotInstallTheVPN() async {

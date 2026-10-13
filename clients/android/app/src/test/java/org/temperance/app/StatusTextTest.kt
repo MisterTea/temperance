@@ -12,11 +12,11 @@ class StatusTextTest {
     private fun child(remaining: UInt?, next: String? = null, pending: Boolean = false) =
         ChildStatus("You're online", "Rules are on.", true, 20u, remaining, next, pending, true)
 
-    @Test fun `detail lists remaining time, next change and pending request`() {
-        assertEquals("Rules are on.\n40 minutes left today", StatusText.detail(child(40u)))
-        assertEquals("Rules are on.\n1 minute left today\nBedtime starts in 5 min\nYour request is waiting for a parent.",
-            StatusText.detail(child(1u, "Bedtime starts in 5 min", true)))
-        assertEquals("Rules are on.\nNo daily limit", StatusText.detail(child(null)))
+    @Test fun `remaining time and pending request, without the rule or the next change`() {
+        assertEquals("40 minutes left today", StatusText.remaining(child(40u)))
+        assertEquals("1 minute left today\nYour request is waiting for a parent.",
+            StatusText.remaining(child(1u, "Bedtime starts in 5 min", true)))
+        assertEquals("No daily limit", StatusText.remaining(child(null)))
     }
 
     @Test fun `wifi sign-in is offered for captive portals and unreachable gateways`() {

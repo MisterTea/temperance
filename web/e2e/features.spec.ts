@@ -3,6 +3,7 @@ import {
   api,
   enrollDevice,
   ensureProfile,
+  forwarded,
   gateway,
   profileNamed,
   test,
@@ -52,9 +53,9 @@ test("parent creates and edits a profile with limits, bedtime, and schedules", a
   await expect(editor).toBeHidden();
 
   const card = page.locator("article.profile", { hasText: name });
-  await expect(card).toContainText("/ 90 allowance");
-  await expect(card).toContainText("Bedtime 21:00–07:00");
-  await expect(card).toContainText("1 schedule windows");
+  await expect(card).toContainText("of 90 min used");
+  await expect(card).toContainText("Bedtime 9:00 PM–7:00 AM");
+  await expect(card).toContainText("1 schedule ·");
   await expect(
     card.getByRole("list", { name: `${name} shared app limits` }),
   ).toHaveText("Games with a long shared name 0 / 40 min");
@@ -65,7 +66,7 @@ test("parent creates and edits a profile with limits, bedtime, and schedules", a
   await expectCleanLayout(page, "profile card with shared app limit");
 
   await card.getByRole("button", { name: "Pause" }).click();
-  await expect(card.locator(".badge")).toHaveText("paused");
+  await expect(card.locator(".badge")).toHaveText("Paused");
   await card.getByRole("button", { name: "Resume" }).click();
   await expect(card.locator(".badge")).toHaveText("Rules active");
 
@@ -106,7 +107,7 @@ test("household pause applies to every profile", async ({ page }) => {
     page.getByRole("button", { name: "Resume family" }),
   ).toBeVisible();
   await expect(page.locator("article.profile .badge").first()).toHaveText(
-    "household pause",
+    "Household pause",
   );
   await page.getByRole("button", { name: "Resume family" }).click();
   await expect(
@@ -288,12 +289,12 @@ test("history shows gateway decisions and one-click rules; usage summarizes minu
     page
       .getByRole("row", { name: /example-advertising-network/ })
       .filter({ hasText: profile }),
-  ).toContainText("ads");
+  ).toContainText("Blocked · Ads & trackers");
   await expectCleanLayout(page, "history with long domains");
   await page.getByLabel("Decision").selectOption("true");
   await expect(row).toBeHidden();
   await page.getByLabel("Decision").selectOption("all");
-  await row.getByRole("button", { name: "deny" }).click();
+  await row.getByRole("button", { name: "Deny" }).click();
   await expect
     .poll(async () => {
       const state = await api<{ profiles: { name: string; deny: string[] }[] }>(
@@ -314,8 +315,10 @@ test("history shows gateway decisions and one-click rules; usage summarizes minu
     name: `${profile} usage summary`,
   });
   await expect(summary).toContainText("2 min");
-  await expect(summary).toContainText("No activity in the previous 30 days");
-  await expect(summary.getByRole("listitem")).toContainText("video");
+  await expect(summary).toContainText("no activity in the 30 days before");
+  await expect(summary.getByRole("listitem")).toContainText(
+    "Video & streaming",
+  );
   await expectCleanLayout(page, "usage table");
   clean();
 });
@@ -350,7 +353,7 @@ test("children request time and parents approve, reward, and cancel", async ({
   });
   await expectCleanLayout(page, "requests");
   await card.getByRole("button", { name: "Approve" }).click();
-  await expect(card).toContainText("approved");
+  await expect(card).toContainText("Approved");
 
   const rewards = page.locator("section", { hasText: "Today’s rewards" });
   await expect(rewards).toContainText(`${profile}: 20 extra minutes`);
@@ -424,5 +427,73 @@ test("settings manage client users, retention, and feeds", async ({
   await page.getByLabel("Domains").fill("chess.com\nlichess.org");
   await page.getByRole("button", { name: "Import feed" }).click();
   await expect(page.locator("p.error")).toHaveCount(0);
+  clean();
+});
+
+test("parents pair a phone and reach the dashboard through the gateway", async ({
+  page,
+  browser,
+  request,
+}, info) => {
+  const clean = watchConsole(page);
+  await api(
+    request,
+    "/v1/gateway/activity",
+    { remote: { pin: "E2E-PIN" } },
+    gateway,
+  );
+  await page.goto("/");
+  await openTab(page, "Settings");
+  const section = page.locator("section", {
+    has: page.getByRole("heading", { name: "Parent devices" }),
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text: string) =>
+          void ((window as unknown as { copied: string }).copied = text),
+      },
+    });
+  });
+  await section.getByRole("button", { name: "Pair a parent device" }).click();
+  await expect(section.getByRole("img", { name: /QR code/ })).toBeVisible();
+  await expect(section.getByRole("timer")).toContainText("Works once");
+  await expectCleanLayout(page, "settings-parent-pairing");
+  await section.getByRole("button", { name: "Copy pairing link" }).click();
+  const link = await page.evaluate(
+    () => (window as unknown as { copied: string }).copied,
+  );
+  const { code } = JSON.parse(
+    Buffer.from(link.split("#")[1], "base64url").toString(),
+  );
+  const name = "Robin's phone " + info.project.name;
+  const { id } = await api<{ id: string }>(
+    request,
+    "/v1/gateway/parents/pair",
+    { code, name, key: ("e2e" + info.project.name).padEnd(43, "k") },
+    forwarded(),
+  );
+  await expect(section.getByRole("status")).toContainText(`${name} is paired`);
+
+  const phone = await browser.newContext({
+    storageState: { cookies: [], origins: [] },
+    extraHTTPHeaders: forwarded(id),
+  });
+  const away = await phone.newPage();
+  await away.goto("/");
+  await expect(
+    away.getByText(`AWAY FROM HOME · ${name.toUpperCase()}`),
+  ).toBeVisible();
+  await expect(away.getByRole("button", { name: "Sign out" })).toHaveCount(0);
+
+  page.once("dialog", (d) => d.accept());
+  await section
+    .locator(".row-card", { hasText: name })
+    .getByRole("button", { name: "Revoke" })
+    .click();
+  await expect(section.locator(".row-card", { hasText: name })).toBeHidden();
+  await away.reload();
+  await expect(away.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await phone.close();
   clean();
 });

@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { snapshot } from "@/lib/service";
-import { dailyLimit, type Profile } from "@/lib/policy";
+import { CATALOG, dailyLimit, type Profile } from "@/lib/policy";
 import type { History } from "@/lib/model";
 import { ProfileEditor } from "./profile-editor";
 import { Onboarding } from "./onboarding";
@@ -21,11 +21,42 @@ const ago = (at: number) => {
   if (minutes < 1440) return `${Math.round(minutes / 60)} h ago`;
   return `${Math.round(minutes / 1440)} d ago`;
 };
+const capitalize = (text: string) => text[0].toUpperCase() + text.slice(1);
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+const categoryName = (key: string) =>
+  (CATALOG as Record<string, { name: string } | undefined>)[key]?.name;
 const bucketLabel = (bucket: string, profile?: Profile) =>
   bucket.startsWith("group:")
     ? ((profile?.app_limits ?? []).find((g) => "group:" + g.id === bucket)
         ?.name ?? "App group")
-    : bucket.replace(/^(category|site):/, "");
+    : bucket.startsWith("category:")
+      ? (categoryName(bucket.slice(9)) ?? bucket.slice(9))
+      : bucket.replace(/^site:/, "");
+const reasonLabel = (reason: string, profile?: Profile) => {
+  const limit = /^limit (.+)$/.exec(reason);
+  return capitalize(
+    limit
+      ? `${bucketLabel(limit[1], profile)} limit`
+      : (categoryName(reason) ?? reason),
+  );
+};
+const formatDay = (day: string, options: Intl.DateTimeFormatOptions) =>
+  new Date(day + "T12:00:00Z").toLocaleDateString(undefined, {
+    ...options,
+    timeZone: "UTC",
+  });
+const clock = (time: string) => {
+  const [h, m] = time.split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+};
+const INTROS: Record<string, string> = {
+  overview: "Make room for the things that matter.",
+  devices: "Phones, tablets, TVs and consoles that follow your family’s rules.",
+  usage: "How much time each person spent online, and on what.",
+  history: "Sites your family’s devices looked up, and why.",
+  requests: "Answer requests for more time and hand out rewards.",
+  settings: "Accounts, remote access, backups and data retention.",
+};
 const ROUTER_GUIDE =
   "https://github.com/MisterTea/temperance/blob/main/docs/routers.md";
 type NetworkInput = {
@@ -61,7 +92,7 @@ function RemoteAccess({
         . Temperance asks your router to forward that port (UPnP) and can keep a
         free Dynu hostname pointed at your home&apos;s changing address. If your
         router has no UPnP, the router guide shows how to forward the port by
-        hand on TP-Link, Eero and Netgear routers.
+        hand on TP-Link, eero and Netgear routers.
       </p>
       <p className="actions">
         <a
@@ -166,6 +197,162 @@ function RemoteAccess({
     </section>
   );
 }
+type Viewer = { role: "admin" } | { role: "parent"; id: string; name: string };
+type Pairing = { link: string; qr: string; expires: number; count: number };
+function ParentPhones({
+  state,
+  viewer,
+  refresh,
+  act,
+}: {
+  state: DashboardState;
+  viewer?: Viewer;
+  refresh: () => Promise<void>;
+  act: (action: () => Promise<void>) => Promise<void>;
+}) {
+  const [pairing, setPairing] = useState<Pairing>();
+  const [copied, setCopied] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const [paired, setPaired] = useState("");
+  const { parents, parent_access: access } = state;
+  const left = pairing ? Math.max(0, pairing.expires - now) : 0;
+  useEffect(() => {
+    if (!pairing) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const poll = setInterval(refresh, 3000);
+    return () => {
+      clearInterval(timer);
+      clearInterval(poll);
+    };
+  }, [pairing, refresh]);
+  useEffect(() => {
+    if (!pairing || parents.length <= pairing.count) return;
+    setPaired(parents.at(-1)!.name);
+    setPairing(undefined);
+  }, [pairing, parents]);
+  const start = () =>
+    act(async () => {
+      const { link, expires_in } = await api<{
+        link: string;
+        expires_in: number;
+      }>("/api/parents/pairing", {});
+      const QRCode = await import("qrcode");
+      setPaired("");
+      setCopied(false);
+      setNow(Date.now());
+      setPairing({
+        link,
+        qr: await QRCode.toDataURL(link, { margin: 1, width: 240 }),
+        expires: Date.now() + expires_in * 1000,
+        count: parents.length,
+      });
+    });
+  return (
+    <section>
+      <h2>Parent devices</h2>
+      <p>
+        Pair a parent&apos;s phone or computer once, and the Temperance app
+        opens this dashboard from anywhere: at work, on mobile data, on someone
+        else&apos;s Wi-Fi. It travels through the same UDP port as the family
+        VPN, so there is nothing else to forward and no VPN to turn on.
+      </p>
+      {!access.available ? (
+        <p className="notice" role="status">
+          {state.gateway_seen
+            ? "Set TEMPERANCE_VPN_ENDPOINT so parent devices know where to find home, then pair."
+            : "Parent devices connect through the home gateway, which hasn’t checked in yet."}
+        </p>
+      ) : pairing && left > 0 ? (
+        <div className="pairing" aria-label="Pairing code">
+          <img
+            src={pairing.qr}
+            alt="QR code to pair a parent device"
+            width={240}
+            height={240}
+          />
+          <div>
+            <ol>
+              <li>Install Temperance on the parent&apos;s phone or computer.</li>
+              <li>
+                Choose <strong>I&apos;m a parent</strong>, then scan this code.
+                On a computer, paste the link instead.
+              </li>
+            </ol>
+            <p className="actions">
+              <button
+                className="button secondary"
+                onClick={() =>
+                  act(async () => {
+                    await navigator.clipboard.writeText(pairing.link);
+                    setCopied(true);
+                  })
+                }
+              >
+                {copied ? "Copied" : "Copy pairing link"}
+              </button>
+              <button
+                className="button secondary"
+                onClick={() => setPairing(undefined)}
+              >
+                Cancel
+              </button>
+            </p>
+            <small role="timer">
+              Works once, for {Math.floor(left / 60000)}:
+              {String(Math.floor(left / 1000) % 60).padStart(2, "0")} more.
+            </small>
+          </div>
+        </div>
+      ) : (
+        <p className="actions">
+          <button className="primary" onClick={start}>
+            {pairing ? "Code expired, make a new one" : "Pair a parent device"}
+          </button>
+        </p>
+      )}
+      {paired ? (
+        <p className="notice success" role="status">
+          {paired} is paired and can open the dashboard away from home.
+        </p>
+      ) : null}
+      {parents.map((p) => {
+        const self = viewer?.role === "parent" && viewer.id === p.id;
+        return (
+          <article className="row-card" key={p.id}>
+            <div>
+              <strong>{p.name}</strong>
+              <small>
+                Paired {ago(p.created_at)}
+                {p.last_seen ? ` · last used ${ago(p.last_seen)}` : ""}
+              </small>
+            </div>
+            {self ? (
+              <small>This phone</small>
+            ) : (
+              <button
+                className="button secondary"
+                onClick={() =>
+                  act(async () => {
+                    if (
+                      !confirm(
+                        `Revoke ${p.name}? It will stop reaching the dashboard right away.`,
+                      )
+                    )
+                      return;
+                    await api("/api/parents/revoke", { id: p.id });
+                    await refresh();
+                  })
+                }
+              >
+                Revoke
+              </button>
+            )}
+          </article>
+        );
+      })}
+    </section>
+  );
+}
 export function Dashboard() {
   const [state, setState] = useState<DashboardState>();
   const [error, setError] = useState("");
@@ -180,11 +367,13 @@ export function Dashboard() {
   }, [resetUser]);
   const [parents, setParents] = useState<ParentAccount[]>([]);
   const [me, setMe] = useState<ParentAccount>();
+  const [viewer, setViewer] = useState<Viewer>();
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Profile | true>();
   const [tab, setTab] = useState("overview");
   const [code, setCode] = useState("");
   const [selected, setSelected] = useState<number>();
+  const [rewardKind, setRewardKind] = useState("extra_time");
   const [history, setHistory] = useState<History[]>([]);
   const [date, setDate] = useState("");
   const [blocked, setBlocked] = useState("all");
@@ -232,6 +421,8 @@ export function Dashboard() {
       setError(e instanceof Error ? e.message : "Action failed");
     }
   };
+  const answer = (id: string, approve: boolean) =>
+    act(() => save("/api/requests", { id, approve }));
   const loadHistory = useCallback(async () => {
     if (!state) return;
     const q = new URLSearchParams({
@@ -260,6 +451,12 @@ export function Dashboard() {
   useEffect(() => {
     if (tab === "settings" && signedIn) loadParents();
   }, [tab, signedIn, loadParents]);
+  useEffect(() => {
+    if (!signedIn) return setViewer(undefined);
+    api<Viewer>("/api/me")
+      .then(setViewer)
+      .catch(() => setViewer(undefined));
+  }, [signedIn]);
   useEffect(() => {
     if (tab !== "usage" || !state) return;
     const start = new Date(state.day + "T12:00:00Z");
@@ -376,18 +573,20 @@ export function Dashboard() {
             ) : null}
           </button>
         ))}
-        <button
-          className="nav"
-          onClick={() =>
-            act(async () => {
-              await api("/v1/logout", {});
-              setSignedIn(false);
-              setState(undefined);
-            })
-          }
-        >
-          Sign out
-        </button>
+        {viewer?.role === "parent" ? null : (
+          <button
+            className="nav"
+            onClick={() =>
+              act(async () => {
+                await api("/v1/logout", {});
+                setSignedIn(false);
+                setState(undefined);
+              })
+            }
+          >
+            Sign out
+          </button>
+        )}
         <div className="aside-footer">
           Open source · no vendor account
           <small>Your data stays in your chosen service.</small>
@@ -395,7 +594,11 @@ export function Dashboard() {
       </aside>
       <main>
         <header>
-          <div className="eyebrow">A LITTLE MORE BALANCE</div>
+          <div className="eyebrow">
+            {viewer?.role === "parent"
+              ? `AWAY FROM HOME · ${viewer.name.toUpperCase()}`
+              : "A LITTLE MORE BALANCE"}
+          </div>
           <div className="heading">
             <h1>
               {tab === "overview"
@@ -403,10 +606,15 @@ export function Dashboard() {
                 : tab[0].toUpperCase() + tab.slice(1)}
             </h1>
             <span className="date">
-              {state.day} · {state.timezone}
+              {formatDay(state.day, {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+              })}{" "}
+              · {state.timezone}
             </span>
           </div>
-          <p className="intro">Make room for the things that matter.</p>
+          <p className="intro">{INTROS[tab]}</p>
         </header>
         {error ? (
           <p className="error banner" role="alert">
@@ -427,6 +635,33 @@ export function Dashboard() {
                 the family VPN have no internet access until it reconnects.
               </p>
             ) : null}
+            {state.requests.some((r) => r.status === "pending") ? (
+              <section aria-label="Waiting for you">
+                <h2>Waiting for you</h2>
+                {state.requests
+                  .filter((r) => r.status === "pending")
+                  .map((r) => (
+                    <article className="row-card" key={r.id}>
+                      <div>
+                        <strong>
+                          {state.devices.find((d) => d.id === r.device_id)
+                            ?.name ?? profileById.get(r.profile_id)?.name}{" "}
+                          asks for {r.minutes} more minutes
+                        </strong>
+                        {r.message ? <p>“{r.message}”</p> : null}
+                      </div>
+                      <div>
+                        <button onClick={() => answer(r.id, true)}>
+                          Approve
+                        </button>
+                        <button onClick={() => answer(r.id, false)}>
+                          Decline
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+              </section>
+            ) : null}
             <section className="stats">
               <article>
                 <span>Network activity minutes</span>
@@ -434,9 +669,9 @@ export function Dashboard() {
                 <small>Estimated allowed traffic across profiles</small>
               </article>
               <article>
-                <span>Restricted profiles</span>
+                <span>Offline right now</span>
                 <strong>{state.blocked}</strong>
-                <small>Pause, schedule, or daily allowance</small>
+                <small>Paused, bedtime, Off Time, or out of time</small>
               </article>
               <article>
                 <span>Family devices</span>
@@ -472,11 +707,12 @@ export function Dashboard() {
                       <div>
                         <h3>{p.name}</h3>
                         <small>
-                          {
+                          {plural(
                             state.devices.filter((d) => d.profile_id === p.id)
-                              .length
-                          }{" "}
-                          devices · {p.filter_level} preset
+                              .length,
+                            "device",
+                          )}{" "}
+                          · {p.filter_level} preset
                         </small>
                       </div>
                       <span
@@ -489,16 +725,18 @@ export function Dashboard() {
                       >
                         {p.access_reason === "allowed"
                           ? "Rules active"
-                          : p.access_reason}
+                          : capitalize(p.access_reason)}
                       </span>
                     </div>
                     <div className="usage">
                       <strong>{p.used}</strong>
                       <span>
-                        min observed{" "}
                         {p.effective_limit
-                          ? `/ ${p.effective_limit} allowance`
-                          : "· unlimited"}
+                          ? `of ${p.effective_limit} min used · ${Math.max(
+                              0,
+                              p.effective_limit - p.used,
+                            )} min left`
+                          : "min used · no daily limit"}
                       </span>
                     </div>
                     <progress
@@ -507,13 +745,13 @@ export function Dashboard() {
                       aria-label={`${p.name} daily budget`}
                     />
                     <p className="profile-info">
-                      {p.schedules.length} schedule windows ·{" "}
+                      {plural(p.schedules.length, "schedule")} ·{" "}
                       {p.bedtime.start
-                        ? `Bedtime ${p.bedtime.start}–${p.bedtime.end}`
+                        ? `Bedtime ${clock(p.bedtime.start)}–${clock(p.bedtime.end)}`
                         : "No bedtime"}
                       <br />
-                      {p.unmanaged.length} unmanaged exceptions ·{" "}
-                      {p.rewards.length} rewards today
+                      {plural(p.unmanaged.length, "unmanaged site")} ·{" "}
+                      {plural(p.rewards.length, "reward")} today
                     </p>
                     {(p.app_limits ?? []).length ? (
                       <ul
@@ -677,7 +915,7 @@ export function Dashboard() {
               </form>
             </section>
             <div className="table-wrap">
-              <table>
+              <table className="devices">
                 <thead>
                   <tr>
                     <th>Device</th>
@@ -771,7 +1009,7 @@ export function Dashboard() {
                           <small> · waiting for device…</small>
                         ) : null}
                       </td>
-                      <td>
+                      <td className="controls">
                         {d.kind === "home" ? null : (
                           <button
                             onClick={() =>
@@ -882,7 +1120,7 @@ export function Dashboard() {
                         ? `${total >= previous ? "▲" : "▼"} ${Math.abs(
                             Math.round(((total - previous) / previous) * 100),
                           )}% vs previous ${period === 1 ? "day" : `${period} days`}`
-                        : `No activity in the previous ${period === 1 ? "day" : `${period} days`}`}
+                        : `Nothing to compare: no activity ${period === 1 ? "the day" : `in the ${period} days`} before`}
                     </small>
                     <ol>
                       {top.map(([bucket, n]) => (
@@ -908,14 +1146,23 @@ export function Dashboard() {
                 <tbody>
                   {currentUsage.map((day) => (
                     <tr key={day.day}>
-                      <td>{day.day}</td>
+                      <td>
+                        {formatDay(day.day, {
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </td>
                       {state.profiles.map((p) => (
                         <td key={p.id}>
                           {day.profiles[p.id]?.total ?? 0} min
                           <small>
                             {Object.entries(day.profiles[p.id] ?? {})
                               .filter(([bucket]) => bucket !== "total")
-                              .map(([bucket, count]) => `${bucket}: ${count}m`)
+                              .map(
+                                ([bucket, count]) =>
+                                  `${bucketLabel(bucket, p)} ${count} min`,
+                              )
                               .join(" · ")}
                           </small>
                         </td>
@@ -994,55 +1241,70 @@ export function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {history.map((h) => (
-                    <tr key={h.id}>
-                      <td>
-                        {new Date(h.at * 1000).toLocaleTimeString(undefined, {
-                          timeZone: state.timezone,
-                        })}
-                      </td>
-                      <td>{profileById.get(h.profile_id)?.name}</td>
-                      <td className="domain">{h.domain}</td>
-                      <td>
-                        <span
-                          className={
-                            "badge " + (h.blocked ? "blocked" : "allowed")
-                          }
-                        >
-                          {h.reason}
-                        </span>
-                      </td>
-                      <td>
-                        {(["allow", "deny", "unmanaged"] as const).map(
-                          (key) => (
-                            <button
-                              key={key}
-                              onClick={() =>
-                                act(async () => {
-                                  const p = profileById.get(h.profile_id);
-                                  if (!p) return;
-                                  const next = {
-                                    ...p,
-                                    allow: p.allow.filter(
-                                      (d) => d !== h.domain,
-                                    ),
-                                    deny: p.deny.filter((d) => d !== h.domain),
-                                    unmanaged: p.unmanaged.filter(
-                                      (d) => d !== h.domain,
-                                    ),
-                                  };
-                                  next[key] = [...next[key], h.domain];
-                                  await save("/api/profiles", next);
-                                })
-                              }
-                            >
-                              {key}
-                            </button>
-                          ),
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {history.map((h) => {
+                    const profile = profileById.get(h.profile_id);
+                    return (
+                      <tr key={h.id}>
+                        <td>
+                          {new Date(h.at * 1000).toLocaleTimeString(undefined, {
+                            timeZone: state.timezone,
+                          })}
+                        </td>
+                        <td>{profile?.name}</td>
+                        <td className="domain">{h.domain}</td>
+                        <td>
+                          <span
+                            className={
+                              "badge " + (h.blocked ? "blocked" : "allowed")
+                            }
+                          >
+                            {h.blocked
+                              ? `Blocked · ${reasonLabel(h.reason, profile)}`
+                              : reasonLabel(h.reason, profile)}
+                          </span>
+                        </td>
+                        <td className="controls">
+                          {(["allow", "deny", "unmanaged"] as const).map(
+                            (key) => (
+                              <button
+                                key={key}
+                                className={
+                                  profile?.[key].includes(h.domain)
+                                    ? "on"
+                                    : undefined
+                                }
+                                aria-pressed={
+                                  !!profile?.[key].includes(h.domain)
+                                }
+                                onClick={() =>
+                                  act(async () => {
+                                    const p = profileById.get(h.profile_id);
+                                    if (!p) return;
+                                    const next = {
+                                      ...p,
+                                      allow: p.allow.filter(
+                                        (d) => d !== h.domain,
+                                      ),
+                                      deny: p.deny.filter(
+                                        (d) => d !== h.domain,
+                                      ),
+                                      unmanaged: p.unmanaged.filter(
+                                        (d) => d !== h.domain,
+                                      ),
+                                    };
+                                    next[key] = [...next[key], h.domain];
+                                    await save("/api/profiles", next);
+                                  })
+                                }
+                              >
+                                {capitalize(key)}
+                              </button>
+                            ),
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1055,6 +1317,49 @@ export function Dashboard() {
         ) : null}
         {tab === "requests" ? (
           <>
+            <section>
+              <h2>Time requests</h2>
+              {state.requests.map((r) => (
+                <article className="row-card" key={r.id}>
+                  <div>
+                    <strong>
+                      {profileById.get(r.profile_id)?.name} · {r.minutes} extra
+                      minutes
+                    </strong>
+                    <p>{r.message}</p>
+                    <span
+                      className={
+                        "badge " +
+                        (r.status === "approved"
+                          ? "allowed"
+                          : r.status === "denied"
+                            ? "blocked"
+                            : "")
+                      }
+                    >
+                      {r.status === "pending"
+                        ? "Waiting for an answer"
+                        : r.status === "approved"
+                          ? "Approved"
+                          : "Declined"}
+                    </span>
+                  </div>
+                  {r.status === "pending" ? (
+                    <div>
+                      <button onClick={() => answer(r.id, true)}>
+                        Approve
+                      </button>
+                      <button onClick={() => answer(r.id, false)}>
+                        Decline
+                      </button>
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+              {state.requests.length ? null : (
+                <p className="hint">No requests yet.</p>
+              )}
+            </section>
             <section>
               <h2>Send a reward</h2>
               <p>Rewards expire at midnight in the household timezone.</p>
@@ -1096,54 +1401,64 @@ export function Dashboard() {
                   </label>
                   <label>
                     Reward
-                    <select name="kind">
+                    <select
+                      name="kind"
+                      value={rewardKind}
+                      onChange={(e) => setRewardKind(e.target.value)}
+                    >
                       <option value="extra_time">Extra time</option>
                       <option value="late_bedtime">Late bedtime</option>
                       <option value="skip_window">Skip a schedule today</option>
                     </select>
                   </label>
-                  <label>
-                    Extra minutes
-                    <input
-                      name="minutes"
-                      type="number"
-                      min={1}
-                      max={1440}
-                      defaultValue={15}
-                    />
-                  </label>
-                  <label>
-                    Extra time for
-                    <select name="scope">
-                      <option value="total">Daily allowance</option>
-                      {(
-                        profileById.get(selected ?? state.profiles[0]?.id)
-                          ?.app_limits ?? []
-                      ).map((g) => (
-                        <option key={g.id} value={"group:" + g.id}>
-                          {g.name} (shared app limit)
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    New bedtime
-                    <input name="bedtime" type="time" />
-                  </label>
-                  <label>
-                    Schedule
-                    <select name="window_id">
-                      <option value="">Choose a window</option>
-                      {(
-                        profileById.get(selected ?? state.profiles[0]?.id)
-                          ?.schedules ?? []
-                      ).map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {rewardKind === "extra_time" ? (
+                    <>
+                      <label>
+                        Extra minutes
+                        <input
+                          name="minutes"
+                          type="number"
+                          min={1}
+                          max={1440}
+                          defaultValue={15}
+                        />
+                      </label>
+                      <label>
+                        Extra time for
+                        <select name="scope">
+                          <option value="total">Daily allowance</option>
+                          {(
+                            profileById.get(selected ?? state.profiles[0]?.id)
+                              ?.app_limits ?? []
+                          ).map((g) => (
+                            <option key={g.id} value={"group:" + g.id}>
+                              {g.name} (shared app limit)
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  ) : rewardKind === "late_bedtime" ? (
+                    <label>
+                      New bedtime
+                      <input name="bedtime" type="time" />
+                    </label>
+                  ) : (
+                    <label>
+                      Schedule
+                      <select name="window_id">
+                        <option value="">Choose a window</option>
+                        {(
+                          profileById.get(selected ?? state.profiles[0]?.id)
+                            ?.schedules ?? []
+                        ).map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                 </div>
                 <button className="primary">Send reward</button>
               </form>
@@ -1174,47 +1489,16 @@ export function Dashboard() {
                   </button>
                 </article>
               ))}
-            </section>
-            <section>
-              <h2>Time requests</h2>
-              {state.requests.map((r) => (
-                <article className="row-card" key={r.id}>
-                  <div>
-                    <strong>
-                      {profileById.get(r.profile_id)?.name} · {r.minutes} extra
-                      minutes
-                    </strong>
-                    <p>{r.message}</p>
-                    <small>{r.status}</small>
-                  </div>
-                  {r.status === "pending" ? (
-                    <div>
-                      <button
-                        onClick={() =>
-                          act(() =>
-                            save("/api/requests", { id: r.id, approve: true }),
-                          )
-                        }
-                      >
-                        Approve
-                      </button>
-                      <button
-                        onClick={() =>
-                          act(() =>
-                            save("/api/requests", { id: r.id, approve: false }),
-                          )
-                        }
-                      >
-                        Decline
-                      </button>
-                    </div>
-                  ) : null}
-                </article>
-              ))}
+              {state.rewards.length ? null : (
+                <p className="hint">No rewards yet today.</p>
+              )}
             </section>
             <section>
               <h2>Family notifications</h2>
-              <button onClick={() => act(() => save("/api/events/read", {}))}>
+              <button
+                className="secondary"
+                onClick={() => act(() => save("/api/events/read", {}))}
+              >
                 Mark all read
               </button>
               {state.events
@@ -1297,6 +1581,12 @@ export function Dashboard() {
               onSave={(network) =>
                 act(() => save("/api/settings", { network }))
               }
+            />
+            <ParentPhones
+              state={state}
+              viewer={viewer}
+              refresh={refresh}
+              act={act}
             />
             <section>
               <h2>Client users</h2>

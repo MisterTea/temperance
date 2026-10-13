@@ -23,6 +23,11 @@ export const OWNER = { password: ADMIN_TOKEN };
 
 export const admin = { Authorization: "Bearer " + ADMIN_TOKEN };
 export const gateway = { Authorization: "Bearer " + GATEWAY_TOKEN };
+/** What the gateway adds to a paired parent phone's requests. */
+export const forwarded = (parent?: string) => ({
+  "x-temperance-forwarded": GATEWAY_TOKEN,
+  ...(parent ? { "x-temperance-parent": parent } : {}),
+});
 
 /** Seeded keys must be unique across tests; unseeded ones are random. */
 export function deviceKey(seed?: number) {

@@ -81,7 +81,7 @@ export function DomainList({
     <label>
       {label}
       <textarea
-        rows={3}
+        rows={Math.min(8, Math.max(3, text.split("\n").length))}
         value={text}
         placeholder={placeholder}
         onChange={(e) => {
@@ -183,8 +183,17 @@ export function ProfileEditor({
                 field("filter_level", e.target.value as Profile["filter_level"])
               }
             >
-              {["kid", "teen", "adult", "none"].map((level) => (
-                <option key={level}>{level}</option>
+              {(
+                [
+                  ["kid", "Young child"],
+                  ["teen", "Teen"],
+                  ["adult", "Adult"],
+                  ["none", "No filtering"],
+                ] as const
+              ).map(([level, label]) => (
+                <option key={level} value={level}>
+                  {label}
+                </option>
               ))}
             </select>
           </label>

@@ -1,9 +1,10 @@
 //! Desktop application state machine. Business rules live in `temperance_core`;
-//! this module only handles persistence, the localhost UI, and OS tunnel tools.
+//! this module only handles persistence, what the UI shows, and OS tunnel tools.
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
 use temperance_core::{self as core, Connectivity, CoreError, Diagnostic, HttpRequest, Identity};
 
 pub trait Transport {
@@ -21,10 +22,157 @@ pub trait TunnelControl {
     fn handshake_age(&self) -> Option<u64>;
 }
 
+/// A running parent session's loopback proxy (`core::remote::RemoteSession`).
+pub trait Remote: Send {
+    fn url(&self) -> String;
+    fn stop(&self);
+}
+
+impl Remote for std::sync::Arc<core::remote::RemoteSession> {
+    fn url(&self) -> String {
+        core::remote::RemoteSession::url(self)
+    }
+    fn stop(&self) {
+        core::remote::RemoteSession::stop(self)
+    }
+}
+
+type Pairing = Box<dyn Fn(&str, &str) -> Result<String, String> + Send>;
+type Starting = Box<dyn Fn(&str) -> Result<Box<dyn Remote>, String> + Send>;
+pub type Opening = Box<dyn Fn(&str) -> Result<(), String> + Send>;
+
+/// How a parent's computer reaches home; replaced in tests.
+pub struct ParentMode {
+    pub pair: Pairing,
+    pub start: Starting,
+}
+
+impl ParentMode {
+    pub fn system() -> Self {
+        ParentMode {
+            pair: Box::new(|link, name| {
+                core::remote::pair_parent(link.into(), name.into()).map_err(|e| e.to_string())
+            }),
+            start: Box::new(|identity| {
+                core::remote::RemoteSession::start(identity.into())
+                    .map(|s| Box::new(s) as Box<dyn Remote>)
+                    .map_err(|e| e.to_string())
+            }),
+        }
+    }
+}
+
+/// Opens a page in the default browser.
+pub fn open_browser(url: &str) -> Result<(), String> {
+    let mut command = if cfg!(windows) {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    command
+        .arg(url)
+        .spawn()
+        .map(drop)
+        .map_err(|e| format!("Can't open the browser: {e}"))
+}
+
+/// What the UI asks for. Each action leaves a status line for the next view.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum Action {
+    Enroll {
+        service: String,
+        username: String,
+        password: String,
+        name: String,
+    },
+    Connect,
+    Refresh,
+    SignIn,
+    OpenPortal,
+    RequestTime {
+        minutes: u32,
+        #[serde(default)]
+        message: String,
+    },
+    PairParent {
+        link: String,
+        name: String,
+    },
+    OpenDashboard,
+    UnpairParent,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Issue {
+    pub code: String,
+    pub message: String,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Child {
+    pub headline: String,
+    pub detail: String,
+    /// "55 min left today" or "No daily limit"; empty when the status is unavailable.
+    pub remaining: String,
+    pub next_change: String,
+    pub version: u64,
+    pub connected: bool,
+    pub alerts: Vec<String>,
+    pub health: Vec<Issue>,
+    /// The Wi-Fi network's sign-in page, while one blocks the internet.
+    pub portal_url: Option<String>,
+    pub can_sign_in: bool,
+    pub can_ask: bool,
+    pub pending: bool,
+}
+
+/// Everything the UI shows; it renders this and nothing else.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "screen", rename_all = "snake_case")]
+pub enum Screen {
+    /// First run: a child's computer (where the VPN is supported) or a parent's.
+    Choose {
+        child_allowed: bool,
+    },
+    Child(Child),
+    Parent {
+        household: String,
+        host: String,
+    },
+    ParentBroken {
+        error: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct View {
+    pub status: String,
+    #[serde(flatten)]
+    pub screen: Screen,
+}
+
+pub const UNREACHABLE: &str =
+    "Can't reach your family's Temperance right now. The last rules stay in effect.";
+
+pub const REQUEST_SENT: &str = "Request sent to your parents.";
+
+pub const DASHBOARD_OPENED: &str = "The family dashboard opened in its own window.";
+
+pub const CHILD_UNSUPPORTED: &str = "Only Windows computers install the family VPN. Protect this computer as a home-network device behind your gateway instead.";
+
 pub struct App<T: Transport, W: TunnelControl> {
     pub dir: PathBuf,
-    pub nonce: String,
     pub status: String,
+    /// Whether this OS can install the family VPN (Windows only).
+    pub child_allowed: bool,
+    /// Opens outside pages such as a Wi-Fi sign-in page; replaced in tests.
+    pub browser: Opening,
     pub identity: Option<Identity>,
     pub connected: bool,
     /// Recent child alerts, newest first, shown in the local UI.
@@ -38,32 +186,12 @@ pub struct App<T: Transport, W: TunnelControl> {
     reported: Option<Vec<String>>,
     transport: T,
     tunnel: W,
-}
-
-pub struct Response {
-    pub status: u16,
-    pub content_type: &'static str,
-    pub location: Option<String>,
-    pub body: String,
-}
-
-impl Response {
-    fn redirect() -> Self {
-        Response {
-            status: 303,
-            content_type: "text/plain",
-            location: Some("/".into()),
-            body: String::new(),
-        }
-    }
-    fn text(status: u16, body: &str) -> Self {
-        Response {
-            status,
-            content_type: "text/plain; charset=utf-8",
-            location: None,
-            body: body.into(),
-        }
-    }
+    /// A parent's pairing (`parent.json`): this computer opens the family dashboard instead.
+    pub parent: Option<String>,
+    pub parent_mode: ParentMode,
+    remote: Option<Box<dyn Remote>>,
+    /// The dashboard address for the shell to open in its own window.
+    pub dashboard: Option<String>,
 }
 
 fn now() -> i64 {
@@ -73,33 +201,22 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
-fn escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-pub fn form_value(body: &str, key: &str) -> String {
-    url::form_urlencoded::parse(body.as_bytes())
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| v.into_owned())
-        .unwrap_or_default()
-}
-
 impl<T: Transport, W: TunnelControl> App<T, W> {
-    pub fn new(dir: PathBuf, nonce: String, transport: T, tunnel: W) -> Result<Self, String> {
+    pub fn new(dir: PathBuf, transport: T, tunnel: W) -> Result<Self, String> {
+        let parent = fs::read_to_string(parent_file(&dir)).ok();
         let identity = match fs::read_to_string(dir.join("identity.json")) {
             Ok(text) => Some(core::identity_from_json(text).map_err(|e| e.to_string())?),
             Err(_) => None,
         };
+        // The tunnel service outlives the app; a running one is ours.
+        let connected = identity.is_some() && tunnel.is_up();
         Ok(App {
             dir,
-            nonce,
-            status: "Enroll to install your family's VPN.".into(),
+            status: String::new(),
+            child_allowed: cfg!(windows),
+            browser: Box::new(open_browser),
             identity,
-            connected: false,
+            connected,
             alerts: vec![],
             diagnostics: vec![],
             portal_until: None,
@@ -109,7 +226,46 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             reported: None,
             transport,
             tunnel,
+            parent,
+            parent_mode: ParentMode::system(),
+            remote: None,
+            dashboard: None,
         })
+    }
+
+    /// Pairs this computer as a parent's, using the link under Settings → Parent devices.
+    pub fn pair_parent(&mut self, link: &str, name: &str) -> Result<(), String> {
+        if self.identity.as_ref().is_some_and(|i| i.state.is_some()) {
+            return Err("This computer is enrolled as a child's device.".into());
+        }
+        let link = link.trim();
+        core::remote::parse_pairing_link(link.into()).map_err(|e| e.to_string())?;
+        let identity = (self.parent_mode.pair)(link, name.trim())?;
+        fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        write_private(&parent_file(&self.dir), &identity).map_err(|e| e.to_string())?;
+        self.parent = Some(identity);
+        self.open_dashboard()
+    }
+
+    /// Starts the local proxy once, then asks the shell to show the dashboard.
+    pub fn open_dashboard(&mut self) -> Result<(), String> {
+        let identity = self.parent.clone().ok_or("Pair this computer first")?;
+        if self.remote.is_none() {
+            self.remote = Some((self.parent_mode.start)(&identity)?);
+        }
+        self.dashboard = Some(self.remote.as_ref().expect("started").url());
+        Ok(())
+    }
+
+    pub fn unpair_parent(&mut self) -> Result<(), String> {
+        if let Some(remote) = self.remote.take() {
+            remote.stop();
+        }
+        self.parent = None;
+        match fs::remove_file(parent_file(&self.dir)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        }
     }
 
     fn update_diagnostics(&mut self) {
@@ -228,8 +384,14 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         password: &str,
         name: &str,
     ) -> Result<(), String> {
+        if !self.child_allowed {
+            return Err(CHILD_UNSUPPORTED.into());
+        }
         if self.identity.as_ref().is_some_and(|i| i.state.is_some()) {
             return Err("Already enrolled".into());
+        }
+        if self.parent.is_some() {
+            return Err("This computer is paired as a parent's. Unpair it first.".into());
         }
         let service = core::validate_service(service.into()).map_err(|e| e.to_string())?;
         let keys = core::generate_keypair();
@@ -272,6 +434,28 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         Ok(())
     }
 
+    /// The periodic refresh. Losing the service leaves a plain note that clears
+    /// once it answers again, and "Request sent" clears once a parent answers.
+    pub fn background_refresh(&mut self) {
+        match self.refresh() {
+            Err(_) if !self.policy_reachable => self.status = UNREACHABLE.into(),
+            Err(e) => self.status = e,
+            Ok(()) if self.status == UNREACHABLE => self.status = self.settled_status(),
+            Ok(()) if self.status == REQUEST_SENT && !self.request_pending() => {
+                self.status = self.settled_status()
+            }
+            Ok(()) => {}
+        }
+    }
+
+    fn request_pending(&self) -> bool {
+        self.identity
+            .as_ref()
+            .and_then(|i| i.state.clone())
+            .and_then(|state| core::child_status(state, now()).ok())
+            .is_some_and(|c| c.pending_request)
+    }
+
     /// Desktop computers have no trustworthy location source; tell the parent.
     fn decline_location(&mut self) -> Result<(), String> {
         let identity = self.identity.clone().ok_or("Enroll first")?;
@@ -286,18 +470,23 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
 
     pub fn connect(&mut self) -> Result<(), String> {
         self.refresh()?;
+        self.protect()?;
+        self.report_diagnostics();
+        Ok(())
+    }
+
+    /// Raises the tunnel with the policy already saved; the elevated app needs no OS prompt.
+    fn protect(&mut self) -> Result<(), String> {
         if !self.tunnel.is_up() {
             self.tunnel.up(&self.dir.join("temperance.conf"))?;
         }
         self.connected = true;
         self.update_diagnostics();
-        self.report_diagnostics();
         Ok(())
     }
 
-    pub fn ask_for_time(&mut self, minutes: &str, message: &str) -> Result<(), String> {
+    pub fn ask_for_time(&mut self, minutes: u32, message: &str) -> Result<(), String> {
         let identity = self.identity.clone().ok_or("Enroll first")?;
-        let minutes: u32 = minutes.parse().map_err(|_| "Choose how many minutes")?;
         let request =
             core::time_request(identity, minutes, message.into()).map_err(|e| e.to_string())?;
         let (status, body) = self.call(request).map_err(|e| e.to_string())?;
@@ -305,178 +494,155 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         self.refresh()
     }
 
-    pub fn handle(
-        &mut self,
-        method: &str,
-        path: &str,
-        host: &str,
-        expected_host: &str,
-        origin: Option<&str>,
-        body: &str,
-    ) -> Response {
-        if host != expected_host {
-            return Response::text(403, "Use the local application URL");
-        }
-        if method == "POST" {
-            if body.len() > 8192
-                || form_value(body, "nonce") != self.nonce
-                || origin != Some(&format!("http://{host}"))
-            {
-                return Response::text(403, "Invalid origin");
-            }
-            let result = match path {
-                "/enroll" => self.enroll(
-                    &form_value(body, "service"),
-                    &form_value(body, "username"),
-                    &form_value(body, "password"),
-                    &form_value(body, "name"),
-                ),
-                "/connect" => self.connect(),
-                "/refresh" => self.refresh(),
-                "/sign-in" => self.sign_in_to_network(),
-                "/request" => {
-                    self.ask_for_time(&form_value(body, "minutes"), &form_value(body, "message"))
-                }
-                _ => return Response::text(404, "Not found"),
-            };
-            self.status = match result {
-                Ok(()) if path == "/request" => "Request sent to your parents.".into(),
-                Ok(()) if path == "/sign-in" && self.portal_until.is_some() => {
-                    "Protection is paused while you sign in to this Wi-Fi.".into()
-                }
-                Ok(()) if path == "/sign-in" => {
-                    "This network is online; protection is back on.".into()
-                }
-                Ok(()) => "Ready. Rules are enforced by your family's gateway.".into(),
-                Err(e) => e,
-            };
-            return Response::redirect();
-        }
-        if path != "/" {
-            return Response::text(404, "Not found");
-        }
-        Response {
-            status: 200,
-            content_type: "text/html; charset=utf-8",
-            location: None,
-            body: self.render(),
+    pub fn act(&mut self, action: Action) {
+        let done = match &action {
+            Action::RequestTime { .. } => Some(REQUEST_SENT),
+            Action::UnpairParent => Some("This computer no longer opens the family dashboard."),
+            Action::OpenPortal => Some("The Wi-Fi sign-in page opened in your browser."),
+            _ => None,
+        };
+        let refreshing = matches!(action, Action::Refresh);
+        let result = match action {
+            Action::Enroll {
+                service,
+                username,
+                password,
+                name,
+            } => self
+                .enroll(&service, &username, &password, &name)
+                .and_then(|()| self.protect()),
+            Action::Connect => self.connect(),
+            Action::Refresh => self.refresh(),
+            Action::SignIn => self.sign_in_to_network(),
+            Action::OpenPortal => self.open_portal(),
+            Action::RequestTime { minutes, message } => self.ask_for_time(minutes, &message),
+            Action::PairParent { link, name } => self.pair_parent(&link, &name),
+            Action::OpenDashboard => self.open_dashboard(),
+            Action::UnpairParent => self.unpair_parent(),
+        };
+        self.status = match result {
+            Ok(()) => done.map_or_else(|| self.settled_status(), str::to_string),
+            Err(_) if refreshing && !self.policy_reachable => UNREACHABLE.into(),
+            Err(e) => e,
+        };
+    }
+
+    /// Once the dashboard window is closed, saying it opened is stale.
+    pub fn dashboard_closed(&mut self) {
+        if self.status == DASHBOARD_OPENED {
+            self.status.clear();
         }
     }
 
-    fn health(&self, hidden: &str) -> String {
-        let items: String = self
-            .diagnostics
-            .iter()
-            .map(|d| {
-                format!(
-                    "<li><strong>{}</strong> {}</li>",
-                    escape(&d.message),
-                    escape(&d.action)
-                )
-            })
-            .collect();
-        let mut html = if items.is_empty() {
-            String::new()
+    /// The status after a successful action: what is true now.
+    fn settled_status(&self) -> String {
+        if self.parent.is_some() {
+            DASHBOARD_OPENED.into()
+        } else if self.portal_until.is_some() {
+            "Protection is paused while you sign in to this Wi-Fi.".into()
+        } else if self.connected {
+            "Protected. Your family's rules apply on this computer.".into()
         } else {
-            format!(r#"<ul aria-label="Device health">{items}</ul>"#)
-        };
-        if let Some(Connectivity::CaptivePortal {
-            login_url: Some(url),
-        }) = &self.connectivity
-        {
-            html += &format!(
-                r#"<p><a href="{0}" target="_blank" rel="noreferrer">Open the Wi-Fi sign-in page</a></p>"#,
-                escape(url)
-            );
+            "Signed in. Start protection to apply your family's rules.".into()
         }
-        let can_sign_in = self.portal_until.is_none()
-            && self
-                .diagnostics
-                .iter()
-                .any(|d| d.code == "gateway_unreachable" || d.code == "captive_portal");
-        if can_sign_in {
-            html += &format!(
-                r#"<form method="post" action="/sign-in">{hidden}<button class="secondary">Sign in to Wi-Fi</button></form>"#
-            );
-        }
-        html
     }
 
-    pub fn render(&self) -> String {
-        let nonce = escape(&self.nonce);
-        let hidden = format!(r#"<input type="hidden" name="nonce" value="{nonce}">"#);
-        let content = match self.identity.as_ref().and_then(|i| i.state.clone()) {
-            Some(state) => {
-                let version = state.version;
-                let child = core::child_status(state, now());
-                let (headline, detail, next, remaining, can_ask, pending) = match child {
-                    Ok(c) => (
-                        c.headline,
-                        c.detail,
-                        c.next_change.unwrap_or_default(),
-                        c.remaining_minutes
-                            .map(|m| format!("{m} min left today"))
-                            .unwrap_or_else(|| "No daily limit".into()),
-                        c.can_request_time,
-                        c.pending_request,
-                    ),
-                    Err(e) => (
-                        "Status unavailable".into(),
-                        e.to_string(),
-                        String::new(),
-                        String::new(),
-                        false,
-                        false,
-                    ),
-                };
-                let alerts: String = self
-                    .alerts
-                    .iter()
-                    .map(|a| format!("<li>{}</li>", escape(a)))
-                    .collect();
-                let alerts = if alerts.is_empty() {
-                    String::new()
-                } else {
-                    format!(r#"<ul aria-label="Alerts">{alerts}</ul>"#)
-                };
-                let health = self.health(&hidden);
-                format!(
-                    r#"<h2>{}</h2><p>{}</p>{alerts}{health}<p class="meta">{} · {} · Policy {version} · VPN {}</p>
-<form method="post" action="/connect">{hidden}<button>Install / start VPN</button></form>
-<form method="post" action="/refresh">{hidden}<button class="secondary">Refresh policy</button></form>
-{}"#,
-                    escape(&headline),
-                    escape(&detail),
-                    escape(&remaining),
-                    escape(&next),
-                    if self.connected {
-                        "connected"
-                    } else {
-                        "not started"
-                    },
-                    if pending {
-                        "<p>Your request for more time is waiting for a parent.</p>".to_string()
-                    } else if can_ask {
-                        format!(
-                            r#"<form method="post" action="/request">{hidden}<label>Ask for more time<select name="minutes"><option>15</option><option>30</option><option>60</option></select></label><label>Message<input name="message" maxlength="300"></label><button class="secondary">Send request</button></form>"#
-                        )
-                    } else {
-                        String::new()
-                    }
-                )
-            }
-            None => format!(
-                r#"<form method="post" action="/enroll">{hidden}<label>Policy service<input name="service" type="url" placeholder="https://policy.example.com" required></label><label>Username<input name="username" required autocomplete="username"></label><label>Password<input name="password" type="password" required autocomplete="current-password"></label><label>Device name<input name="name" required maxlength="80"></label><button>Enroll this device</button></form>"#
-            ),
-        };
-        format!(
-            r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Temperance</title>
-<style>body{{font:16px system-ui;background:#eef3ed;color:#254436;max-width:650px;margin:40px auto;padding:20px;box-sizing:border-box}}h1{{font:42px Georgia}}label{{display:block}}input,select,button{{font:inherit;padding:12px;box-sizing:border-box;border:1px solid #cbd9cc;border-radius:8px;max-width:100%}}input,select{{width:100%;margin:7px 0 16px}}button{{background:#26715d;color:#fff;cursor:pointer;margin:4px 0}}button.secondary{{background:#fff;color:#26715d}}section{{background:#fff;padding:24px;border-radius:12px;overflow-wrap:anywhere}}.meta{{color:#587064;font-size:14px}}</style>
-<h1>Temperance</h1><p role="status">{}</p><section>{content}</section>
-<p>Rules are enforced at your family's VPN gateway. Administrator rights are needed to install the tunnel.</p></html>"#,
-            escape(&self.status)
-        )
+    fn open_portal(&mut self) -> Result<(), String> {
+        match &self.connectivity {
+            Some(Connectivity::CaptivePortal {
+                login_url: Some(url),
+            }) => (self.browser)(url),
+            _ => Err("This Wi-Fi network has no sign-in page to open.".into()),
+        }
     }
+
+    fn health(&self) -> Vec<Issue> {
+        self.diagnostics
+            .iter()
+            .map(|d| Issue {
+                code: d.code.clone(),
+                message: d.message.clone(),
+                action: d.action.clone(),
+            })
+            .collect()
+    }
+
+    fn child(&self, state: core::DeviceState) -> Child {
+        let version = state.version;
+        let (headline, detail, next_change, remaining, can_ask, pending) =
+            match core::child_status(state, now()) {
+                Ok(c) => (
+                    c.headline,
+                    c.detail,
+                    c.next_change.unwrap_or_default(),
+                    c.remaining_minutes
+                        .map(|m| format!("{m} min left today"))
+                        .unwrap_or_else(|| "No daily limit".into()),
+                    c.can_request_time,
+                    c.pending_request,
+                ),
+                Err(e) => (
+                    "Status unavailable".into(),
+                    e.to_string(),
+                    String::new(),
+                    String::new(),
+                    false,
+                    false,
+                ),
+            };
+        let portal_url = match &self.connectivity {
+            Some(Connectivity::CaptivePortal { login_url }) => login_url.clone(),
+            _ => None,
+        };
+        Child {
+            headline,
+            detail,
+            remaining,
+            next_change,
+            version,
+            connected: self.connected,
+            alerts: self.alerts.clone(),
+            health: self.health(),
+            portal_url,
+            can_sign_in: self.portal_until.is_none()
+                && self
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.code == "gateway_unreachable" || d.code == "captive_portal"),
+            can_ask,
+            pending,
+        }
+    }
+
+    pub fn view(&self) -> View {
+        let screen = match self.identity.as_ref().and_then(|i| i.state.clone()) {
+            Some(state) => Screen::Child(self.child(state)),
+            None => match self
+                .parent
+                .clone()
+                .map(core::remote::describe_parent_identity)
+            {
+                Some(Ok(p)) => Screen::Parent {
+                    household: p.household,
+                    host: p.host,
+                },
+                Some(Err(e)) => Screen::ParentBroken {
+                    error: e.to_string(),
+                },
+                None => Screen::Choose {
+                    child_allowed: self.child_allowed,
+                },
+            },
+        };
+        View {
+            status: self.status.clone(),
+            screen,
+        }
+    }
+}
+
+fn parent_file(dir: &Path) -> PathBuf {
+    dir.join("parent.json")
 }
 
 pub fn write_private(path: &Path, body: &str) -> std::io::Result<()> {

@@ -110,7 +110,6 @@ class LayoutTest {
     @Test fun vpnPermissionScreen() {
         TestSupport.enrolled(server)
         val scenario = TestSupport.launch()
-        TestSupport.tapSystem("Cancel")
         eachDisplay(scenario, MainActivity.Screen.VPN) { name -> audit(scenario, "$name-vpn") }
     }
 
@@ -125,7 +124,7 @@ class LayoutTest {
                 Diagnostic("captive_portal", Severity.WARNING, "This Wi-Fi needs you to sign in before the family VPN can connect", "Tap Sign in to Wi-Fi, finish signing in, then come back"),
                 Diagnostic("notifications_off", Severity.INFO, "Notifications are off", "Turn on notifications so you know when time is almost up"),
             )
-            app.status = "Policy refresh unavailable; VPN stays connected"
+            app.status = "Can't reach your family's Temperance right now. The last rules stay in effect."
             audit(scenario, "$name-status-issues")
             onView(withId(R.id.ask_time)).perform(scrollTo(), click())
             audit(scenario, "$name-time-dialog", dialog = true)

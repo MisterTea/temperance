@@ -294,6 +294,17 @@ fn child_status_explains_rules_and_next_change() {
         assert!(!s.detail.is_empty());
         assert!(s.pending_request && !s.can_request_time);
     }
+    for reason in ["paused", "household pause", "device pause"] {
+        let mut st = allowed.clone();
+        st.status.reason = reason.into();
+        assert!(
+            !child_status(st, SUNDAY_1PM).unwrap().can_request_time,
+            "{reason}"
+        );
+    }
+    let mut limit = allowed.clone();
+    limit.status.reason = "daily limit".into();
+    assert!(child_status(limit, SUNDAY_1PM).unwrap().can_request_time);
     let mut unknown = allowed;
     unknown.policy.timezone = Some("Mars/Base".into());
     assert!(child_status(unknown, SUNDAY_1PM).is_err());
@@ -555,6 +566,16 @@ fn child_alerts_fire_once_on_transitions() {
         ]
     );
     assert!(child_alerts(Some(soon.clone()), soon.clone(), SUNDAY_1PM + 1260).is_empty());
+
+    let mut granted = soon.clone();
+    granted.policy.rewards[0].minutes = Some(20);
+    let mut asking = granted.clone();
+    asking.policy.rewards.clear();
+    asking.requests[0].status = "pending".into();
+    assert_eq!(
+        child_alerts(Some(asking), granted, SUNDAY_1PM),
+        vec!["Your request for 20 minutes was approved".to_string()]
+    );
 
     let mut done = soon.clone();
     done.status.reason = "daily limit".into();
