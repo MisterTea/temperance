@@ -11,7 +11,9 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, Serve
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{CertificateError, DigitallySignedStruct, DistinguishedName, Error, SignatureScheme};
 
-use super::{IDLE_TIMEOUT, KEEPALIVE, MAX_STREAMS, PAIR_ALPN, PARENT_ALPN, SERVER_NAME};
+use super::{
+    DEVICE_ALPN, IDLE_TIMEOUT, KEEPALIVE, MAX_STREAMS, PAIR_ALPN, PARENT_ALPN, SERVER_NAME,
+};
 
 fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
@@ -113,7 +115,11 @@ pub fn server_config(identity: &Identity) -> Result<quinn::ServerConfig, String>
         }))
         .with_single_cert(vec![identity.cert.clone()], identity.key())
         .map_err(|e| e.to_string())?;
-    tls.alpn_protocols = vec![PAIR_ALPN.to_vec(), PARENT_ALPN.to_vec()];
+    tls.alpn_protocols = vec![
+        PAIR_ALPN.to_vec(),
+        PARENT_ALPN.to_vec(),
+        DEVICE_ALPN.to_vec(),
+    ];
     let crypto =
         quinn::crypto::rustls::QuicServerConfig::try_from(tls).map_err(|e| e.to_string())?;
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));

@@ -4,6 +4,8 @@ import Foundation
 /// A scripted Temperance service speaking the same JSON as the Next.js server.
 @MainActor final class FakeService {
     static let serverKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+    /// The dashboard's setup code for family.example:51820.
+    static let home = "temperance://home#eyJ2IjoxLCJob3N0IjoiZmFtaWx5LmV4YW1wbGUiLCJwb3J0Ijo1MTgyMCwicGluIjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOCIsImhvdXNlaG9sZCI6IlRoZSBSaXZlcmFzIn0"
     var password = "correct horse"
     var reason = "allowed"
     var remaining = 40
@@ -50,7 +52,7 @@ import Foundation
 
     /// An enrolled identity as the core builds it from a sign-in reply.
     func identity() throws -> Identity {
-        try enrolledIdentity(service: "https://family.example", keys: generateKeypair(), status: 200, body: state(token: true))
+        try enrolledIdentity(service: Self.home, keys: generateKeypair(), status: 200, body: state(token: true))
     }
 }
 
@@ -107,27 +109,4 @@ final class FakeLocationManager: CLLocationManager {
         if let fix { delegate?.locationManager?(self, didUpdateLocations: [fix]) }
         else { delegate?.locationManager?(self, didFailWithError: CLError(.locationUnknown)) }
     }
-}
-
-/// Answers URLSession requests in-process.
-final class StubProtocol: URLProtocol {
-    static var reply: (URLRequest) -> (HTTPURLResponse, Data) = { _ in fatalError("no reply") }
-    static var seen: [(request: URLRequest, body: Data?)] = []
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() {
-        var body = request.httpBody
-        if body == nil, let stream = request.httpBodyStream {
-            stream.open(); defer { stream.close() }
-            var data = Data(), buffer = [UInt8](repeating: 0, count: 4096)
-            while stream.hasBytesAvailable { let n = stream.read(&buffer, maxLength: buffer.count); if n <= 0 { break }; data.append(buffer, count: n) }
-            body = data
-        }
-        Self.seen.append((request, body))
-        let (response, data) = Self.reply(request)
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-    override func stopLoading() {}
 }

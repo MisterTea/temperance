@@ -19,9 +19,9 @@ SQLite needs a persistent local disk, so it is not suitable for Vercel Functions
 
 Set `TEMPERANCE_ADMIN_PASSWORD` (at least 10 characters) on the server. The website asks only for this password; there is no OAuth setup or administrator username. Its HttpOnly/SameSite session is limited to the website. Existing `TEMPERANCE_ADMIN_TOKEN` installations temporarily use that value as the admin password until the new variable is configured.
 
-In Settings → Client users, create a username/password and assign its family profile. The macOS/iOS, Android and Windows apps ask for the server and those client credentials, then call `POST /v1/device/login` with their locally generated WireGuard public key and device name. The server selects the profile assigned to that username; clients cannot choose another profile or administer policies. Passwords are sent over HTTPS and are never saved by the client. The device keeps its scoped credential in the platform keychain/private storage for subsequent policy requests. No OAuth grants, client IDs, refresh-token exchange, admin sign-in, or enrollment-code copying are required.
+In Clients, create a username/password and assign its family profile. The macOS/iOS, Android and Windows apps take the setup code from the Devices tab and those client credentials, then call `POST /v1/device/login` with their locally generated WireGuard public key and device name, through the gateway's UDP port. The server selects the profile assigned to that username; clients cannot choose another profile or administer policies. Passwords travel only over QUIC pinned to the gateway's key (or inside the tunnel) and are never saved by the client. The device keeps its scoped credential in the platform keychain/private storage for subsequent policy requests. No OAuth grants, client IDs, refresh-token exchange, admin sign-in, or enrollment-code copying are required.
 
-Passwords are stored as salted PBKDF2-SHA256 hashes. Admins can reassign profiles, disable/delete users or reset their passwords. Disabling/deleting a user or resetting a password revokes its existing VPN devices; those clients must be reset and signed in again. Existing unlinked devices remain compatible during migration. Old parent/owner account records do not grant website access; assign their profiles explicitly if converting them to client users. The gateway still uses its independent `TEMPERANCE_GATEWAY_TOKEN`.
+Passwords are stored as salted PBKDF2-SHA256 hashes. Admins can reassign profiles, disable/delete users or set new passwords. Disabling/deleting a user or setting a new password revokes its existing VPN devices; those clients must be reset and signed in again. Existing unlinked devices remain compatible during migration. Old parent/owner account records do not grant website access; assign their profiles explicitly if converting them to client users. The gateway still uses its independent `TEMPERANCE_GATEWAY_TOKEN`.
 
 ## Local development
 
@@ -35,7 +35,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-To develop against PostgreSQL instead, run `docker run --rm -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=dev postgres:17-alpine` and set `TEMPERANCE_DATABASE_URL=postgres://postgres:dev@127.0.0.1:5432/postgres`. Native apps intentionally require an HTTPS service origin.
+To develop against PostgreSQL instead, run `docker run --rm -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=dev postgres:17-alpine` and set `TEMPERANCE_DATABASE_URL=postgres://postgres:dev@127.0.0.1:5432/postgres`. Native apps reach the service only through the gateway, so run it with `TEMPERANCE_GATEWAY_LISTEN` to test them.
 
 To run the embedded gateway locally, build the add-on once (`npm run build:gateway`, needs Rust) and set `TEMPERANCE_GATEWAY_LISTEN=0.0.0.0:51820`. The gateway's WireGuard key is generated into the data directory (`gateway.key`, mode 600) and its public key is handed to devices automatically; leave `TEMPERANCE_VPN_PUBLIC_KEY` unset. CI publishes prebuilt add-ons for linux-x64, linux-arm64, darwin-arm64, darwin-x64 and win32-x64.
 

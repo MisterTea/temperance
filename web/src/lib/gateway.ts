@@ -88,15 +88,15 @@ export function gatewayConfig(env: Env, privateKey: string) {
         }
       : null,
     public_port: publicPort,
-    // Parent phones reach the dashboard over the WireGuard port.
-    remote:
-      env.TEMPERANCE_FORWARD_SECRET && env.TEMPERANCE_REMOTE_PARENTS !== "off"
-        ? {
-            key_file: path.join(dataDir(env), "parent.key"),
-            secret: env.TEMPERANCE_FORWARD_SECRET,
-            target: `http://${web}`,
-          }
-        : null,
+    // Children's devices setting up, and parent phones, reach the dashboard over the WireGuard port.
+    remote: env.TEMPERANCE_FORWARD_SECRET
+      ? {
+          key_file: path.join(dataDir(env), "parent.key"),
+          secret: env.TEMPERANCE_FORWARD_SECRET,
+          target: `http://${web}`,
+          parents: env.TEMPERANCE_REMOTE_PARENTS !== "off",
+        }
+      : null,
   };
 }
 

@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use temperance_core::{self as core, Connectivity, CoreError, Diagnostic, HttpRequest, Identity};
 
 pub trait Transport {
-    /// Executes a request and returns (status, body). Redirects must not be followed.
-    fn send(&self, request: &HttpRequest) -> Result<(u16, String), String>;
+    /// Sends a request to home's WireGuard port and returns (status, body): inside
+    /// the tunnel while it is up, otherwise over the pinned QUIC channel.
+    fn send(&self, request: &HttpRequest, through_tunnel: bool) -> Result<(u16, String), String>;
     /// Sends the plain-HTTP captive-portal probe; returns (status, Location header, body).
     fn probe(&self, request: &HttpRequest) -> Result<(u16, Option<String>, String), String>;
 }
@@ -294,7 +295,7 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         let Ok(request) = core::diagnostics_request(identity, self.diagnostics.clone()) else {
             return;
         };
-        if let Ok((status, body)) = self.transport.send(&request) {
+        if let Ok((status, body)) = self.transport.send(&request, self.tunnel.is_up()) {
             if core::parse_ok(status, body).is_ok() {
                 self.reported = Some(codes);
             }
@@ -356,10 +357,8 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
 
     fn call(&self, request: HttpRequest) -> Result<(u16, String), CoreError> {
         self.transport
-            .send(&request)
-            .map_err(|e| CoreError::Invalid {
-                detail: format!("Cannot reach policy service: {e}"),
-            })
+            .send(&request, self.tunnel.is_up())
+            .map_err(|e| CoreError::Invalid { detail: e })
     }
 
     fn save(&self) -> Result<(), String> {

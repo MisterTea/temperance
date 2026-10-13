@@ -15,6 +15,7 @@ const TABS = [
   "Usage",
   "History",
   "Requests",
+  "Clients",
   "Settings",
 ];
 

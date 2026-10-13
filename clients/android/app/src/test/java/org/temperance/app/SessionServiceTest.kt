@@ -25,7 +25,7 @@ class SessionServiceTest {
         app.settle()
         assertEquals("Enroll first", app.status)
 
-        app.signIn("family.example", "alex", "correct horse")
+        app.signIn(FakeServer.HOME, "alex", "correct horse")
         controller.startCommand(0, 2)
         app.settle()
         assertEquals(Tunnel.State.UP, app.wireGuard.state)

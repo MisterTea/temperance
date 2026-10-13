@@ -46,7 +46,7 @@ object TestSupport {
     }
 
     /** Puts the app in the signed-in state without going through the form. */
-    fun enrolled(server: FakeServer) { app.signIn("family.example", "alex", server.password, "Test phone") }
+    fun enrolled(server: FakeServer) { app.signIn(FakeServer.HOME, "alex", server.password, "Test phone") }
 
     fun launch(): ActivityScenario<MainActivity> = ActivityScenario.launch(MainActivity::class.java)
 

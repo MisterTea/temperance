@@ -3,47 +3,11 @@ import SwiftUI
 import XCTest
 
 final class TransportTests: XCTestCase {
-    private func transport() -> HTTPSTransport {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubProtocol.self]
-        return HTTPSTransport(configuration: configuration)
-    }
-    private func respond(status: Int, body: String, from url: String? = nil) {
-        StubProtocol.reply = { request in
-            (HTTPURLResponse(url: URL(string: url ?? request.url!.absoluteString)!, statusCode: status, httpVersion: nil, headerFields: nil)!, Data(body.utf8))
+    func testOnlySpeaksToAHomesPinnedWireGuardPort() async {
+        for url in ["https://family.example/v1/device/state", "temperance://family.example:51820/v1/device/state"] {
+            do { _ = try await sendHome(HttpRequest(method: "GET", url: url, headers: [], body: nil), throughTunnel: false); XCTFail(url) }
+            catch { XCTAssertTrue(error is CoreError, url) }
         }
-    }
-
-    func testSendsCoreRequestsAndReturnsStatusAndBody() async throws {
-        StubProtocol.seen = []
-        respond(status: 401, body: #"{"error":"Invalid username or password"}"#)
-        let request = HttpRequest(method: "POST", url: "https://family.example/v1/device/login", headers: [Header(name: "Content-Type", value: "application/json")], body: #"{"a":1}"#)
-        let (status, body) = try await transport().send(request)
-        XCTAssertEqual(status, 401)
-        XCTAssertEqual(body, #"{"error":"Invalid username or password"}"#)
-        let seen = try XCTUnwrap(StubProtocol.seen.last)
-        XCTAssertEqual(seen.request.httpMethod, "POST")
-        XCTAssertEqual(seen.request.value(forHTTPHeaderField: "Content-Type"), "application/json")
-        XCTAssertEqual(seen.body.map { String(decoding: $0, as: UTF8.self) }, #"{"a":1}"#)
-    }
-
-    func testRejectsAnswersFromAnotherOriginOrOverPlainHTTP() async {
-        for other in ["https://elsewhere.example/", "http://family.example/"] {
-            respond(status: 200, body: "{}", from: other)
-            do { _ = try await transport().send(HttpRequest(method: "GET", url: "https://family.example/v1/device/state", headers: [], body: nil)); XCTFail(other) }
-            catch { XCTAssertEqual(error.localizedDescription, "Policy service rejected this request") }
-        }
-        do { _ = try await transport().send(HttpRequest(method: "GET", url: "", headers: [], body: nil)); XCTFail("empty URL") }
-        catch { XCTAssertEqual(error.localizedDescription, "Invalid request URL") }
-    }
-
-    func testNeverFollowsRedirects() {
-        let transport = transport()
-        let url = URL(string: "https://family.example/")!
-        let response = HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil, headerFields: ["Location": "https://elsewhere.example/"])!
-        var followed: URLRequest? = URLRequest(url: url)
-        transport.urlSession(URLSession.shared, task: URLSession.shared.dataTask(with: url), willPerformHTTPRedirection: response, newRequest: URLRequest(url: URL(string: "https://elsewhere.example/")!)) { followed = $0 }
-        XCTAssertNil(followed)
     }
 }
 
@@ -130,7 +94,7 @@ final class IdentityTests: XCTestCase {
         let service = FakeService(), store = MemoryStore()
         let client = Client(send: { try await service.send($0) }, store: store, vpn: FakeVPN(), notifier: FakeNotifier(), location: FakeLocation())
         render(client)
-        await client.enroll(service: "https://family.example", username: "alex", password: "correct horse", name: "Mac")
+        await client.enroll(home: FakeService.home, username: "alex", password: "correct horse", name: "Mac")
         await client.refresh()
         XCTAssertFalse(client.health.isEmpty)
         render(client)

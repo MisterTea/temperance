@@ -3,7 +3,7 @@ android {
     namespace = "org.temperance.app"
     compileSdk = 36
     defaultConfig {
-        applicationId = "org.temperance.app"; minSdk = 26; targetSdk = 36; versionCode = 3; versionName = "0.5.0"
+        applicationId = "org.temperance.app"; minSdk = 26; targetSdk = 36; versionCode = 6; versionName = "0.5.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["clearPackageData"] = "true"
     }
@@ -22,10 +22,6 @@ android {
     sourceSets {
         getByName("test").java.srcDir("src/sharedTest/java")
         getByName("androidTest").java.srcDir("src/sharedTest/java")
-        // e2e/real-server.sh: trust its throwaway CA for localhost in that debug build only.
-        providers.gradleProperty("e2eDir").orNull?.let { dir ->
-            getByName("debug") { res.srcDir("$dir/res"); manifest.srcFile("$dir/AndroidManifest.xml") }
-        }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17; isCoreLibraryDesugaringEnabled = true }
     kotlinOptions { jvmTarget = "17" }
@@ -72,13 +68,13 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.2")
     implementation("androidx.camera:camera-view:1.4.2")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    // The sign-in password field's show/hide toggle (TextInputLayout).
+    implementation("com.google.android.material:material:1.14.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("net.java.dev.jna:jna:5.17.0")
     testImplementation("org.robolectric:robolectric:4.16")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
-    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
 
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:rules:1.7.0")

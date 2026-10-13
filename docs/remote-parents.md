@@ -44,8 +44,8 @@ parent's phone                                home
 | Setting | Effect |
 | --- | --- |
 | `TEMPERANCE_HOUSEHOLD_NAME` | Shown in the app after pairing, for example `The Parkers`. |
-| `TEMPERANCE_REMOTE_PARENTS=off` | Turns parent access off; QUIC packets are then ignored. |
-| `<data dir>/parent.key` | The gateway's key for parent phones, created on first start (mode 600). Back it up with `gateway.key`: if it is lost, every parent phone must pair again. |
+| `TEMPERANCE_REMOTE_PARENTS=off` | Turns parent access off: pairing and parent connections are refused. Children's devices still sign in over the same port. |
+| `<data dir>/parent.key` | The gateway's QUIC key, created on first start (mode 600). Parent phones and children's devices pin it. Back it up with `gateway.key`: if it is lost, every parent phone must pair again and every child's device must be set up again. |
 
 With a separate gateway machine, add `--parent-key-file /var/lib/temperance/parent.key` to `temperance-gateway`. It forwards parent requests to `--service` over HTTPS.
 

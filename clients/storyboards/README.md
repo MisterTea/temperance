@@ -26,12 +26,15 @@ skips that step on a platform.
 
 ## Platforms
 
-| Platform | Device | Driven by | Server reached at |
+| Platform | Device | Driven by | Gateway reached at |
 | --- | --- | --- | --- |
-| `android` | running emulator (`adb`) | uiautomator + `adb input`, recorded with `scrcpy` | `https://localhost:8443` (adb reverse, storyboard CA) |
-| `ios` | "Temperance Storyboard" simulator | an XCUITest that long-polls the runner (`clients/apple/Storyboard`) | `https://localhost:8444` (storyboard CA) |
-| `macos` | this Mac | `cua-driver` accessibility actions, recorded with ffmpeg | a Cloudflare quick tunnel |
-| `windows` | the UTM "Windows 11" VM | `windows/agent.ps1` (UI Automation), recorded with ffmpeg in the VM | a Cloudflare quick tunnel |
+| `android` | running emulator (`adb`) | uiautomator + `adb input`, recorded with `scrcpy` | `10.0.2.2` (the host) |
+| `ios` | "Temperance Storyboard" simulator | an XCUITest that long-polls the runner (`clients/apple/Storyboard`) | `127.0.0.1` |
+| `macos` | this Mac | `cua-driver` accessibility actions, recorded with ffmpeg | `127.0.0.1` |
+| `windows` | the UTM "Windows 11" VM | `windows/agent.ps1` (UI Automation), recorded with ffmpeg in the VM | `10.0.2.2`; its harness is on a Cloudflare quick tunnel |
+
+Every client signs in with the dashboard's setup code (`{{server}}`) and reaches
+home only through the gateway's UDP port, as a real device does.
 
 Notes:
 

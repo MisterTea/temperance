@@ -10,7 +10,7 @@ COPY dist/image/${TARGETARCH}/node /opt/temperance/node
 COPY dist/image/${TARGETARCH}/app /opt/temperance/app
 WORKDIR /opt/temperance/app
 ENV PATH=/opt/temperance/node/bin:$PATH NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000 \
-  TEMPERANCE_DATA_DIR=/data TEMPERANCE_GATEWAY_LISTEN=0.0.0.0:51820
+  TEMPERANCE_DATA_DIR=/data TEMPERANCE_GATEWAY_LISTEN=0.0.0.0:51820 TEMPERANCE_INSTALL=docker
 USER temperance
 VOLUME /data
 EXPOSE 3000 51820/udp

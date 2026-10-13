@@ -141,7 +141,7 @@ class MenuTest {
 
     @Test fun aboutShowsVersionAndServer() {
         menu(R.string.menu_about)
-        onView(withText(containsString("Server https://family.example"))).check(matches(isDisplayed()))
+        onView(withText(containsString("Home family.example:51820"))).check(matches(isDisplayed()))
         TestSupport.screenshot("menu-about")
         onView(withText(R.string.close)).perform(click())
         assertEquals(MainActivity.Screen.STATUS, TestSupport.onActivity(scenario) { it.screen })

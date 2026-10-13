@@ -1,12 +1,15 @@
 import { z } from "zod";
 import * as accounts from "./accounts";
-import { bearer, hash, origin, secrets, validateKey } from "./auth";
+import { bearer, hash, secrets, trustedOrigin, validateKey } from "./auth";
 import { mutate, repository, type Repository } from "./database";
 import * as service from "./service";
+import * as updates from "./updates";
 import type { Parent, State } from "./model";
 import { localTime } from "./policy";
 
 const FORWARDED = "x-temperance-forwarded";
+// Non-zero: the Windows service (WinSW) restarts only on failure; systemd, launchd and Docker restart on any exit.
+const RESTART_EXIT_CODE = 75;
 
 class HTTPError extends Error {
   constructor(
@@ -88,7 +91,7 @@ export async function handle(
         write &&
         actor.role === "admin" &&
         !bearer(request) &&
-        request.headers.get("origin") !== origin()
+        !trustedOrigin(request)
       )
         throw new HTTPError(403, "Same-origin requests required");
       if (actor.role === "parent") await seen(repo, actor.parent);
@@ -104,6 +107,10 @@ export async function handle(
           );
         if (path === "api/users")
           return json(accounts.users(state).map(accounts.publicUser));
+        if (path === "api/update")
+          return json(
+            await updates.status(url.searchParams.get("check") === "now"),
+          );
         if (path === "api/usage")
           return json(
             service.usageSummary(
@@ -184,6 +191,21 @@ export async function handle(
             },
           );
       } else {
+        if (path === "api/restart") {
+          setTimeout(() => process.exit(RESTART_EXIT_CODE), 250);
+          return json({ restarting: true });
+        }
+        if (path === "api/update") {
+          try {
+            await updates.update();
+          } catch (e) {
+            throw new HTTPError(
+              409,
+              e instanceof Error ? e.message : "Update failed",
+            );
+          }
+          return json({ updating: true });
+        }
         const data = await body(request);
         const result = await mutate(repo, async (state) => {
           switch (path) {
@@ -433,8 +455,8 @@ export async function handle(
   }
 }
 const cookieName = "temperance_session";
-function sessionCookie(value: string, maxAge: number) {
-  return `${cookieName}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${origin().startsWith("https:") ? "; Secure" : ""}`;
+function sessionCookie(request: Request, value: string, maxAge: number) {
+  return `${cookieName}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${request.headers.get("origin")?.startsWith("https:") ? "; Secure" : ""}`;
 }
 function cookie(request: Request) {
   return (request.headers.get("cookie") ?? "")
@@ -515,7 +537,7 @@ function loginAllowed(request: Request, at = Date.now()) {
   };
 }
 function sameOrigin(request: Request) {
-  if (request.headers.get("origin") !== origin())
+  if (!trustedOrigin(request))
     throw new HTTPError(403, "Same-origin requests required");
 }
 async function accountRoute(request: Request, path: string, repo: Repository) {
@@ -524,7 +546,7 @@ async function accountRoute(request: Request, path: string, repo: Repository) {
   if (request.method !== "POST") throw new HTTPError(404, "Not found");
   sameOrigin(request);
   if (path === "v1/logout")
-    return json({}, 200, { "Set-Cookie": sessionCookie("", 0) });
+    return json({}, 200, { "Set-Cookie": sessionCookie(request, "", 0) });
   if (path !== "v1/login") throw new HTTPError(404, "Not found");
   const input = z
     .object({ password: z.string().max(200) })
@@ -540,7 +562,7 @@ async function accountRoute(request: Request, path: string, repo: Repository) {
     throw new HTTPError(401, "Invalid admin password");
   }
   return json({}, 200, {
-    "Set-Cookie": sessionCookie(await accounts.adminSession(), 3600),
+    "Set-Cookie": sessionCookie(request, await accounts.adminSession(), 3600),
   });
 }
 function validateBackup(value: unknown): State {

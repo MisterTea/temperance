@@ -24,6 +24,7 @@ import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import uniffi.temperance_core.coreVersion
+import uniffi.temperance_core.parseHomeLink
 
 /** Edge-to-edge is enforced on Android 15+; keep content clear of bars and the keyboard and centred on tablets. */
 internal fun Activity.fitSystemBars(screen: View) {
@@ -145,6 +146,9 @@ class MainActivity : Activity() {
             run { app.signIn(values.first, values.second, values.third, defaultDeviceName()) }
         }
         password.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_GO).also { if (it) submit.performClick() } }
+        findViewById<Button>(R.id.scan_setup).setOnClickListener {
+            startActivityForResult(Intent(this, ScanActivity::class.java).putExtra(ScanActivity.EXTRA_PREFIX, ScanActivity.HOME_PREFIX), REQUEST_SCAN)
+        }
         findViewById<Button>(R.id.parent_instead).setOnClickListener { app.mode = "parent"; show() }
     }
 
@@ -287,7 +291,7 @@ class MainActivity : Activity() {
 
     private fun about() {
         val version = packageManager.getPackageInfo(packageName, 0).versionName ?: ""
-        val server = runCatching { app.vault.load()?.service }.getOrNull() ?: "not connected"
+        val server = runCatching { parseHomeLink(app.vault.load()!!.service).let { "${it.host}:${it.port}" } }.getOrNull() ?: "not connected"
         dialog = AlertDialog.Builder(this)
             .setTitle(R.string.menu_about)
             .setMessage(getString(R.string.about_text, version, coreVersion(), server))
@@ -297,6 +301,14 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_SCAN) {
+            val link = data?.getStringExtra(ScanActivity.EXTRA_LINK)
+            if (resultCode == RESULT_OK && link != null && shown == Screen.SETUP) {
+                findViewById<EditText>(R.id.server).setText(link)
+                findViewById<EditText>(R.id.username).requestFocus()
+            }
+            return
+        }
         if (requestCode != REQUEST_VPN) return
         if (resultCode == RESULT_OK) onVpnAllowed() else { vpnDenied = true; render() }
     }
@@ -316,5 +328,6 @@ class MainActivity : Activity() {
         const val REQUEST_VPN = 1
         const val REQUEST_LOCATION = 2
         const val REQUEST_NOTIFICATIONS = 3
+        const val REQUEST_SCAN = 4
     }
 }

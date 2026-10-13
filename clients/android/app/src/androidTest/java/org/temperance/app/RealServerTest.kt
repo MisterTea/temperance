@@ -26,19 +26,19 @@ import org.temperance.app.TestSupport.tapSystem
 import org.temperance.app.TestSupport.waitFor
 import org.temperance.app.TestSupport.waitForScreen
 
-/** Runs only from e2e/real-server.sh, which passes the server URL, child credentials and the admin token. */
+/** Runs only from e2e/real-server.sh, which passes the setup code, the dashboard URL, child credentials and the admin token. */
 @RunWith(AndroidJUnit4::class)
 class RealServerTest {
     private val args = InstrumentationRegistry.getArguments()
 
     @Test fun setsUpAgainstTheRealPolicyService() {
-        val server = args.getString("server")
-        assumeTrue("needs -e server", server != null)
+        val home = args.getString("home")
+        assumeTrue("needs -e home", home != null)
         TestSupport.reset()
-        app.transport = HttpsTransport
+        app.transport = HomeTransport { app.connected }
 
         val scenario = TestSupport.launch()
-        onView(withId(R.id.server)).perform(replaceText(server!!.removePrefix("https://")))
+        onView(withId(R.id.server)).perform(replaceText(home!!))
         onView(withId(R.id.username)).perform(replaceText(args.getString("username")!!))
         onView(withId(R.id.password)).perform(replaceText("not the password"))
         closeSoftKeyboard()

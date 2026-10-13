@@ -340,8 +340,9 @@ export function Onboarding({
           <h1 id="done">{saved}’s rules are ready.</h1>
           <p>
             Next, connect {saved}’s phone, tablet or computer: create a client
-            username/password in Settings and enter it in the Temperance app.
-            TVs and consoles can be added as home-network devices.
+            username/password in Clients, then scan the setup code under
+            Devices with the Temperance app and sign in. TVs and consoles can be
+            added as home-network devices.
           </p>
           <div className="actions">
             <button

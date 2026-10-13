@@ -96,6 +96,26 @@ describe("authoritative policy and enrollment", () => {
     expect(results.filter((r) => r.status === 200)).toHaveLength(1);
     expect((await repo.read()).state.devices).toHaveLength(1);
   });
+  it("accepts sign-in from any LAN address the server is reached at", async () => {
+    const repo = new TestRepository();
+    const lan = await request(
+      repo,
+      "v1/login",
+      { password: ADMIN },
+      undefined,
+      { Origin: "http://192.168.4.233:3000", Host: "192.168.4.233:3000" },
+    );
+    expect(lan.status).toBe(200);
+    expect(lan.headers.get("set-cookie")).not.toContain("Secure");
+    const forged = await request(
+      repo,
+      "v1/login",
+      { password: ADMIN },
+      undefined,
+      { Origin: "http://evil.test", Host: "imp:3000" },
+    );
+    expect(forged.status).toBe(403);
+  });
   it("rejects cookie writes from another origin", async () => {
     const repo = new TestRepository();
     const login = await request(

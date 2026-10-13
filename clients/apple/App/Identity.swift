@@ -6,6 +6,16 @@ enum ClientError: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
+extension Error {
+    /// What to show the person using the app. The core's messages are written for them,
+    /// but UniFFI's generated description of a `CoreError` is the enum's debug text.
+    var message: String {
+        switch self as? CoreError {
+        case .Invalid(let detail), .Service(_, let detail): detail
+        case nil: localizedDescription
+        }
+    }
+}
 /// Persists the device identity; the apps use the shared Keychain (`Vault`).
 protocol IdentityStore {
     func load() throws -> Identity?

@@ -1,9 +1,26 @@
-//! Sans-IO protocol layer: builds requests and parses responses so each
-//! platform only supplies its native HTTPS transport.
+//! Sans-IO protocol layer: builds requests and parses responses. A device's
+//! requests go to its home gateway (`temperance://<pin>@<host>:<port><path>`),
+//! never to a web address; `remote::device::home_send` delivers them.
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
-use url::Url;
 
 use crate::{policy::Profile, policy::Window, tunnel::Tunnel, CoreError};
+
+const HOME_PREFIX: &str = "temperance://home#";
+
+/// Where a family's Temperance is: the dashboard's "Set up a child's device"
+/// code. The gateway's key is pinned, so no certificate authority or web
+/// address is involved.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct HomeLink {
+    pub v: u32,
+    pub host: String,
+    pub port: u16,
+    /// Base64url SHA-256 of the gateway's QUIC certificate.
+    pub pin: String,
+    #[serde(default)]
+    pub household: String,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct Header {
@@ -71,22 +88,46 @@ fn invalid(message: impl Into<String>) -> CoreError {
     }
 }
 
-/// Accepts only a bare HTTPS origin (no credentials, path, query, or fragment).
+#[uniffi::export]
+pub fn parse_home_link(link: String) -> Result<HomeLink, CoreError> {
+    let bad = || {
+        invalid("Scan or paste the setup code from your family's Temperance dashboard (Devices → Set up a child's device).")
+    };
+    let encoded = link.trim().strip_prefix(HOME_PREFIX).ok_or_else(bad)?;
+    let json = URL_SAFE_NO_PAD
+        .decode(encoded.trim_end_matches('='))
+        .map_err(|_| bad())?;
+    let home: HomeLink = serde_json::from_slice(&json).map_err(|_| bad())?;
+    if home.v != 1 {
+        return Err(invalid(
+            "This setup code needs a newer version of Temperance.",
+        ));
+    }
+    let host_ok = !home.host.is_empty()
+        && home.host.len() <= 253
+        && !home
+            .host
+            .contains(|c: char| c.is_whitespace() || "/@#?[]%\\".contains(c));
+    let pin_ok = home.pin.len() == 43
+        && home
+            .pin
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !host_ok || home.port == 0 || !pin_ok {
+        return Err(bad());
+    }
+    Ok(home)
+}
+
+pub fn format_home_link(home: &HomeLink) -> String {
+    let json = serde_json::to_vec(home).expect("serializable");
+    format!("{HOME_PREFIX}{}", URL_SAFE_NO_PAD.encode(json))
+}
+
+/// Normalizes the dashboard's setup code; the result is `Identity.service`.
 #[uniffi::export]
 pub fn validate_service(raw: String) -> Result<String, CoreError> {
-    let trimmed = raw.trim().trim_end_matches('/');
-    let url = Url::parse(trimmed).map_err(|_| invalid("Enter an HTTPS service origin"))?;
-    if url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || (url.path() != "/" && !url.path().is_empty())
-    {
-        return Err(invalid("Enter an HTTPS service origin"));
-    }
-    Ok(url.origin().ascii_serialization())
+    Ok(format_home_link(&parse_home_link(raw)?))
 }
 
 fn request(
@@ -96,7 +137,12 @@ fn request(
     token: Option<&str>,
     body: Option<String>,
 ) -> Result<HttpRequest, CoreError> {
-    let origin = validate_service(service.to_string())?;
+    let home = parse_home_link(service.to_string())?;
+    let host = if home.host.contains(':') {
+        format!("[{}]", home.host)
+    } else {
+        home.host
+    };
     let mut headers = vec![Header {
         name: "Accept".into(),
         value: "application/json".into(),
@@ -115,7 +161,7 @@ fn request(
     }
     Ok(HttpRequest {
         method: method.into(),
-        url: format!("{origin}{path}"),
+        url: format!("temperance://{}@{host}:{}{path}", home.pin, home.port),
         headers,
         body,
     })
@@ -246,7 +292,8 @@ pub fn location_unavailable_request(
 }
 
 /// Signs this device into its administrator-assigned IAM user. The username
-/// and password are sent once over HTTPS; only device credentials are persisted.
+/// and password are sent once, to the pinned gateway; only device credentials
+/// are persisted.
 #[uniffi::export]
 pub fn sign_in_request(
     service: String,
@@ -366,5 +413,12 @@ pub fn identity_to_json(identity: Identity) -> String {
 
 #[uniffi::export]
 pub fn identity_from_json(json: String) -> Result<Identity, CoreError> {
-    serde_json::from_str(&json).map_err(|e| invalid(format!("Stored identity is unreadable: {e}")))
+    let mut identity: Identity = serde_json::from_str(&json)
+        .map_err(|e| invalid(format!("Stored identity is unreadable: {e}")))?;
+    // Before 0.5.4 devices stored the dashboard's web address, which they no longer use:
+    // such a device is set up again with the dashboard's setup code.
+    if parse_home_link(identity.service.clone()).is_err() {
+        identity.state = None;
+    }
+    Ok(identity)
 }

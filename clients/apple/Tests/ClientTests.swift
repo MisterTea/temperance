@@ -19,7 +19,7 @@ import XCTest
 
     private func enrolled() async -> Client {
         let client = client()
-        await client.enroll(service: "https://family.example", username: "alex", password: "correct horse", name: "Mac")
+        await client.enroll(home: FakeService.home, username: "alex", password: "correct horse", name: "Mac")
         return client
     }
 
@@ -37,11 +37,11 @@ import XCTest
 
     func testEnrollingReportsErrorsAndRefusesASecondSignIn() async {
         let client = client()
-        await client.enroll(service: "https://family.example", username: "alex", password: "nope", name: "Mac")
-        XCTAssertTrue(client.status.contains("Invalid username or password"), client.status)
+        await client.enroll(home: FakeService.home, username: "alex", password: "nope", name: "Mac")
+        XCTAssertEqual(client.status, "Invalid username or password")
         XCTAssertNil(store.identity)
-        await client.enroll(service: "https://family.example", username: "alex", password: "correct horse", name: "Mac")
-        await client.enroll(service: "https://family.example", username: "alex", password: "correct horse", name: "Mac")
+        await client.enroll(home: FakeService.home, username: "alex", password: "correct horse", name: "Mac")
+        await client.enroll(home: FakeService.home, username: "alex", password: "correct horse", name: "Mac")
         XCTAssertEqual(client.status, "Device already enrolled")
         XCTAssertEqual(service.bodies("/v1/device/login").count, 2)
     }
@@ -53,10 +53,10 @@ import XCTest
         XCTAssertEqual(client().status, "Keychain read failed: -25308")
     }
 
-    func testTheDefaultTransportOnlyTalksHTTPS() async {
+    func testSignInNeedsTheDashboardsSetupCode() async {
         let client = Client(store: store, vpn: vpn, notifier: notifier, location: location)
-        await client.enroll(service: "https://127.0.0.1:9", username: "alex", password: "correct horse", name: "Mac")
-        XCTAssertFalse(client.status.isEmpty)
+        await client.enroll(home: "https://family.example", username: "alex", password: "correct horse", name: "Mac")
+        XCTAssertTrue(client.status.hasPrefix("Scan or paste the setup code"), client.status)
         XCTAssertNil(store.identity)
     }
 
@@ -64,7 +64,7 @@ import XCTest
         let client = client()
         await client.refresh()
         XCTAssertTrue(service.requests.isEmpty, "nothing to refresh before sign-in")
-        await client.enroll(service: "https://family.example", username: "alex", password: "correct horse", name: "Mac")
+        await client.enroll(home: FakeService.home, username: "alex", password: "correct horse", name: "Mac")
         vpn.current = (true, true); notifier.permission = true; location.allowed = true
         service.version = 4; service.remaining = 10
         await client.refresh()
@@ -110,7 +110,7 @@ import XCTest
         let refused = await client.askForTime(minutes: 15, message: "")
         XCTAssertFalse(refused)
         XCTAssertEqual(client.status, "Enroll first")
-        await client.enroll(service: "https://family.example", username: "alex", password: "correct horse", name: "Mac")
+        await client.enroll(home: FakeService.home, username: "alex", password: "correct horse", name: "Mac")
         let sent = await client.askForTime(minutes: 30, message: "homework")
         XCTAssertTrue(sent)
         XCTAssertEqual(client.status, "Request sent to your parents.")
@@ -123,7 +123,7 @@ import XCTest
         let client = client()
         await client.install()
         XCTAssertEqual(client.status, "Enroll first")
-        await client.enroll(service: "https://family.example", username: "alex", password: "correct horse", name: "Mac")
+        await client.enroll(home: FakeService.home, username: "alex", password: "correct horse", name: "Mac")
         vpn.failure = ClientError.message("Permission denied")
         await client.install()
         XCTAssertEqual(client.status, "Permission denied")

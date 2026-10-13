@@ -12,7 +12,7 @@ Each application enrolls a locally generated WireGuard public key through the po
 
 ## Shared Rust core
 
-Client business logic lives once in [`core/temperance-core`](../core/temperance-core): HTTPS-origin validation, WireGuard key generation, enrollment/refresh/time-request protocol (request building and response parsing), identity persistence format, full-tunnel config validation, the policy engine (verified against the same `specs/policy-cases.json` golden cases as the TypeScript service; the gateway uses this engine too), the child-facing status view ("Bedtime starts in 30 min", remaining minutes, ask-for-time eligibility), child alerts, location-request answers, and device diagnostics. `diagnose` turns facts each platform observes (VPN permission, tunnel state, WireGuard handshake age, captive-portal probe, notification and location permission) into ordered issues with a fix for the child; changes are reported to parents (`POST /v1/device/diagnostics`) and shown on the dashboard's Devices tab.
+Client business logic lives once in [`core/temperance-core`](../core/temperance-core): the home setup code (`temperance://home#…`) and the transport to home (`home_send`: plain HTTP inside the tunnel, otherwise QUIC pinned to the gateway's key, both on the WireGuard UDP port), WireGuard key generation, enrollment/refresh/time-request protocol (request building and response parsing), identity persistence format, full-tunnel config validation, the policy engine (verified against the same `specs/policy-cases.json` golden cases as the TypeScript service; the gateway uses this engine too), the child-facing status view ("Bedtime starts in 30 min", remaining minutes, ask-for-time eligibility), child alerts, location-request answers, and device diagnostics. `diagnose` turns facts each platform observes (VPN permission, tunnel state, WireGuard handshake age, captive-portal probe, notification and location permission) into ordered issues with a fix for the child; changes are reported to parents (`POST /v1/device/diagnostics`) and shown on the dashboard's Devices tab.
 
 **Wi-Fi sign-in pages.** On the desktop app, "Sign in to Wi-Fi" appears only when the tunnel cannot reach the gateway. It lowers the tunnel for at most five minutes, probes `connectivitycheck.gstatic.com` outside the tunnel, restores protection as soon as the network is online, and parents are told afterwards. Android detects the captive-portal state itself and its sign-in flow runs outside the VPN (the app's button opens Wi-Fi settings); on Apple platforms `includeAllNetworks` always exempts captive-network sign-in traffic.
 
@@ -20,7 +20,7 @@ Client business logic lives once in [`core/temperance-core`](../core/temperance-
 - **iOS / macOS apps**: `core/build-bindings.sh apple` builds `clients/apple/Core/TemperanceCoreFFI.xcframework` (device, simulator, macOS universal) and UniFFI Swift bindings; `apple/bootstrap.sh` runs it.
 - **Android**: `core/build-bindings.sh android` builds `jniLibs` for arm64-v8a, armeabi-v7a, x86_64, x86 with `cargo-ndk` and generates Kotlin bindings; Gradle's `preBuild` runs it (set `TEMPERANCE_SKIP_RUST=1` to use prebuilt libraries).
 
-Platform code only supplies the native HTTPS transport, keychain/keystore storage, VPN APIs, and UI. Requirements: Rust (via rustup) with the mobile targets, `cargo-ndk` and `ANDROID_NDK_HOME` for Android, Xcode for Apple. Run `cargo test --workspace` in `core/` for unit, golden, and desktop tests.
+Platform code only supplies keychain/keystore storage, VPN APIs, the QR scanner, and UI. Requirements: Rust (via rustup) with the mobile targets, `cargo-ndk` and `ANDROID_NDK_HOME` for Android, Xcode for Apple. Run `cargo test --workspace` in `core/` for unit, golden, and desktop tests.
 
 ## macOS / iOS
 
@@ -51,7 +51,7 @@ Tests (from `clients/android`):
 
 - `./gradlew testDebugUnitTest`: JVM unit tests for sign-in and status text, running against a host build of the shared Rust core.
 - `./gradlew connectedDebugAndroidTest`: on a booted emulator or device, runs the setup flow, including Android's real VPN consent dialog and a live WireGuard tunnel, plus every menu item. A layout audit fails on clipped or ellipsized text, content under the action bar, system bars, or keyboard, overlapping views, and tap targets under 48dp. It runs on phone, small phone, landscape, 130% and 200% text, and tablet. Screenshots are written to `/data/local/tmp/temperance-shots` on the device.
-- `e2e/real-server.sh`: needs `npm run build` in `web/` first. It starts a fresh local policy service behind HTTPS with a throwaway CA that only this debug test build trusts, signs in through the UI, connects, and checks the result on the server.
+- `e2e/real-server.sh`: needs `npm run build` in `web/` first. It starts a fresh local policy service with its embedded gateway, signs in through the UI with the dashboard's setup code over the gateway's UDP port, connects, and checks the result on the server.
 
 ## Windows and Linux
 
@@ -79,4 +79,4 @@ Integration follows upstream [WireGuard embedding documentation](https://www.wir
 
 ## Password sign-in
 
-Create the client user and assign its profile in the website Settings using the admin password. Enter the server URL and that username/password in the app. The server determines the profile; no admin account, OAuth exchange, enrollment code or profile picker is used on a client. Clients send passwords only over HTTPS and store only scoped device credentials. Existing stored devices continue to work until revoked. Password reset, user deletion or disable revokes the associated devices; clear/reset their local identity before signing in again.
+Create the client user and assign its profile on the website's Clients page using the admin password. In the app, scan the setup code from the dashboard's **Devices** tab (Android and iPhone) or paste it (Mac and Windows), then enter that username/password. The server determines the profile; no admin account, OAuth exchange, enrollment code or profile picker is used on a client. Clients never use the dashboard's address: they send passwords only through the gateway's UDP port, over QUIC pinned to the key in the setup code (or inside the tunnel), and store only scoped device credentials. Devices set up before version 0.5.4 stored a web address instead and must be set up again with the setup code. Password reset, user deletion or disable revokes the associated devices; clear/reset their local identity before signing in again.

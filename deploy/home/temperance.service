@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/temperance/temperance.env
-Environment=NODE_ENV=production TEMPERANCE_DATA_DIR=/var/lib/temperance
+Environment=NODE_ENV=production TEMPERANCE_DATA_DIR=/var/lib/temperance TEMPERANCE_INSTALL=linux
 WorkingDirectory=/opt/temperance/app
 ExecStart=/opt/temperance/node/bin/node /opt/temperance/app/server.js
 Restart=always

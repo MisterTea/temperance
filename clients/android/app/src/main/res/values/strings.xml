@@ -2,9 +2,10 @@
     <string name="app_name">Temperance</string>
 
     <string name="setup_title">Connect this device</string>
-    <string name="setup_intro">Sign in with the username and password a parent created for you on the family dashboard. Your family profile is assigned automatically. Your password is not saved on this device.</string>
-    <string name="server_label">Family dashboard address</string>
-    <string name="server_hint">myhome.example.com</string>
+    <string name="setup_intro">On the family dashboard at home, a parent opens Devices and shows the setup code. Scan it, then sign in with the username and password a parent created for you. Your family profile is assigned automatically. Your password is not saved on this device.</string>
+    <string name="scan_setup">Scan the setup code</string>
+    <string name="server_label">Setup code</string>
+    <string name="server_hint">temperance://home#…</string>
     <string name="username_label">Username</string>
     <string name="password_label">Password</string>
     <string name="sign_in">Sign in</string>
@@ -37,7 +38,7 @@
     <string name="location_on">Parents can now ask for this device\'s location.</string>
     <string name="location_off">Location sharing stays off.</string>
     <string name="refreshed">Rules updated</string>
-    <string name="about_text">Temperance %1$s\nCore %2$s\nServer %3$s</string>
+    <string name="about_text">Temperance %1$s\nCore %2$s\nHome %3$s</string>
 
     <string name="choose_title">Welcome to Temperance</string>
     <string name="choose_intro">Is this your child\'s device, or are you a parent? A child\'s device installs the family VPN. A parent\'s phone opens the family dashboard from anywhere, with no VPN.</string>

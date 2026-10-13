@@ -15,7 +15,7 @@ const DEVICE = "Temperance Storyboard";
 const simctl = async (...args) => (await run("xcrun", ["simctl", ...args], { maxBuffer: 1 << 24 })).stdout;
 
 export default function driver({ log, here }) {
-  let udid, scale, test, recorder, recording, httpServer, ca;
+  let udid, scale, test, recorder, recording, httpServer;
   const queue = [];
   let waiting = null;
   let settle = false;
@@ -73,11 +73,9 @@ export default function driver({ log, here }) {
     // The "A little later" chip goes low, clear of the large title and headline.
     frame: { chip: "bottom" },
     origin: "local",
-    httpsPort: 8444,
     endpointHost: "127.0.0.1",
 
-    async setup({ server, work }) {
-      ca = server.ca;
+    async setup({ work }) {
       const devices = JSON.parse(await simctl("list", "devices", "available", "-j")).devices;
       udid = Object.values(devices).flat().find((d) => d.name === DEVICE)?.udid;
       if (!udid) {
@@ -89,7 +87,6 @@ export default function driver({ log, here }) {
       await clock(process.env.TZ);
       await simctl("ui", udid, "appearance", "light").catch(() => {});
       await simctl("status_bar", udid, "override", "--batteryState", "charged", "--batteryLevel", "100", "--wifiBars", "3", "--cellularBars", "4").catch(() => {});
-      await simctl("keychain", udid, "add-root-cert", ca);
       const derived = join(here, "out", ".ios-build");
       log("building the app and its storyboard UI test");
       await run("xcodegen", ["generate"], { cwd: apple });
@@ -125,7 +122,6 @@ export default function driver({ log, here }) {
       const data = (await simctl("get_app_container", udid, BUNDLE, "data")).trim();
       await simctl("spawn", udid, "defaults", "delete", join(data, "Library/Preferences", `${BUNDLE}.plist`)).catch(() => {});
       await simctl("keychain", udid, "reset");
-      await simctl("keychain", udid, "add-root-cert", ca);
       await launch();
     },
 

@@ -5,7 +5,7 @@
     {
       "click": {
         "role": "button",
-        "name": "Settings",
+        "name": "Clients",
         "exact": true
       }
     },

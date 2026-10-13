@@ -37,14 +37,15 @@ export function bearer(request: Request) {
   const auth = request.headers.get("authorization") ?? "";
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
 }
-export function origin() {
-  const value = process.env.TEMPERANCE_PUBLIC_URL;
-  if (!value) throw new Error("Configure TEMPERANCE_PUBLIC_URL");
-  const url = new URL(value);
-  if (
-    url.protocol !== "https:" &&
-    !["localhost", "127.0.0.1"].includes(url.hostname)
-  )
-    throw new Error("Remote public origin must use HTTPS");
-  return url.origin;
+/** The page must come from this server: its public URL, or whatever LAN name or address the browser used. */
+export function trustedOrigin(request: Request) {
+  const value = request.headers.get("origin");
+  if (!value) return false;
+  const publicUrl = process.env.TEMPERANCE_PUBLIC_URL;
+  if (publicUrl && new URL(publicUrl).origin === value) return true;
+  try {
+    return new URL(value).host === request.headers.get("host");
+  } catch {
+    return false;
+  }
 }

@@ -57,6 +57,8 @@ class FakeServer(
 
     companion object {
         const val SERVER_KEY = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+        /** The dashboard's setup code for family.example:51820. */
+        const val HOME = "temperance://home#eyJ2IjoxLCJob3N0IjoiZmFtaWx5LmV4YW1wbGUiLCJwb3J0Ijo1MTgyMCwicGluIjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOCIsImhvdXNlaG9sZCI6IlRoZSBSaXZlcmFzIn0"
         val NOW get() = System.currentTimeMillis() / 1000
     }
 }

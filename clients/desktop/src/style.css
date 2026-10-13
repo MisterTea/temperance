@@ -211,3 +211,37 @@ ul.issues li {
 ul.issues li span {
   color: var(--muted);
 }
+.reveal {
+  position: relative;
+  display: block;
+}
+.reveal input {
+  padding-right: 48px;
+}
+button.reveal-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  translate: 0 calc(-50% + 3px);
+  min-height: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+}
+button.reveal-toggle:hover,
+button.reveal-toggle[aria-pressed="true"] {
+  color: var(--green);
+}
+button.reveal-toggle svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

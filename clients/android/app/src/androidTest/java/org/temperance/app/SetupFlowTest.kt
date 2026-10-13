@@ -30,17 +30,18 @@ class SetupFlowTest {
     @Before fun setUp() { server = TestSupport.reset() }
 
     private fun signIn(password: String = "correct horse") {
-        onView(withId(R.id.server)).perform(replaceText("family.example"))
+        onView(withId(R.id.server)).perform(replaceText(FakeServer.HOME))
         onView(withId(R.id.username)).perform(replaceText("admin"))
         onView(withId(R.id.password)).perform(replaceText(password))
         closeSoftKeyboard()
         onView(withId(R.id.sign_in)).perform(scrollTo(), click())
     }
 
-    @Test fun startupAsksForServerUsernameAndPassword() {
+    @Test fun startupAsksForSetupCodeUsernameAndPassword() {
         val scenario = launch()
         assertEquals(MainActivity.Screen.SETUP, onActivity(scenario) { it.screen })
         onView(withText(R.string.setup_title)).check(matches(isDisplayed()))
+        onView(withId(R.id.scan_setup)).check(matches(isDisplayed()))
         onView(withId(R.id.server)).check(matches(isDisplayed()))
         onView(withId(R.id.password)).check(matches(isDisplayed()))
         TestSupport.screenshot("flow-1-setup")
@@ -50,11 +51,11 @@ class SetupFlowTest {
         launch()
         signIn("wrong")
         onView(withId(R.id.error)).check(matches(withText("Invalid username or password")))
-        onView(withId(R.id.server)).perform(replaceText("http://family.example"))
+        onView(withId(R.id.server)).perform(replaceText("https://family.example"))
         onView(withId(R.id.sign_in)).perform(scrollTo(), click())
-        onView(withId(R.id.error)).check(matches(withText("Enter an HTTPS service origin")))
+        onView(withId(R.id.error)).check(matches(withText(org.hamcrest.Matchers.startsWith("Scan or paste the setup code"))))
         server.unreachable = true
-        onView(withId(R.id.server)).perform(replaceText("family.example"))
+        onView(withId(R.id.server)).perform(replaceText(FakeServer.HOME))
         onView(withId(R.id.sign_in)).perform(scrollTo(), click())
         onView(withId(R.id.error)).check(matches(withText("Can't reach the server. Check the address and your connection.")))
         TestSupport.screenshot("flow-2-error")

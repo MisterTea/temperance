@@ -1,7 +1,6 @@
 // Drives the debug Android app on a booted emulator through adb and
 // uiautomator, and records it with scrcpy.
 import { execFile, spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -99,7 +98,7 @@ export default function driver({ log }) {
     origin: "local",
     endpointHost: "10.0.2.2",
 
-    async setup({ server, work }) {
+    async setup() {
       await adb("wait-for-device");
       for (let i = 0; (await shell("getprop sys.boot_completed")).trim() !== "1"; i++) {
         if (i > 120) throw new Error("The emulator did not finish booting");
@@ -111,34 +110,8 @@ export default function driver({ log }) {
       }
       const [, w, h] = /(\d+)x(\d+)/.exec(await shell("wm size"));
       screen = { width: Number(w), height: Number(h) };
-      // A debug build that trusts the storyboard CA for https://localhost.
-      const overlay = join(work, "android");
-      mkdirSync(join(overlay, "res/raw"), { recursive: true });
-      mkdirSync(join(overlay, "res/xml"), { recursive: true });
-      writeFileSync(join(overlay, "res/raw/e2e_ca.pem"), readFileSync(server.ca));
-      writeFileSync(
-        join(overlay, "res/xml/e2e_network.xml"),
-        `<network-security-config>
-  <base-config cleartextTrafficPermitted="false" />
-  <domain-config cleartextTrafficPermitted="false">
-    <domain includeSubdomains="false">localhost</domain>
-    <trust-anchors><certificates src="@raw/e2e_ca" /></trust-anchors>
-  </domain-config>
-  <domain-config cleartextTrafficPermitted="true">
-    <domain includeSubdomains="false">127.0.0.1</domain>
-  </domain-config>
-</network-security-config>
-`,
-      );
-      writeFileSync(
-        join(overlay, "AndroidManifest.xml"),
-        `<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
-  <application android:networkSecurityConfig="@xml/e2e_network" tools:replace="android:networkSecurityConfig" />
-</manifest>
-`,
-      );
       log("building and installing the debug app");
-      await run(join(android, "gradlew"), ["-q", ":app:installDebug", `-Pe2eDir=${overlay}`], {
+      await run(join(android, "gradlew"), ["-q", ":app:installDebug"], {
         cwd: android,
         maxBuffer: 1 << 26,
         env: {
@@ -148,7 +121,6 @@ export default function driver({ log }) {
           PATH: `${dirname(ADB)}:${process.env.PATH}`,
         },
       });
-      await adb("reverse", `tcp:${server.httpsPort}`, `tcp:${server.httpsPort}`);
       await shell("settings put system show_touches 1");
       await shell("cmd notification set_dnd off").catch(() => {});
     },

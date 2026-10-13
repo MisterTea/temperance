@@ -2,10 +2,10 @@
 
 ```mermaid
 flowchart LR
-  Parent[Parent dashboard] -->|HTTPS authenticated updates| Control[Next.js policy service + SQLite/PostgreSQL]
-  App[Temperance device app] -->|One-use enrollment code + public key| Control
-  App -->|Authenticated policy status| Control
-  App -->|Full-tunnel WireGuard, UDP 51820| Gateway[Embedded Rust gateway]
+  Parent[Parent dashboard] -->|Authenticated updates| Control[Next.js policy service + SQLite/PostgreSQL]
+  App[Temperance device app] -->|Full-tunnel WireGuard, UDP 51820| Gateway[Embedded Rust gateway]
+  App -->|Sign-in + policy status: inside the tunnel, or pinned QUIC on UDP 51820| Gateway
+  Gateway -->|Device routes only| Control
   Control <-->|In-process state + activity every 5 seconds| Gateway
   Gateway --> DNS[Profile-aware DNS]
   Gateway --> Flows[Per-flow TCP/UDP relay: pause / bedtime / budgets]
@@ -31,7 +31,9 @@ Network enforcement applies while devices route through this VPN. Preventing VPN
 
 ## API
 
-All JSON writes are bounded to 64 KiB. Production URLs must use HTTPS. Clients verify the platform trust store and do not disable certificate checks.
+All JSON writes are bounded to 64 KiB.
+
+Device apps never use the dashboard's TCP port. They reach home only through the gateway's UDP port, using the dashboard's setup code (`temperance://home#` + base64url JSON `{v:1,host,port,pin,household}`): `pin` is the SHA-256 fingerprint of the gateway's QUIC key (the same key [parent phones](remote-parents.md) pin). While the tunnel is up, the core sends plain HTTP to `10.77.0.1:80` inside it, which the gateway splices to the dashboard. Otherwise (signing in, a stale tunnel, a revoked peer) it opens QUIC (`temperance-device/1` ALPN, TLS 1.3) to the gateway and refuses any other key. The gateway forwards only `/v1/enroll` and `/v1/device/*` from that channel, strips forwarding and Temperance headers, and adds the peer's address as `X-Forwarded-For`. Device requests carry their own credential (username/password or device token), so the channel needs no client key.
 
 | Method | Path | Credential | Purpose |
 | --- | --- | --- | --- |

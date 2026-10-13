@@ -23,7 +23,7 @@ fi
 status=0
 compose run --rm client "$@" || status=$?
 if [ "$status" -ne 0 ]; then
-  compose logs --no-color server caddy internet | tail -n 200 >&2
+  compose logs --no-color server internet | tail -n 200 >&2
 fi
 compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 exit "$status"

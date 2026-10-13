@@ -27,10 +27,10 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
 
-/** Scans the dashboard's pairing QR code with CameraX and ML Kit, and returns the link. */
+/** Scans a dashboard QR code (pairing, or a child's device setup) with CameraX and ML Kit, and returns the link. */
 class ScanActivity : Activity(), LifecycleOwner {
     private val registry = LifecycleRegistry(this)
-    override fun getLifecycle(): Lifecycle = registry
+    override val lifecycle: Lifecycle get() = registry
     private val analysis = Executors.newSingleThreadExecutor()
     private lateinit var preview: PreviewView
     private var done = false
@@ -81,9 +81,9 @@ class ScanActivity : Activity(), LifecycleOwner {
             .addOnCompleteListener { image.close() }
     }
 
-    /** Takes the first Temperance pairing link seen; other QR codes are ignored. */
+    /** Takes the first Temperance link of the requested kind; other QR codes are ignored. */
     fun found(text: String) {
-        if (done || !text.startsWith("temperance://pair#")) return
+        if (done || !text.startsWith(intent.getStringExtra(EXTRA_PREFIX) ?: PAIR_PREFIX)) return
         done = true
         setResult(RESULT_OK, Intent().putExtra(EXTRA_LINK, text))
         finish()
@@ -103,6 +103,9 @@ class ScanActivity : Activity(), LifecycleOwner {
 
     companion object {
         const val EXTRA_LINK = "link"
+        const val EXTRA_PREFIX = "prefix"
+        const val PAIR_PREFIX = "temperance://pair#"
+        const val HOME_PREFIX = "temperance://home#"
         const val REQUEST_CAMERA = 11
     }
 }

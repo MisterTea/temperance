@@ -13,9 +13,9 @@
   },
   "signin.server": {
     "android": { "id": "server" },
-    "ios": { "field": "Family dashboard address" },
-    "macos": { "field": "Family dashboard address" },
-    "windows": { "field": "Family dashboard address" }
+    "ios": { "field": "Or paste the setup code" },
+    "macos": { "field": "Paste the setup code" },
+    "windows": { "field": "Setup code" }
   },
   "signin.username": {
     "android": { "id": "username" },

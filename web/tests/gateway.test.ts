@@ -174,6 +174,7 @@ describe("embedded gateway loop", () => {
       key_file: path.join(dir, "parent.key"),
       secret,
       target: "http://127.0.0.1:3000",
+      parents: true,
     });
     fake.report({ activity: [], history: [], remote: { pin: "PIN" } });
     await gateway.tick();
@@ -265,7 +266,7 @@ describe("gateway configuration", () => {
     ).toThrow(/lan_interface/);
   });
 
-  it("serves parent phones unless turned off", () => {
+  it("serves children's devices always and parent phones unless turned off", () => {
     const remote = (extra: Record<string, string>) =>
       gatewayConfig(
         { TEMPERANCE_DATA_DIR: "/data", PORT: "8080", ...extra },
@@ -275,13 +276,14 @@ describe("gateway configuration", () => {
       key_file: path.join("/data", "parent.key"),
       secret: "s",
       target: "http://127.0.0.1:8080",
+      parents: true,
     });
     expect(
       remote({
         TEMPERANCE_FORWARD_SECRET: "s",
         TEMPERANCE_REMOTE_PARENTS: "off",
       }),
-    ).toBeNull();
+    ).toMatchObject({ parents: false });
   });
 
   it("maps the router port from the advertised endpoint", () => {

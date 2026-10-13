@@ -210,8 +210,15 @@ fn captive_portals_and_stale_tunnels_explain_the_sign_in_path() {
 
 #[test]
 fn diagnostics_are_reported_with_the_device_token() {
+    let pin = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
     let identity = Identity {
-        service: "https://family.example".into(),
+        service: format_home_link(&HomeLink {
+            v: 1,
+            host: "family.example".into(),
+            port: 51820,
+            pin: pin.into(),
+            household: String::new(),
+        }),
         private_key: String::new(),
         state: None,
     };
@@ -239,7 +246,10 @@ fn diagnostics_are_reported_with_the_device_token() {
         issues,
     )
     .unwrap();
-    assert_eq!(req.url, "https://family.example/v1/device/diagnostics");
+    assert_eq!(
+        req.url,
+        format!("temperance://{pin}@family.example:51820/v1/device/diagnostics")
+    );
     assert!(req
         .headers
         .iter()

@@ -18,7 +18,7 @@ Parents' phones that open the dashboard away from home ([parent phones](remote-p
    - Or run the gateway on a small VPS ([remote gateway](deployment.md#remote-gateway-optional)).
 3. **Test from outside your home.** Many routers cannot loop traffic from inside your network back to your own public address. Turn off Wi-Fi on a phone, connect the Temperance app over mobile data, and check that the device shows as active in the dashboard.
 
-The protocol is always **UDP**. A TCP forward does nothing for WireGuard. Use the same number for the external and internal port unless you changed the gateway's listen port. If you use Caddy for HTTPS, also forward **TCP 80 and 443**; UPnP only maps the VPN port.
+The protocol is always **UDP**. A TCP forward does nothing for WireGuard. Use the same number for the external and internal port unless you changed the gateway's listen port. Only if you put Caddy in front of the dashboard for browsers away from home, also forward **TCP 80 and 443**; UPnP only maps the VPN port. Devices and parent phones need only the UDP port.
 
 ## Dynamic DNS with Dynu
 

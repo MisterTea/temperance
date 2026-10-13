@@ -45,6 +45,8 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: Web server bundle (the same for every architecture)
         working-directory: web
+        env:
+          TEMPERANCE_VERSION: ${{ steps.version.outputs.version }}
         run: npm ci && npm run build
       - name: Gateway add-ons against glibc ${{ env.GLIBC }}
         working-directory: core

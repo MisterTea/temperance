@@ -19,14 +19,12 @@ import com.wireguard.android.backend.Backend
 import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.config.Config
-import java.net.URL
 import java.security.KeyStore
 import java.util.concurrent.Executors
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import javax.net.ssl.HttpsURLConnection
 import uniffi.temperance_core.ChildStatus
 import uniffi.temperance_core.Connectivity
 import uniffi.temperance_core.DeviceFacts
@@ -43,6 +41,7 @@ import uniffi.temperance_core.childAlerts
 import uniffi.temperance_core.childStatus
 import uniffi.temperance_core.diagnose
 import uniffi.temperance_core.diagnosticsRequest
+import uniffi.temperance_core.homeSend
 import uniffi.temperance_core.locationRequest
 import uniffi.temperance_core.locationUnavailableRequest
 import uniffi.temperance_core.parseOk
@@ -90,20 +89,10 @@ class Vault(context: Context, key: () -> SecretKey = ::keystoreKey) : IdentitySt
     fun clear() = sealed.clear()
 }
 
-/** Executes a request built by the shared core; redirects are never followed. */
-object HttpsTransport : Transport {
-    override fun send(request: HttpRequest): Pair<UShort, String> {
-        val connection = URL(request.url).openConnection() as HttpsURLConnection
-        connection.connectTimeout = 10000; connection.readTimeout = 10000; connection.instanceFollowRedirects = false
-        connection.requestMethod = request.method
-        request.headers.forEach { connection.setRequestProperty(it.name, it.value) }
-        try {
-            request.body?.let { body -> connection.doOutput = true; connection.outputStream.use { it.write(body.toByteArray()) } }
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            return status.toUShort() to (stream?.bufferedReader()?.use { it.readText() } ?: "")
-        } finally { connection.disconnect() }
-    }
+/** Sends a request built by the shared core to the home gateway: inside the tunnel while it is up, otherwise over QUIC. */
+class HomeTransport(private val tunnelUp: () -> Boolean) : Transport {
+    override fun send(request: HttpRequest): Pair<UShort, String> =
+        homeSend(request, tunnelUp()).let { it.status to it.body }
 }
 
 open class TemperanceApp : Application() {
@@ -111,7 +100,7 @@ open class TemperanceApp : Application() {
     lateinit var backend: Backend
     lateinit var vault: Vault
     /** Replaced by instrumentation tests with a scripted server. */
-    @Volatile var transport: Transport = HttpsTransport
+    @Volatile var transport: Transport = HomeTransport { connected }
     val setup get() = DeviceSetup({ transport.send(it) }, vault)
     @Volatile var status = ""
     @Volatile var child: ChildStatus? = null
@@ -159,8 +148,8 @@ open class TemperanceApp : Application() {
     }
     private fun now() = System.currentTimeMillis() / 1000
 
-    fun signIn(server: String, username: String, password: String, deviceName: String = "Android device") {
-        val identity = setup.signIn(server, username, password, deviceName)
+    fun signIn(home: String, username: String, password: String, deviceName: String = "Android device") {
+        val identity = setup.signIn(home, username, password, deviceName)
         child = childStatus(identity.state!!, now())
     }
     val enrolled get() = child != null

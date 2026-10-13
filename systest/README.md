@@ -4,15 +4,15 @@ Client and server tested together, in isolation. One Docker Compose project star
 
 - **server**: the real server image (built from `deploy/Dockerfile`, or a published
   image), with its embedded WireGuard gateway.
-- **caddy**: HTTPS for `https://server.test` from Caddy's internal CA. Device clients only
-  accept HTTPS, so the client trusts that CA through a shared volume.
 - **internet**: a fake internet on `198.51.100.0/24` (TEST-NET-2). It has a DNS resolver
   on `.53` and one web site per address (`allowed.test` on `.10`, `games.test` on `.11`).
   Each page's body is the site's name.
-- **client**: a headless Linux device built from `tests/system.rs`. It enrolls through
-  `temperance-core`, the same library the apps use. It then brings up a kernel WireGuard
-  interface from the provisioning it was issued and browses through it. It also acts as
-  the parent, using the dashboard API with the admin password.
+- **client**: a headless Linux device built from `tests/system.rs`. It takes the
+  dashboard's setup code and signs in through `temperance-core`, the same library the
+  apps use, over the gateway's WireGuard port (pinned QUIC). It then brings up a kernel
+  WireGuard interface from the provisioning it was issued and browses through it; its
+  later requests go inside the tunnel. It also acts as the parent, using the dashboard
+  API over plain HTTP with the admin password.
 
 Both networks are `internal`, so nothing reaches the real internet. The client isn't
 on the fake internet's network: it can only reach it through the tunnel, and the first
@@ -29,8 +29,8 @@ sh systest/run.sh pause_and_bedtime     # one test, by name filter
 TEMPERANCE_SYSTEST_SERVER_IMAGE=ghcr.io/mistertea/temperance:latest sh systest/run.sh
 ```
 
-`run.sh` exits with the client's status. When a test fails, it prints the server, Caddy
-and DNS logs. The `System tests` workflow runs it on every push. Run it manually with an
+`run.sh` exits with the client's status. When a test fails, it prints the server and DNS
+logs. The `System tests` workflow runs it on every push. Run it manually with an
 `image` input to test a release.
 
 `cargo test` in `systest/` builds the client but skips every test outside this

@@ -31,7 +31,7 @@
 //
 // Targets are ids from targets.json (the control on each platform; null skips
 // the step there), literal text, or "/regex/flags". Strings may use {{device}},
-// {{server}}, {{password}}, {{link}} and {{clock+N}} (HH:MM, N minutes after
+// {{server}} (the dashboard's setup code), {{password}}, {{link}} and {{clock+N}} (HH:MM, N minutes after
 // the run started, in five-minute steps).
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -298,8 +298,8 @@ async function play(file, record) {
 
 let failed = false;
 try {
-  server = await startServer({ web, work, origin: driver.origin, endpointHost: driver.endpointHost, httpsPort: driver.httpsPort, log });
-  vars.server = server.deviceUrl;
+  server = await startServer({ web, work, origin: driver.origin, endpointHost: driver.endpointHost, log });
+  vars.server = server.home;
   await driver.setup({ server, work });
   const last = files.findLastIndex(selected);
   for (const file of files.slice(0, last + 1)) await play(file, selected(file));

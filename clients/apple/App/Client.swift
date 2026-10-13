@@ -23,27 +23,10 @@ protocol Notifier {
     func currentLocation() async -> (CLLocation?, String)
 }
 
-/// Sends requests built by the shared Rust core over the platform's HTTPS stack, never following redirects.
-final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
-    private var session: URLSession!
-    init(configuration: URLSessionConfiguration = .ephemeral) {
-        super.init()
-        session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-    }
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
-    func send(_ request: HttpRequest) async throws -> (UInt16, String) {
-        guard let url = URL(string: request.url) else { throw ClientError.message("Invalid request URL") }
-        var urlRequest = URLRequest(url: url)
-        urlRequest.timeoutInterval = 15
-        urlRequest.httpMethod = request.method
-        for header in request.headers { urlRequest.setValue(header.value, forHTTPHeaderField: header.name) }
-        urlRequest.httpBody = request.body.map { Data($0.utf8) }
-        let (data, response) = try await session.data(for: urlRequest)
-        guard let response = response as? HTTPURLResponse, response.url?.host == url.host, response.url?.scheme == "https" else {
-            throw ClientError.message("Policy service rejected this request")
-        }
-        return (UInt16(clamping: response.statusCode), String(decoding: data, as: UTF8.self))
-    }
+/// Sends a request built by the shared core to the home gateway's WireGuard port: inside the tunnel while it is up, otherwise over QUIC.
+func sendHome(_ request: HttpRequest, throughTunnel: Bool) async throws -> (UInt16, String) {
+    let response = try await Task.detached { try homeSend(request: request, throughTunnel: throughTunnel) }.value
+    return (response.status, response.body)
 }
 
 @MainActor final class Client: ObservableObject {
@@ -63,7 +46,7 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
     @Published var alerts: [String] = []
     private var reported: [String]?
     private var connected = false
-    private let send: (HttpRequest) async throws -> (UInt16, String)
+    private let transport: ((HttpRequest) async throws -> (UInt16, String))?
     private let store: IdentityStore
     private let vpn: VPNControl
     private let notifier: Notifier
@@ -72,31 +55,35 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
 
     init(send: ((HttpRequest) async throws -> (UInt16, String))? = nil, store: IdentityStore = Vault(), vpn: VPNControl = SystemVPN(),
          notifier: Notifier = ChildNotifier(), location: LocationSource? = nil, clock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
-        let transport = HTTPSTransport()
-        self.send = send ?? { try await transport.send($0) }
+        self.transport = send
         self.store = store; self.vpn = vpn; self.notifier = notifier; self.clock = clock
         self.location = location ?? LocationResponder()
         do { if let state = try store.load()?.state { try show(state) } }
-        catch { status = error.localizedDescription }
+        catch { status = error.message }
+    }
+    private func send(_ request: HttpRequest) async throws -> (UInt16, String) {
+        if let transport { return try await transport(request) }
+        return try await sendHome(request, throughTunnel: await vpn.status()?.connected ?? false)
     }
     private func show(_ state: DeviceState) throws {
         child = try childStatus(state: state, now: clock())
         profile = [state.policy.avatar, state.policy.name].filter { !$0.isEmpty }.joined(separator: " ")
     }
-    func enroll(service: String, username: String, password: String, name: String) async {
+    /// `home` is the dashboard's setup code (`temperance://home#…`): where home is and the gateway's pinned key.
+    func enroll(home: String, username: String, password: String, name: String) async {
         busy = true; defer { busy = false }
         do {
             guard try store.load()?.state == nil else { throw ClientError.message("Device already enrolled") }
-            let origin = try validateService(raw: service)
+            let service = try validateService(raw: home)
             let keys = generateKeypair()
-            let (statusCode, body) = try await send(try signInRequest(service: origin, username: username, password: password, name: name, publicKey: keys.publicKey))
-            let identity = try enrolledIdentity(service: origin, keys: keys, status: statusCode, body: body)
+            let (statusCode, body) = try await send(try signInRequest(service: service, username: username, password: password, name: name, publicKey: keys.publicKey))
+            let identity = try enrolledIdentity(service: service, keys: keys, status: statusCode, body: body)
             _ = try tunnelConfiguration(identity)
             try store.save(identity)
             try show(identity.state!)
             vpnInstalled = await vpn.status()?.enabled == true
             status = ""
-        } catch { status = error.localizedDescription }
+        } catch { status = error.message }
     }
     func refresh() async {
         do {
@@ -158,7 +145,7 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
             await refresh()
             status = "Request sent to your parents."
             return true
-        } catch { status = error.localizedDescription; return false }
+        } catch { status = error.message; return false }
     }
     func install() async {
         busy = true; defer { busy = false }
@@ -168,7 +155,7 @@ final class HTTPSTransport: NSObject, URLSessionTaskDelegate {
             connected = true
             await refresh()
             vpnInstalled = true
-        } catch { status = error.localizedDescription }
+        } catch { status = error.message }
     }
     func allowAlerts() {
         notifier.requestPermission()

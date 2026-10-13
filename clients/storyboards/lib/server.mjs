@@ -1,8 +1,9 @@
-// A fresh Temperance server with its embedded WireGuard gateway, reachable by
-// the client under test over HTTPS, plus the admin calls storyboards make.
+// A fresh Temperance server with its embedded WireGuard gateway, plus the admin
+// calls storyboards make. The client under test signs in with the dashboard's
+// setup code and reaches home only through the gateway's UDP port.
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync } from "node:fs";
 import http from "node:http";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -19,35 +20,12 @@ const freePort = () =>
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** A CA (kept between runs, so a client build that trusts it stays valid) and a localhost certificate. */
-export function certificates(dir) {
-  mkdirSync(dir, { recursive: true });
-  const file = (n) => join(dir, n);
-  const ssl = (...args) => {
-    const r = spawnSync("openssl", args, { stdio: ["ignore", "ignore", "pipe"] });
-    if (r.status !== 0) throw new Error(`openssl ${args[0]}: ${r.stderr}`);
-  };
-  if (!existsSync(file("ca.pem"))) {
-    ssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "825",
-      "-subj", "/CN=Temperance storyboard CA",
-      "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign",
-      "-keyout", file("ca.key"), "-out", file("ca.pem"));
-  }
-  // Apple rejects server certificates valid for more than 398 days.
-  ssl("req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=localhost",
-    "-keyout", file("server.key"), "-out", file("server.csr"));
-  writeFileSync(file("ext.cnf"), "subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth\n");
-  ssl("x509", "-req", "-in", file("server.csr"), "-CA", file("ca.pem"), "-CAkey", file("ca.key"),
-    "-CAcreateserial", "-days", "30", "-extfile", file("ext.cnf"), "-out", file("server.pem"));
-  return { ca: file("ca.pem"), cert: file("server.pem"), key: file("server.key") };
-}
-
 /**
- * origin: "local" (https://localhost:<port> with the storyboard CA) or
- * "tunnel" (a Cloudflare quick tunnel, for clients that only trust public CAs).
+ * origin: "local" (the dashboard on http://127.0.0.1:<port>) or "tunnel" (also
+ * on a Cloudflare quick tunnel, where a driver can mount its own harness).
  * endpointHost: how the client reaches this machine's UDP gateway.
  */
-export async function startServer({ web, work, origin, endpointHost, httpsPort = 8443, log = () => {} }) {
+export async function startServer({ web, work, origin, endpointHost, log = () => {} }) {
   const standalone = join(web, ".next/standalone");
   if (!existsSync(join(standalone, "server.js")))
     throw new Error("Build the web app first: cd web && npm run build:gateway && npm run build");
@@ -69,11 +47,8 @@ export async function startServer({ web, work, origin, endpointHost, httpsPort =
     return p;
   };
 
-  let publicUrl, deviceUrl, tls;
-  if (origin === "local") {
-    tls = certificates(join(work, "..", "ca"));
-    publicUrl = deviceUrl = `https://localhost:${httpsPort}`;
-  }
+  let publicUrl;
+  if (origin === "local") publicUrl = `http://127.0.0.1:${port}`;
   let tunnel;
   // A driver can serve its own requests under /__storyboard/ on the server's
   // public host, which a child's VPN lets through even while it's paused.
@@ -101,7 +76,6 @@ export async function startServer({ web, work, origin, endpointHost, httpsPort =
       await sleep(500);
     }
     if (!publicUrl) throw new Error(`cloudflared gave no URL:\n${output}`);
-    deviceUrl = publicUrl;
   }
 
   const server = track(
@@ -126,10 +100,6 @@ export async function startServer({ web, work, origin, endpointHost, httpsPort =
     }),
     "server",
   );
-  if (tls) {
-    const proxy = join(import.meta.dirname, "../../android/e2e/https-proxy.mjs");
-    track(spawn(process.execPath, [proxy, tls.cert, tls.key, String(httpsPort), String(port)]), "https proxy");
-  }
 
   const base = `http://127.0.0.1:${port}`;
   async function call(path, body, token = admin, method = body ? "POST" : "GET") {
@@ -175,13 +145,17 @@ export async function startServer({ web, work, origin, endpointHost, httpsPort =
     await sleep(500);
   }
   await call("/api/setup/complete", {});
-  log(`server ${base}, devices use ${deviceUrl}, gateway ${endpointHost}:${wgPort}`);
+  // The setup code appears once the gateway has reported the key devices pin.
+  let home;
+  for (let i = 0; !(home = (await call("/api/state")).device_setup); i++) {
+    if (i > 60) throw new Error(`The gateway never reported its key:\n${output}`);
+    await sleep(500);
+  }
+  log(`server ${base}, devices use the gateway at ${endpointHost}:${wgPort}`);
 
   return {
-    deviceUrl,
+    home,
     publicUrl,
-    ca: tls?.ca,
-    httpsPort,
     gatewayToken,
     mount: (prefix, handler) => (mounts[prefix] = handler),
     call,

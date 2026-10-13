@@ -9,8 +9,12 @@ mod transport;
 use app::{Transport, TunnelControl};
 
 impl<T: Transport + ?Sized> Transport for Box<T> {
-    fn send(&self, request: &temperance_core::HttpRequest) -> Result<(u16, String), String> {
-        (**self).send(request)
+    fn send(
+        &self,
+        request: &temperance_core::HttpRequest,
+        through_tunnel: bool,
+    ) -> Result<(u16, String), String> {
+        (**self).send(request, through_tunnel)
     }
     fn probe(
         &self,
@@ -40,7 +44,7 @@ fn main() {
     std::fs::create_dir_all(&dir).expect("create data directory");
     let app = app::App::new(
         dir,
-        Box::new(transport::Https::system()) as Box<dyn Transport + Send>,
+        Box::new(transport::Home::system()) as Box<dyn Transport + Send>,
         platform::tunnel(),
     )
     .expect("load identity");

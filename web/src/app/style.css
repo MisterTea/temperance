@@ -231,6 +231,32 @@ a:focus-visible {
   font-size: 11px;
   color: var(--muted);
 }
+.profile-name-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.profile-head .rename {
+  padding: 4px 7px;
+  min-width: 28px;
+  min-height: 28px;
+  font-size: 13px;
+  opacity: 0.55;
+}
+.profile-head .rename:hover,
+.profile-head .rename:focus-visible {
+  opacity: 1;
+}
+.profile-head input.profile-name {
+  display: block;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  padding: 2px 6px;
+  width: 100%;
+  max-width: 220px;
+}
 .badge {
   border-radius: 20px;
   background: #edf3ed;
@@ -881,6 +907,21 @@ main > section > p {
 button:disabled {
   opacity: 0.6;
   cursor: wait;
+}
+button.link {
+  background: none;
+  padding: 0;
+  color: var(--green);
+  text-decoration: underline;
+}
+pre.commands {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 14px 16px;
+  overflow-x: auto;
 }
 dialog::backdrop {
   background: #16372c66;

@@ -24,7 +24,7 @@ class TemperanceAppTest {
 
     @Before fun useFakeServer() { app.transport = server }
 
-    private fun signIn() = app.signIn("family.example", "alex", "correct horse", "Pixel 9")
+    private fun signIn() = app.signIn(FakeServer.HOME, "alex", "correct horse", "Pixel 9")
     private fun notifications() = shadowOf(app.getSystemService(NotificationManager::class.java)).allNotifications
         .map { it.extras.getString("android.text") }
     private fun bodies(path: String) = server.requests.filter { it.url.endsWith(path) }.map { it.body.orEmpty() }

@@ -31,7 +31,7 @@ private let identity = #"{"v":1,"host":"parkers.ddnsfree.com","port":51820,"pin"
         XCTAssertEqual(parsed.port, 51820)
         XCTAssertEqual(parsed.household, "The Parkers")
         XCTAssertThrowsError(try parsePairingLink(link: "https://example.com")) {
-            XCTAssertTrue($0.localizedDescription.contains("not a Temperance pairing code"), $0.localizedDescription)
+            XCTAssertTrue($0.message.contains("not a Temperance pairing code"), $0.message)
         }
     }
 

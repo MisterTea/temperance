@@ -118,9 +118,12 @@ struct ParentView: View {
 let deviceNoun = "phone"
 let deviceSymbol = "iphone.gen3"
 let pasteLinkLabel = "Or paste the pairing link"
+let setupCodeLabel = "Or paste the setup code"
 func defaultDeviceName() -> String { UIDevice.current.name }
 
 struct QRScanner: UIViewControllerRepresentable {
+    /// Other QR codes are ignored.
+    var prefix = "temperance://pair#"
     var found: (String) -> Void
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let scanner = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])], isHighlightingEnabled: true)
@@ -130,14 +133,15 @@ struct QRScanner: UIViewControllerRepresentable {
     func updateUIViewController(_ scanner: DataScannerViewController, context: Context) {
         if !scanner.isScanning { try? scanner.startScanning() }
     }
-    func makeCoordinator() -> Coordinator { Coordinator(found: found) }
+    func makeCoordinator() -> Coordinator { Coordinator(prefix: prefix, found: found) }
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        let prefix: String
         let found: (String) -> Void
         private var done = false
-        init(found: @escaping (String) -> Void) { self.found = found }
+        init(prefix: String, found: @escaping (String) -> Void) { self.prefix = prefix; self.found = found }
         func dataScanner(_ scanner: DataScannerViewController, didAdd items: [RecognizedItem], allItems: [RecognizedItem]) {
             for case .barcode(let code) in items {
-                guard !done, let text = code.payloadStringValue, text.hasPrefix("temperance://pair#") else { continue }
+                guard !done, let text = code.payloadStringValue, text.hasPrefix(prefix) else { continue }
                 done = true
                 scanner.stopScanning()
                 found(text)
@@ -150,6 +154,7 @@ let deviceNoun = "Mac"
 let deviceSymbol = "laptopcomputer"
 /// A Mac has no QR scanner to offer first.
 let pasteLinkLabel = "Paste the pairing link"
+let setupCodeLabel = "Paste the setup code"
 func defaultDeviceName() -> String { Host.current().localizedName ?? "Mac" }
 #endif
 

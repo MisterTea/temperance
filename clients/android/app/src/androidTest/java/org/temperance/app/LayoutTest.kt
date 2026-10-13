@@ -95,7 +95,7 @@ class LayoutTest {
         val scenario = TestSupport.launch()
         eachDisplay(scenario, MainActivity.Screen.SETUP) { name ->
             audit(scenario, "$name-setup")
-            onView(withId(R.id.server)).perform(replaceText("temperance.a-very-long-family-domain-name.example.com"))
+            onView(withId(R.id.server)).perform(replaceText(FakeServer.HOME))
             onView(withId(R.id.password)).perform(replaceText("wrong"))
             closeSoftKeyboard()
             onView(withId(R.id.sign_in)).perform(scrollTo(), click())

@@ -820,3 +820,101 @@ fn parent_phones_pair_and_reach_the_dashboard_over_the_wireguard_port() {
     gateway.stop();
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn children_sign_in_over_the_wireguard_port_without_pairing() {
+    use temperance_core::remote::{format_pairing_link, home_send, pair_parent, PairingLink};
+    use temperance_core::{format_home_link, sign_in_request, Header, HomeLink, HttpRequest};
+    const SECRET: &str = "device-forwarding-secret-0123456789abcdef";
+    let (target, _) = dashboard(SECRET);
+    let dir = std::env::temp_dir().join(format!("temperance-devices-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config: Config = serde_json::from_value(json!({
+        "listen": "127.0.0.1:0",
+        "private_key": generate_private_key(),
+        "dns_upstream": dns_server().to_string(),
+        "remote": {"key_file": dir.join("parent.key"), "secret": SECRET, "target": target, "parents": false},
+    }))
+    .unwrap();
+    let mut gateway = Gateway::start(config).unwrap();
+    let pin = gateway.parent_pin().unwrap();
+    let port = gateway.local_addr().port();
+    let home = format_home_link(&HomeLink {
+        v: 1,
+        host: "127.0.0.1".into(),
+        port,
+        pin: pin.clone(),
+        household: String::new(),
+    });
+
+    let login = sign_in_request(
+        home,
+        "sam".into(),
+        "pw".into(),
+        "Phone".into(),
+        "key".into(),
+    )
+    .unwrap();
+    let reply = home_send(login, false).unwrap();
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let echoed: Value = serde_json::from_str(&reply.body).unwrap();
+    assert_eq!(echoed["path"], "/v1/device/login");
+    assert!(echoed["body"]
+        .as_str()
+        .unwrap()
+        .contains("\"username\":\"sam\""));
+    assert_eq!(echoed["headers"]["x-forwarded-for"], "127.0.0.1");
+    assert!(
+        echoed["headers"].get("x-temperance-forwarded").is_none(),
+        "device requests carry no parent credentials"
+    );
+
+    let request = |path: &str| HttpRequest {
+        method: "GET".into(),
+        url: format!("temperance://{pin}@127.0.0.1:{port}{path}"),
+        headers: vec![
+            Header {
+                name: "Authorization".into(),
+                value: "Bearer tok".into(),
+            },
+            Header {
+                name: "X-Forwarded-For".into(),
+                value: "203.0.113.9".into(),
+            },
+            Header {
+                name: "X-Temperance-Parent".into(),
+                value: "par_1".into(),
+            },
+        ],
+        body: None,
+    };
+    let reply = home_send(request("/v1/device/state"), false).unwrap();
+    let echoed: Value = serde_json::from_str(&reply.body).unwrap();
+    assert_eq!(echoed["headers"]["authorization"], "Bearer tok");
+    assert_eq!(
+        echoed["headers"]["x-forwarded-for"], "127.0.0.1",
+        "spoofed addresses are replaced"
+    );
+    assert!(echoed["headers"].get("x-temperance-parent").is_none());
+    for path in ["/api/state", "/v1/gateway/state", "/v1/device/../api/state"] {
+        assert_eq!(
+            home_send(request(path), false).unwrap().status,
+            404,
+            "{path}"
+        );
+    }
+
+    // With parent access off, phones cannot pair.
+    let link = format_pairing_link(&PairingLink {
+        v: 1,
+        host: "127.0.0.1".into(),
+        port,
+        pin,
+        code: "good".into(),
+        household: String::new(),
+    });
+    assert!(pair_parent(link, "Sam's phone".into()).is_err());
+
+    gateway.stop();
+    std::fs::remove_dir_all(&dir).unwrap();
+}

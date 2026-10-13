@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/screen_setup"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -10,13 +11,14 @@
         <TextView style="@style/Title" android:text="@string/setup_title" android:accessibilityHeading="true" />
         <TextView style="@style/Body" android:text="@string/setup_intro" />
 
+        <Button android:id="@+id/scan_setup" style="@style/Secondary" android:text="@string/scan_setup" />
         <TextView style="@style/Label" android:text="@string/server_label" android:labelFor="@+id/server" />
         <EditText
             android:id="@+id/server"
             style="@style/Field"
             android:hint="@string/server_hint"
-            android:autofillHints="url"
-            android:inputType="textUri"
+            android:inputType="textUri|textNoSuggestions"
+            android:importantForAutofill="no"
             android:imeOptions="actionNext|flagNoExtractUi" />
 
         <TextView style="@style/Label" android:text="@string/username_label" android:labelFor="@+id/username" />
@@ -28,13 +30,22 @@
             android:imeOptions="actionNext|flagNoExtractUi" />
 
         <TextView style="@style/Label" android:text="@string/password_label" android:labelFor="@+id/password" />
-        <EditText
-            android:id="@+id/password"
-            android:saveEnabled="false"
-            style="@style/Field"
-            android:autofillHints="password"
-            android:inputType="textPassword"
-            android:imeOptions="actionGo|flagNoExtractUi" />
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/password_layout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:theme="@style/Theme.Temperance.Material"
+            app:boxBackgroundMode="none"
+            app:hintEnabled="false"
+            app:endIconMode="password_toggle">
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/password"
+                android:saveEnabled="false"
+                style="@style/Field"
+                android:autofillHints="password"
+                android:inputType="textPassword"
+                android:imeOptions="actionGo|flagNoExtractUi" />
+        </com.google.android.material.textfield.TextInputLayout>
 
         <TextView android:id="@+id/error" style="@style/Error" />
 

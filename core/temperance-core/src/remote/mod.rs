@@ -11,14 +11,19 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::CoreError;
 
 pub mod client;
+pub mod device;
 pub mod tls;
 
 pub use client::{describe_parent_identity, pair_parent, ParentSummary, RemoteSession};
+pub use device::{home_send, HttpResponse};
 
 /// A phone that is not paired yet may only ask to pair.
 pub const PAIR_ALPN: &[u8] = b"temperance-pair/1";
 /// A paired phone's requests to the dashboard.
 pub const PARENT_ALPN: &[u8] = b"temperance-parent/1";
+/// A child's device: sign-in, enrollment and `/v1/device/…` only, with its
+/// device token. Any client key is accepted.
+pub const DEVICE_ALPN: &[u8] = b"temperance-device/1";
 /// Both sides ignore the name and check pinned keys instead.
 pub const SERVER_NAME: &str = "temperance";
 /// Large enough for a household backup import.

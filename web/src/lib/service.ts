@@ -124,6 +124,7 @@ export function snapshot(state: State, at = now()) {
       available: !!state.remote_pin && !!remoteEndpoint(state),
       host: remoteEndpoint(state)?.host ?? null,
     },
+    device_setup: deviceSetupLink(state),
     needs_onboarding: !state.setup_completed_at && state.profiles.length === 0,
     total: profiles.reduce((sum, p) => sum + p.used, 0),
     blocked: profiles.filter((p) => p.access_reason !== "allowed").length,
@@ -177,6 +178,20 @@ function base64url(text: string) {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
+}
+/** Where a child's device finds home (shown as a QR code). It is not a secret:
+ * the device still signs in with its client user's password. */
+function deviceSetupLink(state: State) {
+  const endpoint = remoteEndpoint(state);
+  if (!state.remote_pin || !endpoint) return null;
+  const payload = {
+    v: 1,
+    host: endpoint.host,
+    port: endpoint.port,
+    pin: state.remote_pin,
+    household: household(),
+  };
+  return "temperance://home#" + base64url(JSON.stringify(payload));
 }
 /** A one-use link (shown as a QR code) that pairs a parent's phone for ten minutes. */
 export async function issueParentCode(state: State) {
@@ -377,7 +392,7 @@ export function saveDevice(state: State, input: unknown) {
   const owner =
     device.user_id && (state.users ?? []).find((u) => u.id === device.user_id);
   if (owner && owner.profile_id !== data.profile_id)
-    throw new Error("Change the client user's assigned profile in Settings");
+    throw new Error("Change the client user's assigned profile in Clients");
   Object.assign(device, data);
   if (device.kind === "home") delete device.location_requested;
   changed(state, "device", `Device ${device.name} updated`);

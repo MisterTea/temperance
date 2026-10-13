@@ -40,6 +40,7 @@ export default defineConfig({
       TEMPERANCE_VPN_ENDPOINT: "192.0.2.10:51820",
       TEMPERANCE_VPN_PUBLIC_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
       TEMPERANCE_TIMEZONE: "America/Chicago",
+      TEMPERANCE_UPDATE_CHECK: "off",
     },
   },
   projects: [

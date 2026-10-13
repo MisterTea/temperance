@@ -11,14 +11,12 @@ fun interface Transport { fun send(request: HttpRequest): Pair<UShort, String> }
 interface IdentityStore { fun load(): Identity?; fun save(identity: Identity) }
 /** The server assigns the authenticated user's profile. No admin session or password is saved. */
 class DeviceSetup(private val transport: Transport, private val store: IdentityStore) {
-    fun signIn(server: String, username: String, password: String, deviceName: String = "Android device"): Identity {
+    /** `home` is the dashboard's setup code (`temperance://home#…`): where home is and the gateway's pinned key. */
+    fun signIn(home: String, username: String, password: String, deviceName: String = "Android device"): Identity {
         check(store.load()?.state == null) { "This device is already set up" }
-        val origin = validateService(normalizeServer(server))
+        val service = validateService(home)
         val keys = generateKeypair()
-        val (status, body) = transport.send(signInRequest(origin, username, password, deviceName, keys.publicKey))
-        return enrolledIdentity(origin, keys, status, body).also(store::save)
-    }
-    companion object {
-        fun normalizeServer(raw: String): String { val trimmed=raw.trim();return if(trimmed.isEmpty()||"://" in trimmed)trimmed else "https://$trimmed" }
+        val (status, body) = transport.send(signInRequest(service, username, password, deviceName, keys.publicKey))
+        return enrolledIdentity(service, keys, status, body).also(store::save)
     }
 }

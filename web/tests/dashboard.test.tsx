@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // @vitest-environment-options {"url":"http://127.0.0.1:3000/"}
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -10,6 +11,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../src/components/dashboard";
+import * as accounts from "../src/lib/accounts";
+import * as updates from "../src/lib/updates";
 import { TestRepository } from "../src/lib/database";
 import { handle } from "../src/lib/http";
 
@@ -173,7 +176,12 @@ beforeEach(() => {
     TEMPERANCE_VPN_PUBLIC_KEY: key(0),
     TEMPERANCE_TIMEZONE: "America/Chicago",
     TEMPERANCE_PUBLIC_URL: ORIGIN,
+    TEMPERANCE_UPDATE_CHECK: "off",
+    TEMPERANCE_BUILD_VERSION: "0.5.4",
+    TEMPERANCE_INSTALL: "",
+    TEMPERANCE_UPDATER_TOKEN: "",
   });
+  updates.resetForTests();
   repo = new TestRepository();
   cookie = "";
   vi.stubGlobal("fetch", browserFetch);
@@ -327,6 +335,35 @@ describe("overview", () => {
       within(alex as HTMLElement).getByRole("button", { name: "Reward" }),
     );
     await screen.findByRole("heading", { name: "Send a reward" });
+  });
+
+  it("renames a family profile from its card", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    const rename = async () => {
+      await user.click(screen.getByRole("button", { name: "Rename Alex" }));
+      return screen.getByRole("textbox", { name: "New name for Alex" });
+    };
+
+    let input = await rename();
+    await user.clear(input);
+    await user.type(input, "Lexi{Escape}");
+    expect(screen.getByRole("heading", { name: "Alex" })).toBeTruthy();
+
+    input = await rename();
+    await user.clear(input);
+    await user.tab();
+    expect(screen.getByRole("heading", { name: "Alex" })).toBeTruthy();
+
+    input = await rename();
+    await user.clear(input);
+    await user.type(input, "  Lexi  {Enter}");
+    expect(await screen.findByRole("heading", { name: "Lexi" })).toBeTruthy();
+    const saved = (await state()).profiles[0];
+    expect(saved.name).toBe("Lexi");
+    expect(saved.limit).toBe(90);
+    expect(saved.bedtime.start).toBe("21:00");
   });
 
   it("shows when a gateway went offline", async () => {
@@ -542,6 +579,39 @@ describe("profile editor", () => {
 });
 
 describe("devices", () => {
+  it("shows a setup code for children's devices once the gateway checks in", async () => {
+    await seedHousehold();
+    await signIn();
+    let user = await openDashboard();
+    await tab(user, "Devices");
+    expect(screen.getByText(/hasn’t checked in yet/)).toBeTruthy();
+    cleanup();
+    await api("v1/gateway/activity", { remote: { pin: "PIN" } }, GATEWAY);
+    user = await openDashboard();
+    await tab(user, "Devices");
+    const view = within(screen.getByLabelText("Device setup code"));
+    expect(
+      await view.findByRole("img", {
+        name: "QR code to set up a child's device",
+      }),
+    ).toBeTruthy();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    await user.click(view.getByRole("button", { name: "Copy setup code" }));
+    const link: string = writeText.mock.calls[0][0];
+    expect(
+      JSON.parse(Buffer.from(link.split("#")[1], "base64url").toString()),
+    ).toMatchObject({
+      v: 1,
+      port: 51820,
+      pin: "PIN",
+    });
+    expect(view.getByRole("button", { name: "Copied" })).toBeTruthy();
+  });
+
   it("enrolls, renames, reassigns, pauses, locates and revokes", async () => {
     const phone = await seedHousehold();
     await api(
@@ -775,7 +845,9 @@ describe("requests and rewards", () => {
     expect(waiting.textContent).toContain("“Finishing a project”");
     await user.click(screen.getByRole("button", { name: "Decline" }));
     await waitFor(() =>
-      expect(screen.queryByRole("region", { name: "Waiting for you" })).toBeNull(),
+      expect(
+        screen.queryByRole("region", { name: "Waiting for you" }),
+      ).toBeNull(),
     );
     expect((await state()).requests[0].status).toBe("denied");
   });
@@ -866,6 +938,121 @@ describe("settings", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete history" }));
     await waitFor(async () => expect((await state()).history).toHaveLength(0));
+  });
+
+  it("shows new releases and updates Docker installs from the dashboard", async () => {
+    Object.assign(process.env, {
+      TEMPERANCE_UPDATE_CHECK: "on",
+      TEMPERANCE_INSTALL: "docker",
+      TEMPERANCE_UPDATER_TOKEN: "updater-secret",
+    });
+    const updater = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith("https://api.github.com/"))
+          return Response.json({
+            tag_name: "v0.6.0",
+            html_url:
+              "https://github.com/MisterTea/temperance/releases/tag/v0.6.0",
+            published_at: "2026-10-12T00:00:00Z",
+          });
+        if (url.startsWith("http://updater:8080/")) {
+          updater(url, init);
+          process.env.TEMPERANCE_BUILD_VERSION = "0.6.0";
+          return new Response(null, { status: 200 });
+        }
+        return browserFetch(input, init);
+      },
+    );
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    expect(
+      (await screen.findByText(/Temperance 0\.6\.0 is available/)).textContent,
+    ).toBeTruthy();
+    expect(screen.getByText(/Temperance 0\.5\.4 ·/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "See how to update" }));
+    const section = within(
+      screen
+        .getByRole("heading", { name: "Software updates" })
+        .closest("section")!,
+    );
+    expect(section.getByText(/Version 0\.6\.0 is available/)).toBeTruthy();
+    expect(section.getByRole("link", { name: "Release notes" })).toBeTruthy();
+    await user.click(section.getByRole("button", { name: "Update to 0.6.0" }));
+    expect(window.confirm).toHaveBeenLastCalledWith(
+      "Update Temperance to 0.6.0 now?",
+    );
+    expect(await section.findByText(/Updating to 0\.6\.0/)).toBeTruthy();
+    expect(updater).toHaveBeenCalledOnce();
+    await waitFor(
+      () => expect(screen.getByText(/Temperance 0\.6\.0 ·/)).toBeTruthy(),
+      { timeout: 8000 },
+    );
+    expect(section.queryByRole("button", { name: /Update to/ })).toBeNull();
+    expect(section.getByText(/newest release is 0\.6\.0/)).toBeTruthy();
+  });
+
+  it("tells package installs which command updates them", async () => {
+    Object.assign(process.env, {
+      TEMPERANCE_UPDATE_CHECK: "on",
+      TEMPERANCE_INSTALL: "linux",
+    });
+    vi.stubGlobal(
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) =>
+        String(input).startsWith("https://api.github.com/")
+          ? Response.json({
+              tag_name: "v0.6.0",
+              html_url:
+                "https://github.com/MisterTea/temperance/releases/tag/v0.6.0",
+              published_at: "2026-10-12T00:00:00Z",
+            })
+          : browserFetch(input, init),
+    );
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Settings");
+    const section = within(
+      (
+        await screen.findByRole("heading", { name: "Software updates" })
+      ).closest("section")!,
+    );
+    expect(section.queryByRole("button", { name: /Update to/ })).toBeNull();
+    expect(
+      section.getByText(/sudo apt install \.\/temperance_0\.6\.0_/),
+    ).toBeTruthy();
+  });
+
+  it("restarts the server and reconnects", async () => {
+    const exit = vi
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as never);
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Settings");
+    await user.click(screen.getByRole("button", { name: "Restart" }));
+    expect(window.confirm).toHaveBeenLastCalledWith("Restart Temperance now?");
+    expect(
+      (await screen.findByRole("button", { name: "Restarting…" })).hasAttribute(
+        "disabled",
+      ),
+    ).toBe(true);
+    await waitFor(() => expect(exit).toHaveBeenCalledWith(75));
+    expect(
+      (
+        await screen.findByRole(
+          "button",
+          { name: "Restart" },
+          { timeout: 5000 },
+        )
+      ).hasAttribute("disabled"),
+    ).toBe(false);
+    exit.mockRestore();
   });
 
   it("restores a backup file", async () => {
@@ -990,7 +1177,9 @@ describe("settings", () => {
         .getByRole("heading", { name: "Parent devices" })
         .closest("section")!,
     );
-    await user.click(view.getByRole("button", { name: "Pair a parent device" }));
+    await user.click(
+      view.getByRole("button", { name: "Pair a parent device" }),
+    );
     const qr = await view.findByRole("img", { name: /QR code/ });
     expect(qr.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
     expect(view.getByRole("timer").textContent).toMatch(/10:00 more/);
@@ -1080,6 +1269,11 @@ describe("settings", () => {
     await signIn();
     const user = await openDashboard();
     await tab(user, "Settings");
+    expect(screen.queryByRole("heading", { name: "Client users" })).toBeNull();
+    await tab(user, "Clients");
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Clients" }),
+    ).toBeTruthy();
     const form = await screen.findByRole("form", { name: "Add client user" });
     await user.type(within(form).getByLabelText("Username"), "alex-client");
     await user.type(within(form).getByLabelText("Password"), "client-password");
@@ -1095,6 +1289,47 @@ describe("settings", () => {
     await waitFor(() => expect(screen.getByText("Disabled")).toBeTruthy());
     await user.click(within(card).getByRole("button", { name: "Delete user" }));
     await waitFor(() => expect(screen.queryByText("alex-client")).toBeNull());
+  });
+  it("admins set a new password for an existing client user", async () => {
+    await seedHousehold();
+    await api(
+      "api/users",
+      { username: "alex-client", password: "client-password", profile_id: 1 },
+      ADMIN,
+    );
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Clients");
+    const card = (await screen.findByText("alex-client")).closest("article")!;
+    await user.click(
+      within(card).getByRole("button", { name: "Set password" }),
+    );
+    const form = within(
+      screen.getByRole("form", { name: "Set client password" }),
+    );
+    expect(
+      form.getByRole("heading", { name: "Set password for alex-client" }),
+    ).toBeTruthy();
+    await user.type(form.getByLabelText("New password"), "new-client-pass");
+    await user.type(form.getByLabelText("Confirm password"), "different-pass");
+    await user.click(form.getByRole("button", { name: "Set password" }));
+    expect(form.getByRole("alert").textContent).toMatch(/do not match/);
+    await user.clear(form.getByLabelText("Confirm password"));
+    await user.type(form.getByLabelText("Confirm password"), "new-client-pass");
+    await user.click(form.getByRole("button", { name: "Set password" }));
+    expect((await screen.findByRole("status")).textContent).toMatch(
+      /Password set for alex-client/,
+    );
+    expect(
+      screen.queryByRole("form", { name: "Set client password" }),
+    ).toBeNull();
+    const s = await state();
+    expect(
+      await accounts.authenticate(s, "alex-client", "new-client-pass"),
+    ).toBeTruthy();
+    expect(
+      await accounts.authenticate(s, "alex-client", "client-password"),
+    ).toBeFalsy();
   });
   it("client passwords cannot sign into the administrator website", async () => {
     await seedHousehold();

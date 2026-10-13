@@ -48,20 +48,20 @@ pub fn describe_parent_identity(identity: String) -> Result<ParentSummary, CoreE
     })
 }
 
-fn unreachable(host: &str, port: u16, detail: impl std::fmt::Display) -> CoreError {
+pub(super) fn unreachable(host: &str, port: u16, detail: impl std::fmt::Display) -> CoreError {
     CoreError::Service {
         status: 503,
         detail: format!("Can't reach your home's Temperance gateway at {host}:{port} ({detail})."),
     }
 }
 
-struct Home {
+pub(super) struct Home {
     endpoint: quinn::Endpoint,
-    connection: quinn::Connection,
+    pub(super) connection: quinn::Connection,
 }
 
 impl Home {
-    async fn dial(
+    pub(super) async fn dial(
         host: &str,
         port: u16,
         pin: &str,
@@ -103,7 +103,7 @@ impl Home {
         })
     }
 
-    async fn close(self) {
+    pub(super) async fn close(self) {
         self.connection.close(0u32.into(), b"done");
         let _ = timeout(Duration::from_secs(1), self.endpoint.wait_idle()).await;
     }

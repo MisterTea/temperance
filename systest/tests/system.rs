@@ -1,19 +1,19 @@
-//! Client and server together: the real server image behind Caddy, a fake internet only
-//! the server can reach, and this headless client that enrolls through `temperance-core`
-//! and browses over a kernel WireGuard interface. `systest/run.sh` starts everything;
+//! Client and server together: the real server image, a fake internet only the server
+//! can reach, and this headless client that signs in through `temperance-core` over the
+//! gateway's WireGuard port and browses over a kernel WireGuard interface. `systest/run.sh` starts everything;
 //! outside that environment (`TEMPERANCE_SYSTEST` unset) every test is skipped.
 
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 use std::process::Command;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use temperance_core as core;
-use ureq::tls::{Certificate, RootCerts, TlsConfig};
 
-const SERVICE: &str = "https://server.test";
+/// The dashboard, plain HTTP on the LAN; only the parent uses it.
+const DASHBOARD: &str = "http://172.30.0.10:3000";
 const ALLOWED: &str = "allowed.test";
 const ALLOWED_IP: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 10);
 const GAMES: &str = "games.test";
@@ -38,26 +38,13 @@ fn environment() -> Option<MutexGuard<'static, ()>> {
 fn agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
-        let path = std::env::var("TEMPERANCE_SYSTEST_CA")
-            .unwrap_or_else(|_| "/caddy/caddy/pki/authorities/local/root.crt".into());
-        let pem = wait_for("Caddy's root certificate", Duration::from_secs(120), || {
-            std::fs::read(&path).ok()
-        });
-        let cert = Certificate::from_pem(&pem)
-            .expect("Caddy root certificate")
-            .to_owned();
         let agent: ureq::Agent = ureq::Agent::config_builder()
-            .tls_config(
-                TlsConfig::builder()
-                    .root_certs(RootCerts::Specific(Arc::new(vec![cert])))
-                    .build(),
-            )
             .http_status_as_error(false)
             .timeout_global(Some(Duration::from_secs(15)))
             .build()
             .into();
         wait_for("the server", Duration::from_secs(180), || {
-            let request = ureq::http::Request::get(format!("{SERVICE}/healthz"))
+            let request = ureq::http::Request::get(format!("{DASHBOARD}/healthz"))
                 .body(())
                 .unwrap();
             agent
@@ -90,14 +77,25 @@ fn send(
     )
 }
 
-/// Sends a request built by `temperance-core`, exactly as the apps do.
+/// Sends a request built by `temperance-core` to the gateway's WireGuard port, exactly as
+/// the apps do: inside the tunnel while wg0 exists, otherwise over pinned QUIC.
 fn call(request: core::HttpRequest) -> (u16, String) {
-    let headers: Vec<(&str, String)> = request
-        .headers
-        .iter()
-        .map(|h| (h.name.as_str(), h.value.clone()))
-        .collect();
-    send(&request.method, &request.url, &headers, request.body)
+    let tunnel = std::path::Path::new("/sys/class/net/wg0").exists();
+    let reply = core::remote::home_send(request.clone(), tunnel)
+        .unwrap_or_else(|e| panic!("{} {}: {e}", request.method, request.url));
+    (reply.status, reply.body)
+}
+
+/// The dashboard's setup code for a child's device, once the gateway has reported its key.
+fn home() -> &'static str {
+    static HOME: OnceLock<String> = OnceLock::new();
+    HOME.get_or_init(|| {
+        wait_for("the device setup code", Duration::from_secs(60), || {
+            admin("GET", "api/state", None)["device_setup"]
+                .as_str()
+                .map(str::to_string)
+        })
+    })
 }
 
 /// The parent, using the dashboard API with the admin password as bearer token.
@@ -105,12 +103,12 @@ fn admin(method: &str, path: &str, body: Option<Value>) -> Value {
     let password = std::env::var("TEMPERANCE_ADMIN_PASSWORD").expect("TEMPERANCE_ADMIN_PASSWORD");
     let headers = [
         ("Authorization", format!("Bearer {password}")),
-        ("Origin", SERVICE.to_string()),
+        ("Origin", DASHBOARD.to_string()),
         ("Content-Type", "application/json".to_string()),
     ];
     let (status, text) = send(
         method,
-        &format!("{SERVICE}/{path}"),
+        &format!("{DASHBOARD}/{path}"),
         &headers,
         body.map(|b| b.to_string()),
     );
@@ -201,9 +199,10 @@ impl Child {
 
     /// Signs a new device in with the user's credentials and returns its identity.
     fn enroll(&self) -> core::Identity {
+        let service = core::validate_service(home().into()).expect("setup code");
         let keys = core::generate_keypair();
         let request = core::sign_in_request(
-            SERVICE.into(),
+            service.clone(),
             self.username.clone(),
             password(&self.username),
             format!("{} system test", self.username),
@@ -211,7 +210,7 @@ impl Child {
         )
         .unwrap();
         let (status, body) = call(request);
-        core::enrolled_identity(SERVICE.into(), keys, status, body).expect("enrollment")
+        core::enrolled_identity(service, keys, status, body).expect("enrollment")
     }
 }
 

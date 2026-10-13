@@ -163,7 +163,7 @@ export default function driver({ log, here }) {
   return {
     platform: "macos",
     noun: "Mac",
-    origin: "tunnel",
+    origin: "local",
     endpointHost: "127.0.0.1",
     get frame() {
       return { window: true, crop: { x: Math.round(bounds.x * scale), y: Math.round(bounds.y * scale), width: Math.round(bounds.width * scale), height: Math.round(bounds.height * scale) } };

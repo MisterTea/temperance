@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { snapshot } from "@/lib/service";
 import { CATALOG, dailyLimit, type Profile } from "@/lib/policy";
 import type { History } from "@/lib/model";
+import type { UpdateStatus } from "@/lib/updates";
 import { ProfileEditor } from "./profile-editor";
 import { Onboarding } from "./onboarding";
 import { api } from "./api";
@@ -55,7 +56,8 @@ const INTROS: Record<string, string> = {
   usage: "How much time each person spent online, and on what.",
   history: "Sites your family’s devices looked up, and why.",
   requests: "Answer requests for more time and hand out rewards.",
-  settings: "Accounts, remote access, backups and data retention.",
+  clients: "Sign-ins for your family’s devices and the rules each one follows.",
+  settings: "Remote access, parent devices, backups and data retention.",
 };
 const ROUTER_GUIDE =
   "https://github.com/MisterTea/temperance/blob/main/docs/routers.md";
@@ -197,6 +199,185 @@ function RemoteAccess({
     </section>
   );
 }
+function DeviceSetup({
+  state,
+  act,
+}: {
+  state: DashboardState;
+  act: (action: () => Promise<void>) => Promise<void>;
+}) {
+  const link = state.device_setup;
+  const [qr, setQr] = useState("");
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!link) return;
+    let live = true;
+    import("qrcode")
+      .then((QRCode) => QRCode.toDataURL(link, { margin: 1, width: 240 }))
+      .then((url) => live && setQr(url));
+    return () => {
+      live = false;
+    };
+  }, [link]);
+  return (
+    <section>
+      <h2>Set up a child&apos;s device</h2>
+      <p>
+        Devices find home through the family VPN&apos;s UDP port, so they need
+        no web address. This code says where home is; the device still signs in
+        with a client username and password from Clients.
+      </p>
+      {!link ? (
+        <p className="notice" role="status">
+          {state.gateway_seen
+            ? "Set TEMPERANCE_VPN_ENDPOINT so devices know where to find home."
+            : "Devices connect through the home gateway, which hasn’t checked in yet."}
+        </p>
+      ) : (
+        <div className="pairing" aria-label="Device setup code">
+          {qr ? (
+            <img
+              src={qr}
+              alt="QR code to set up a child's device"
+              width={240}
+              height={240}
+            />
+          ) : null}
+          <div>
+            <ol>
+              <li>Install Temperance on the phone, tablet or computer.</li>
+              <li>
+                Choose the child&apos;s device option, then scan this code. On a
+                computer, paste the setup code instead.
+              </li>
+              <li>
+                Sign in with the child&apos;s client username and password.
+              </li>
+            </ol>
+            <p className="actions">
+              <button
+                className="button secondary"
+                onClick={() =>
+                  act(async () => {
+                    await navigator.clipboard.writeText(link);
+                    setCopied(true);
+                  })
+                }
+              >
+                {copied ? "Copied" : "Copy setup code"}
+              </button>
+            </p>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+function updateCommands({ install, arch, latest }: UpdateStatus) {
+  const v = latest?.version ?? "<version>";
+  const arm = arch === "arm64";
+  if (install === "docker")
+    return ["cd ~/temperance && docker compose pull && docker compose up -d"];
+  if (install === "linux")
+    return [
+      `sudo apt install ./temperance_${v}_${arm ? "arm64" : "amd64"}.deb   # Debian, Ubuntu, Raspberry Pi OS`,
+      `sudo dnf install ./temperance-${v}-1.${arm ? "aarch64" : "x86_64"}.rpm   # Fedora, RHEL`,
+      `tar xzf temperance-${v}-linux-${arch}.tar.gz && sudo ./temperance-${v}-linux-${arch}/install.sh   # tarball`,
+    ];
+  return [];
+}
+function SoftwareUpdates({
+  update,
+  onCheck,
+  onUpdate,
+  updating,
+}: {
+  update?: UpdateStatus;
+  onCheck: () => void;
+  onUpdate: () => void;
+  updating: boolean;
+}) {
+  if (!update) return null;
+  const { latest } = update;
+  const commands = updateCommands(update);
+  return (
+    <section>
+      <h2>Software updates</h2>
+      <p>
+        This server runs Temperance <strong>{update.current}</strong>.{" "}
+        {!update.checks
+          ? "Update checks are off (TEMPERANCE_UPDATE_CHECK)."
+          : update.available
+            ? `Version ${latest!.version} is available.`
+            : latest
+              ? `The newest release is ${latest.version}.`
+              : null}
+        {update.checked_at ? (
+          <small> Checked {ago(update.checked_at)}.</small>
+        ) : null}
+      </p>
+      {update.error ? (
+        <p className="notice warning" role="status">
+          Could not check for updates: {update.error}
+        </p>
+      ) : null}
+      {updating ? (
+        <p className="notice" role="status">
+          Updating to {latest?.version}. Temperance restarts when the new
+          version is ready, and this page reconnects by itself.
+        </p>
+      ) : update.available && update.can_update ? (
+        <p>
+          Updating takes a minute or two. Devices keep their rules while
+          Temperance restarts.
+        </p>
+      ) : update.available && commands.length ? (
+        <>
+          <p>
+            {update.install === "docker"
+              ? "Run this on the server, or rerun the Docker installer to let this page install updates:"
+              : "Download the new package from the release page, then install it over this one. Settings, data and keys are kept."}
+          </p>
+          <pre className="commands">{commands.join("\n")}</pre>
+        </>
+      ) : update.available ? (
+        <p>
+          Update this checkout with <code>git pull</code>, then rerun the
+          installer you used.
+        </p>
+      ) : null}
+      <p className="actions">
+        {update.available && update.can_update ? (
+          <button
+            className="primary"
+            disabled={updating}
+            onClick={() => {
+              if (confirm(`Update Temperance to ${latest!.version} now?`))
+                onUpdate();
+            }}
+          >
+            {updating ? "Updating…" : `Update to ${latest!.version}`}
+          </button>
+        ) : null}
+        {latest ? (
+          <a
+            className="button secondary"
+            href={latest.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Release notes
+          </a>
+        ) : null}
+        {update.checks ? (
+          <button className="secondary" disabled={updating} onClick={onCheck}>
+            Check now
+          </button>
+        ) : null}
+      </p>
+    </section>
+  );
+}
 type Viewer = { role: "admin" } | { role: "parent"; id: string; name: string };
 type Pairing = { link: string; qr: string; expires: number; count: number };
 function ParentPhones({
@@ -272,7 +453,9 @@ function ParentPhones({
           />
           <div>
             <ol>
-              <li>Install Temperance on the parent&apos;s phone or computer.</li>
+              <li>
+                Install Temperance on the parent&apos;s phone or computer.
+              </li>
               <li>
                 Choose <strong>I&apos;m a parent</strong>, then scan this code.
                 On a computer, paste the link instead.
@@ -361,6 +544,7 @@ export function Dashboard() {
   const [onboarding, setOnboarding] = useState<boolean>();
   const [resetUser, setResetUser] = useState<ParentAccount>();
   const [resetError, setResetError] = useState("");
+  const [passwordSet, setPasswordSet] = useState("");
   const resetDialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     if (resetUser) resetDialog.current?.showModal();
@@ -370,6 +554,7 @@ export function Dashboard() {
   const [viewer, setViewer] = useState<Viewer>();
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Profile | true>();
+  const [renaming, setRenaming] = useState<number>();
   const [tab, setTab] = useState("overview");
   const [code, setCode] = useState("");
   const [selected, setSelected] = useState<number>();
@@ -382,6 +567,9 @@ export function Dashboard() {
     { day: string; profiles: Record<string, Record<string, number>> }[]
   >([]);
   const [period, setPeriod] = useState(7);
+  const [restarting, setRestarting] = useState(false);
+  const [update, setUpdate] = useState<UpdateStatus>();
+  const [updatingFrom, setUpdatingFrom] = useState<string>();
   const refresh = useCallback(async () => {
     try {
       const next = await api<DashboardState>("/api/state");
@@ -421,6 +609,26 @@ export function Dashboard() {
       setError(e instanceof Error ? e.message : "Action failed");
     }
   };
+  const restart = () =>
+    act(async () => {
+      setRestarting(true);
+      try {
+        await api("/api/restart", {});
+        const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+        await pause(1500);
+        for (let i = 0; i < 60; i++) {
+          const up = await fetch("/healthz", { cache: "no-store" }).then(
+            (r) => r.ok,
+            () => false,
+          );
+          if (up) break;
+          await pause(1000);
+        }
+        await refresh();
+      } finally {
+        setRestarting(false);
+      }
+    });
   const answer = (id: string, approve: boolean) =>
     act(() => save("/api/requests", { id, approve }));
   const loadHistory = useCallback(async () => {
@@ -449,8 +657,38 @@ export function Dashboard() {
     }
   }, []);
   useEffect(() => {
-    if (tab === "settings" && signedIn) loadParents();
+    if (tab === "clients" && signedIn) loadParents();
   }, [tab, signedIn, loadParents]);
+  const loadUpdate = useCallback(
+    (check = false) =>
+      api<UpdateStatus>("/api/update" + (check ? "?check=now" : "")).then(
+        setUpdate,
+      ),
+    [],
+  );
+  useEffect(() => {
+    if (signedIn) loadUpdate().catch(() => undefined);
+  }, [signedIn, loadUpdate]);
+  useEffect(() => {
+    if (!updatingFrom) return;
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      const next = await api<UpdateStatus>("/api/update").catch(
+        () => undefined,
+      );
+      if (next && next.current !== updatingFrom) {
+        setUpdate(next);
+        setUpdatingFrom(undefined);
+        refresh();
+      } else if (Date.now() - started > 10 * 60_000) {
+        setUpdatingFrom(undefined);
+        setError(
+          "The update has not finished after 10 minutes. Check the updater container's logs.",
+        );
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [updatingFrom, refresh]);
   useEffect(() => {
     if (!signedIn) return setViewer(undefined);
     api<Viewer>("/api/me")
@@ -559,6 +797,7 @@ export function Dashboard() {
           "usage",
           "history",
           "requests",
+          "clients",
           "settings",
         ].map((name) => (
           <button
@@ -635,6 +874,14 @@ export function Dashboard() {
                 the family VPN have no internet access until it reconnects.
               </p>
             ) : null}
+            {update?.available ? (
+              <p className="notice" role="status">
+                Temperance {update.latest!.version} is available.{" "}
+                <button className="link" onClick={() => setTab("settings")}>
+                  See how to update
+                </button>
+              </p>
+            ) : null}
             {state.requests.some((r) => r.status === "pending") ? (
               <section aria-label="Waiting for you">
                 <h2>Waiting for you</h2>
@@ -705,7 +952,43 @@ export function Dashboard() {
                     <div className="profile-head">
                       <span className="avatar">{p.avatar}</span>
                       <div>
-                        <h3>{p.name}</h3>
+                        {renaming === p.id ? (
+                          <input
+                            aria-label={`New name for ${p.name}`}
+                            className="profile-name"
+                            defaultValue={p.name}
+                            maxLength={60}
+                            autoFocus
+                            onFocus={(e) => e.currentTarget.select()}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                              if (e.key === "Escape") {
+                                e.currentTarget.value = p.name;
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const name = e.target.value.trim();
+                              setRenaming(undefined);
+                              if (name && name !== p.name)
+                                act(() =>
+                                  save("/api/profiles", { ...p, name }),
+                                );
+                            }}
+                          />
+                        ) : (
+                          <div className="profile-name-row">
+                            <h3>{p.name}</h3>
+                            <button
+                              className="quiet rename"
+                              aria-label={`Rename ${p.name}`}
+                              title="Rename"
+                              onClick={() => setRenaming(p.id)}
+                            >
+                              ✎
+                            </button>
+                          </div>
+                        )}
                         <small>
                           {plural(
                             state.devices.filter((d) => d.profile_id === p.id)
@@ -823,6 +1106,7 @@ export function Dashboard() {
         ) : null}
         {tab === "devices" ? (
           <>
+            <DeviceSetup state={state} act={act} />
             <section>
               <h2>Enroll a VPN device</h2>
               <p>Create a one-use code valid for ten minutes.</p>
@@ -860,7 +1144,6 @@ export function Dashboard() {
                 <label>
                   Enter this code in the Temperance app
                   <input value={code} readOnly />
-                  <small>Policy service: {window.location.origin}</small>
                 </label>
               ) : null}
             </section>
@@ -1514,6 +1797,144 @@ export function Dashboard() {
             </section>
           </>
         ) : null}
+        {tab === "clients" ? (
+          <section>
+            <h2>Client users</h2>
+            <p>
+              Create a username/password and assign its family profile. Clients
+              sign in as that user; users cannot edit policy or administer this
+              website.
+            </p>
+            {passwordSet ? (
+              <p className="notice success" role="status">
+                Password set for {passwordSet}. Its devices must sign in again
+                with the new password.
+              </p>
+            ) : null}
+            {parents.map((u) => (
+              <article className="row-card" key={u.id}>
+                <div>
+                  <strong>{u.username}</strong>
+                  <small>{u.disabled ? "Disabled" : "Enabled"}</small>
+                </div>
+                <label>
+                  Family profile
+                  <select
+                    value={u.profile_id ?? ""}
+                    onChange={(e) =>
+                      act(async () => {
+                        await api("/api/users/update", {
+                          id: u.id,
+                          profile_id: Number(e.target.value),
+                        });
+                        await loadParents();
+                        await refresh();
+                      })
+                    }
+                  >
+                    <option value="" disabled>
+                      Assign a profile
+                    </option>
+                    {state.profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div>
+                  <button
+                    onClick={() =>
+                      act(async () => {
+                        await api("/api/users/update", {
+                          id: u.id,
+                          disabled: !u.disabled,
+                        });
+                        await loadParents();
+                      })
+                    }
+                  >
+                    {u.disabled ? "Enable" : "Disable"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setResetError("");
+                      setPasswordSet("");
+                      setResetUser(u);
+                    }}
+                  >
+                    Set password
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (
+                        confirm(`Delete ${u.username} and revoke its devices?`)
+                      )
+                        act(async () =>
+                          setParents(
+                            await api<ParentAccount[]>("/api/users/delete", {
+                              id: u.id,
+                            }),
+                          ),
+                        );
+                    }}
+                  >
+                    Delete user
+                  </button>
+                </div>
+              </article>
+            ))}
+            <form
+              aria-label="Add client user"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const target = e.currentTarget;
+                const f = Object.fromEntries(new FormData(target));
+                act(async () => {
+                  await api("/api/users", {
+                    ...f,
+                    profile_id: Number(f.profile_id),
+                  });
+                  target.reset();
+                  await loadParents();
+                });
+              }}
+            >
+              <div className="two">
+                <label>
+                  Username
+                  <input
+                    name="username"
+                    required
+                    autoComplete="off"
+                    autoCapitalize="none"
+                  />
+                </label>
+                <label>
+                  Password
+                  <input
+                    name="password"
+                    type="password"
+                    minLength={10}
+                    required
+                    autoComplete="new-password"
+                  />
+                </label>
+                <label>
+                  Family profile
+                  <select name="profile_id" required>
+                    {state.profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <button className="secondary">Create user</button>
+            </form>
+          </section>
+        ) : null}
         {tab === "settings" ? (
           <>
             <section>
@@ -1588,137 +2009,6 @@ export function Dashboard() {
               refresh={refresh}
               act={act}
             />
-            <section>
-              <h2>Client users</h2>
-              <p>
-                Create a username/password and assign its family profile.
-                Clients sign in as that user; users cannot edit policy or
-                administer this website.
-              </p>
-              {parents.map((u) => (
-                <article className="row-card" key={u.id}>
-                  <div>
-                    <strong>{u.username}</strong>
-                    <small>{u.disabled ? "Disabled" : "Enabled"}</small>
-                  </div>
-                  <label>
-                    Family profile
-                    <select
-                      value={u.profile_id ?? ""}
-                      onChange={(e) =>
-                        act(async () => {
-                          await api("/api/users/update", {
-                            id: u.id,
-                            profile_id: Number(e.target.value),
-                          });
-                          await loadParents();
-                          await refresh();
-                        })
-                      }
-                    >
-                      <option value="" disabled>
-                        Assign a profile
-                      </option>
-                      {state.profiles.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div>
-                    <button
-                      onClick={() =>
-                        act(async () => {
-                          await api("/api/users/update", {
-                            id: u.id,
-                            disabled: !u.disabled,
-                          });
-                          await loadParents();
-                        })
-                      }
-                    >
-                      {u.disabled ? "Enable" : "Disable"}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setResetError("");
-                        setResetUser(u);
-                      }}
-                    >
-                      Reset password
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (
-                          confirm(
-                            `Delete ${u.username} and revoke its devices?`,
-                          )
-                        )
-                          act(async () =>
-                            setParents(
-                              await api<ParentAccount[]>("/api/users/delete", {
-                                id: u.id,
-                              }),
-                            ),
-                          );
-                      }}
-                    >
-                      Delete user
-                    </button>
-                  </div>
-                </article>
-              ))}
-              <form
-                aria-label="Add client user"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const target = e.currentTarget;
-                  const f = Object.fromEntries(new FormData(target));
-                  act(async () => {
-                    await api("/api/users", {
-                      ...f,
-                      profile_id: Number(f.profile_id),
-                    });
-                    target.reset();
-                    await loadParents();
-                  });
-                }}
-              >
-                <div className="two">
-                  <label>
-                    Username
-                    <input
-                      name="username"
-                      required
-                      autoComplete="off"
-                      autoCapitalize="none"
-                    />
-                  </label>
-                  <label>
-                    Password
-                    <input
-                      name="password"
-                      type="password"
-                      minLength={10}
-                      required
-                      autoComplete="new-password"
-                    />
-                  </label>
-                  <label>
-                    Family profile
-                    <select name="profile_id" required>
-                      {state.profiles.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <button className="secondary">Create user</button>
-              </form>
-            </section>
             <section>
               <h2>Portable backup</h2>
               <p>
@@ -1821,10 +2111,38 @@ export function Dashboard() {
                 Delete history
               </button>
             </section>
+            <SoftwareUpdates
+              update={update}
+              updating={!!updatingFrom}
+              onCheck={() => act(() => loadUpdate(true))}
+              onUpdate={() =>
+                act(async () => {
+                  await api("/api/update", {});
+                  setUpdatingFrom(update!.current);
+                })
+              }
+            />
+            <section>
+              <h2>Restart Temperance</h2>
+              <p>
+                Reloads the settings file, for example after changing the VPN
+                endpoint. Devices and this page reconnect within a few seconds.
+              </p>
+              <button
+                className="secondary"
+                disabled={restarting}
+                onClick={() => {
+                  if (confirm("Restart Temperance now?")) restart();
+                }}
+              >
+                {restarting ? "Restarting…" : "Restart"}
+              </button>
+            </section>
           </>
         ) : null}
         <footer>
-          Temperance · open source family VPN controls
+          Temperance{update ? ` ${update.current}` : ""} · open source family
+          VPN controls
           <span>Policy version {state.version}</span>
         </footer>
       </main>
@@ -1835,24 +2153,28 @@ export function Dashboard() {
           onCancel={() => setResetUser(undefined)}
         >
           <form
-            aria-label="Reset client password"
+            aria-label="Set client password"
             onSubmit={async (e) => {
               e.preventDefault();
-              const password = new FormData(e.currentTarget).get("password");
+              const f = new FormData(e.currentTarget);
+              const password = f.get("password");
+              if (password !== f.get("confirm"))
+                return setResetError("The passwords do not match");
               try {
                 await api("/api/users/update", { id: resetUser.id, password });
                 await loadParents();
+                setPasswordSet(resetUser.username);
                 setResetUser(undefined);
               } catch (error) {
                 setResetError(
                   error instanceof Error
                     ? error.message
-                    : "Could not reset password",
+                    : "Could not set password",
                 );
               }
             }}
           >
-            <h2>Reset password for {resetUser.username}</h2>
+            <h2>Set password for {resetUser.username}</h2>
             <p>Existing devices will be revoked and must sign in again.</p>
             <label>
               New password
@@ -1865,11 +2187,22 @@ export function Dashboard() {
                 required
               />
             </label>
+            <label>
+              Confirm password
+              <input
+                name="confirm"
+                type="password"
+                minLength={10}
+                maxLength={200}
+                autoComplete="new-password"
+                required
+              />
+            </label>
             <p className="error" role="alert">
               {resetError}
             </p>
             <div className="actions">
-              <button className="primary">Reset password</button>
+              <button className="primary">Set password</button>
               <button
                 className="secondary"
                 type="button"

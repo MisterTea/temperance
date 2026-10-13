@@ -378,25 +378,35 @@ test("children request time and parents approve, reward, and cancel", async ({
   clean();
 });
 
-test("settings manage client users, retention, and feeds", async ({
+test("clients and settings manage client users, retention, and feeds", async ({
   page,
 }, info) => {
   const clean = watchConsole(page);
   const coParent = "coparent-" + info.project.name;
   await page.goto("/");
-  await openTab(page, "Settings");
+  await openTab(page, "Clients");
   const add = page.getByRole("form", { name: "Add client user" });
   await add.getByLabel("Username").fill(coParent);
   await add.getByLabel("Password").fill("client-test-password");
   await add.getByRole("button", { name: "Create user" }).click();
   const row = page.locator(".row-card", { hasText: coParent });
   await expect(row).toContainText("Enabled");
-  await expectCleanLayout(page, "settings");
+  await expectCleanLayout(page, "clients");
+
+  await row.getByRole("button", { name: "Set password" }).click();
+  const reset = page.getByRole("form", { name: "Set client password" });
+  await reset.getByLabel("New password").fill("client-new-password");
+  await reset.getByLabel("Confirm password").fill("client-new-password");
+  await reset.getByRole("button", { name: "Set password" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Password set for " + coParent,
+  );
 
   page.once("dialog", (d) => d.accept());
   await row.getByRole("button", { name: "Delete user" }).click();
   await expect(row).toBeHidden();
 
+  await openTab(page, "Settings");
   await page.getByLabel("History retention (days)").fill("14");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.locator("footer")).toContainText("Policy version");

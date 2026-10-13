@@ -6,6 +6,22 @@ use temperance_core::*;
 const SERVER_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 // 2026-10-11 18:00 UTC = 13:00 in Chicago, a Sunday.
 const SUNDAY_1PM: i64 = 1_791_741_600;
+const PIN: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+
+/// The dashboard's "Set up a child's device" code.
+fn home() -> String {
+    format_home_link(&HomeLink {
+        v: 1,
+        host: "family.example".into(),
+        port: 51820,
+        pin: PIN.into(),
+        household: "The Riveras".into(),
+    })
+}
+
+fn url(path: &str) -> String {
+    format!("temperance://{PIN}@family.example:51820{path}")
+}
 
 fn tunnel() -> Tunnel {
     Tunnel {
@@ -83,73 +99,60 @@ fn tunnel_config_is_full_tunnel_and_validated() {
 }
 
 #[test]
-fn service_origin_validation() {
+fn the_home_setup_code_is_validated() {
+    assert_eq!(validate_service(format!("  {}\n", home())).unwrap(), home());
+    let parsed = parse_home_link(home()).unwrap();
     assert_eq!(
-        validate_service(" https://Family.Example/ ".into()).unwrap(),
-        "https://family.example"
+        (parsed.host.as_str(), parsed.port, parsed.household.as_str()),
+        ("family.example", 51820, "The Riveras")
     );
-    assert_eq!(
-        validate_service("https://family.example:8443".into()).unwrap(),
-        "https://family.example:8443"
-    );
+    let with = |change: &dyn Fn(&mut HomeLink)| {
+        let mut link = parse_home_link(home()).unwrap();
+        change(&mut link);
+        format_home_link(&link)
+    };
     for bad in [
-        "http://family.example",
-        "https://u:p@family.example",
-        "https://family.example/path",
-        "https://family.example?x=1",
-        "https://family.example#f",
-        "not a url",
+        "https://family.example".to_string(),
+        "temperance://pair#e30".into(),
+        "temperance://home#!!".into(),
+        "temperance://home#e30".into(),
+        with(&|l| l.host = "".into()),
+        with(&|l| l.host = "evil.example/x".into()),
+        with(&|l| l.host = "u@family.example".into()),
+        with(&|l| l.port = 0),
+        with(&|l| l.pin = "short".into()),
     ] {
-        assert!(validate_service(bad.into()).is_err(), "{bad}");
+        assert!(validate_service(bad.clone()).is_err(), "{bad}");
     }
+    let newer = with(&|l| l.v = 2);
+    assert!(validate_service(newer)
+        .unwrap_err()
+        .to_string()
+        .contains("newer"));
 }
 
 #[test]
 fn enrollment_flow_builds_requests_and_stores_identity() {
     let keys = generate_keypair();
     let req = enroll_request(
-        "https://family.example/".into(),
+        home(),
         " code ".into(),
         " Phone ".into(),
         keys.public_key.clone(),
     )
     .unwrap();
     assert_eq!(req.method, "POST");
-    assert_eq!(req.url, "https://family.example/v1/enroll");
+    assert_eq!(req.url, url("/v1/enroll"));
     let body: serde_json::Value = serde_json::from_str(req.body.as_deref().unwrap()).unwrap();
     assert_eq!(body["code"], "code");
     assert_eq!(body["name"], "Phone");
     assert_eq!(body["public_key"], keys.public_key.as_str());
     assert!(req.headers.iter().all(|h| h.name != "Authorization"));
-    assert!(enroll_request(
-        "https://f.example".into(),
-        "".into(),
-        "Phone".into(),
-        "k".into()
-    )
-    .is_err());
-    assert!(enroll_request(
-        "https://f.example".into(),
-        "c".into(),
-        " ".into(),
-        "k".into()
-    )
-    .is_err());
-    assert!(enroll_request(
-        "https://f.example".into(),
-        "c".into(),
-        "x".repeat(81),
-        "k".into()
-    )
-    .is_err());
+    assert!(enroll_request(home(), "".into(), "Phone".into(), "k".into()).is_err());
+    assert!(enroll_request(home(), "c".into(), " ".into(), "k".into()).is_err());
+    assert!(enroll_request(home(), "c".into(), "x".repeat(81), "k".into()).is_err());
 
-    let identity = enrolled_identity(
-        "https://family.example".into(),
-        keys.clone(),
-        200,
-        state_json("allowed", ""),
-    )
-    .unwrap();
+    let identity = enrolled_identity(home(), keys.clone(), 200, state_json("allowed", "")).unwrap();
     assert_eq!(
         identity.state.as_ref().unwrap().token.as_deref(),
         Some("tok")
@@ -157,6 +160,14 @@ fn enrollment_flow_builds_requests_and_stores_identity() {
     let restored = identity_from_json(identity_to_json(identity.clone())).unwrap();
     assert_eq!(restored, identity);
     assert!(identity_from_json("{".into()).is_err());
+    // A device set up with a web address before 0.5.4 keeps its keys but must be set up again.
+    let old = identity_to_json(Identity {
+        service: "https://family.example".into(),
+        ..identity.clone()
+    });
+    let reloaded = identity_from_json(old).unwrap();
+    assert_eq!(reloaded.state, None);
+    assert_eq!(reloaded.private_key, identity.private_key);
 
     let state = state_request(identity.clone()).unwrap();
     assert_eq!(state.method, "GET");
@@ -165,7 +176,7 @@ fn enrollment_flow_builds_requests_and_stores_identity() {
         value: "Bearer tok".into()
     }));
     let ask = time_request(identity.clone(), 20, "  homework  ".into()).unwrap();
-    assert_eq!(ask.url, "https://family.example/v1/device/requests");
+    assert_eq!(ask.url, url("/v1/device/requests"));
     assert!(ask.body.unwrap().contains("\"homework\""));
     assert!(time_request(identity.clone(), 0, "".into()).is_err());
     assert!(time_request(identity.clone(), 181, "".into()).is_err());
@@ -177,7 +188,7 @@ fn enrollment_flow_builds_requests_and_stores_identity() {
     assert!(time_request(unenrolled, 5, "".into()).is_err());
 
     let tokenless = state_json("allowed", "").replace("\"token\":\"tok\",", "");
-    assert!(enrolled_identity("https://family.example".into(), keys, 200, tokenless).is_err());
+    assert!(enrolled_identity(home(), keys, 200, tokenless).is_err());
 }
 
 #[test]
@@ -214,13 +225,7 @@ fn responses_surface_service_errors() {
 #[test]
 fn refresh_preserves_token_and_guards_live_tunnels() {
     let keys = generate_keypair();
-    let identity = enrolled_identity(
-        "https://family.example".into(),
-        keys,
-        200,
-        state_json("allowed", ""),
-    )
-    .unwrap();
+    let identity = enrolled_identity(home(), keys, 200, state_json("allowed", "")).unwrap();
     let mut latest = parse_device_state(
         200,
         state_json("bedtime", "")
@@ -469,16 +474,10 @@ fn policy_engine_edge_cases() {
 #[test]
 fn location_requests_are_validated_and_scoped() {
     let keys = generate_keypair();
-    let identity = enrolled_identity(
-        "https://family.example".into(),
-        keys,
-        200,
-        state_json("allowed", ""),
-    )
-    .unwrap();
+    let identity = enrolled_identity(home(), keys, 200, state_json("allowed", "")).unwrap();
     assert!(!identity.state.as_ref().unwrap().location_requested);
     let req = location_request(identity.clone(), 41.88, -87.63, 12.5).unwrap();
-    assert_eq!(req.url, "https://family.example/v1/device/location");
+    assert_eq!(req.url, url("/v1/device/location"));
     let body: serde_json::Value = serde_json::from_str(req.body.as_deref().unwrap()).unwrap();
     assert_eq!(body["latitude"], 41.88);
     assert_eq!(body["accuracy"], 12.5);
@@ -623,23 +622,23 @@ fn child_alerts_fire_once_on_transitions() {
 }
 
 #[test]
-fn client_password_sign_in_is_scoped_and_https_only() {
+fn client_password_sign_in_is_scoped_and_goes_to_the_home_gateway() {
     let request = sign_in_request(
-        "https://family.example/".into(),
+        home(),
         " alex ".into(),
         "user-password".into(),
         "Phone".into(),
         "public-key".into(),
     )
     .unwrap();
-    assert_eq!(request.url, "https://family.example/v1/device/login");
+    assert_eq!(request.url, url("/v1/device/login"));
     let body: serde_json::Value = serde_json::from_str(request.body.as_deref().unwrap()).unwrap();
     assert_eq!(body["username"], "alex");
     assert_eq!(body["password"], "user-password");
     assert!(body.get("profile_id").is_none());
     assert!(body.get("grant_type").is_none());
     assert!(sign_in_request(
-        "http://family.example".into(),
+        "https://family.example".into(),
         "alex".into(),
         "password".into(),
         "Phone".into(),
@@ -647,7 +646,7 @@ fn client_password_sign_in_is_scoped_and_https_only() {
     )
     .is_err());
     assert!(sign_in_request(
-        "https://family.example".into(),
+        home(),
         "alex".into(),
         "".into(),
         "Phone".into(),

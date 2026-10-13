@@ -1,4 +1,10 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import * as api from "./api";
 import type { Action, Child, View } from "./api";
 
@@ -160,6 +166,58 @@ function Field(props: {
   );
 }
 
+/** WebView2 (Windows) draws its own show/hide button in password fields. */
+const nativeReveal = () =>
+  typeof CSS !== "undefined" && CSS.supports("selector(::-ms-reveal)");
+
+/** A password input with a button that shows or masks what was typed,
+ * unless the web engine already provides one. */
+function PasswordField({ label, name }: { label: string; name: string }) {
+  const [shown, setShown] = useState(false);
+  const id = useId();
+  if (nativeReveal())
+    return (
+      <Field
+        label={label}
+        name={name}
+        type="password"
+        autoComplete="current-password"
+      />
+    );
+  return (
+    <label>
+      <span id={id}>{label}</span>
+      <span className="reveal">
+        <input
+          name={name}
+          type={shown ? "text" : "password"}
+          autoComplete="current-password"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          aria-labelledby={id}
+          title=""
+          required
+        />
+        <button
+          type="button"
+          className="reveal-toggle"
+          aria-label={shown ? "Hide password" : "Show password"}
+          aria-pressed={shown}
+          title={shown ? "Hide password" : "Show password"}
+          onClick={() => setShown(!shown)}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+            <circle cx="12" cy="12" r="3" />
+            {shown ? <path d="M3 3l18 18" /> : null}
+          </svg>
+        </button>
+      </span>
+    </label>
+  );
+}
+
 const values = (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
@@ -171,8 +229,9 @@ function ChildSetup({ run, back }: { run: Run; back: () => void }) {
     <section>
       <h1>Sign in this computer</h1>
       <p>
-        Use the username and password a parent created under Settings → Client
-        users.
+        On the family dashboard at home, open Devices and copy the setup code
+        for a child&apos;s device. Then use the username and password a parent
+        created under Clients.
       </p>
       <form
         onSubmit={(event) => {
@@ -187,19 +246,13 @@ function ChildSetup({ run, back }: { run: Run; back: () => void }) {
         }}
       >
         <Field
-          label="Family dashboard address"
+          label="Setup code"
           name="service"
-          type="url"
-          placeholder="https://myhome.ddnsfree.com"
-          autoComplete="off"
+          placeholder="temperance://home#…"
+          multiline
         />
         <Field label="Username" name="username" autoComplete="username" />
-        <Field
-          label="Password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-        />
+        <PasswordField label="Password" name="password" />
         <Field
           label="Name for this computer"
           name="name"

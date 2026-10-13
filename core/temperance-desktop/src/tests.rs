@@ -7,6 +7,8 @@ use temperance_core::HttpRequest;
 use crate::app::{write_private, Action, App, Child, Screen, Transport, TunnelControl, View};
 
 const SERVER_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+/// The dashboard's setup code for family.example:51820.
+const HOME: &str = "temperance://home#eyJ2IjoxLCJob3N0IjoiZmFtaWx5LmV4YW1wbGUiLCJwb3J0Ijo1MTgyMCwicGluIjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOCIsImhvdXNlaG9sZCI6IlRoZSBSaXZlcmFzIn0";
 
 type Shared<T> = Arc<Mutex<T>>;
 
@@ -15,6 +17,8 @@ struct Fake {
     replies: Shared<VecDeque<Result<(u16, String), String>>>,
     probes: Shared<VecDeque<(u16, Option<String>, String)>>,
     sent: Shared<Vec<HttpRequest>>,
+    /// Whether each request was sent through the tunnel.
+    tunneled: Shared<Vec<bool>>,
 }
 impl Fake {
     fn reply(&self, reply: Result<(u16, String), String>) {
@@ -34,8 +38,9 @@ impl Fake {
     }
 }
 impl Transport for Fake {
-    fn send(&self, request: &HttpRequest) -> Result<(u16, String), String> {
+    fn send(&self, request: &HttpRequest, through_tunnel: bool) -> Result<(u16, String), String> {
         self.sent.lock().unwrap().push(request.clone());
+        self.tunneled.lock().unwrap().push(through_tunnel);
         self.replies
             .lock()
             .unwrap()
@@ -132,7 +137,7 @@ fn issues(app: &TestApp) -> Vec<String> {
 fn enrolled() -> (TestApp, Fake, FakeTunnel, tempfile::TempDir) {
     let (mut app, fake, tunnel, dir) = app();
     fake.ok(1);
-    app.act(enroll("https://family.example"));
+    app.act(enroll(HOME));
     (app, fake, tunnel, dir)
 }
 
@@ -157,7 +162,7 @@ fn enrolls_connects_refreshes_and_requests_time() {
         }
     );
     fake.ok(1);
-    app.act(enroll("https://family.example"));
+    app.act(enroll(HOME));
     // Signing in starts protection: the elevated app needs no OS prompt.
     assert_eq!(
         app.status,
@@ -166,7 +171,12 @@ fn enrolls_connects_refreshes_and_requests_time() {
     assert!(tunnel.is());
     assert_eq!(fake.sent().len(), 1);
     let sent = fake.sent()[0].clone();
-    assert_eq!(sent.url, "https://family.example/v1/device/login");
+    assert_eq!(
+        sent.url,
+        "temperance://AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8@family.example:51820/v1/device/login"
+    );
+    // Signing in happens before there is a tunnel; later requests go through it.
+    assert!(!fake.tunneled.lock().unwrap()[0]);
     assert!(!sent.body.unwrap().contains("private"));
 
     let conf = std::fs::read_to_string(dir.path().join("data/temperance.conf")).unwrap();
@@ -197,6 +207,7 @@ fn enrolls_connects_refreshes_and_requests_time() {
         app.status,
         "Protected. Your family's rules apply on this computer."
     );
+    assert_eq!(fake.tunneled.lock().unwrap().last(), Some(&true));
 
     fake.reply(Ok((
         200,
@@ -230,8 +241,8 @@ fn enrolls_connects_refreshes_and_requests_time() {
 #[test]
 fn rejects_bad_input_and_actions_out_of_order() {
     let (mut app, fake, _tunnel, _dir) = app();
-    app.act(enroll("http://insecure.example"));
-    assert_eq!(app.status, "Enter an HTTPS service origin");
+    app.act(enroll("https://family.example"));
+    assert!(app.status.starts_with("Scan or paste the setup code"));
     app.act(Action::Connect);
     assert_eq!(app.status, "Enroll first");
     app.act(Action::RequestTime {
@@ -245,13 +256,13 @@ fn rejects_bad_input_and_actions_out_of_order() {
         "This Wi-Fi network has no sign-in page to open."
     );
     fake.reply(Err("timeout".into()));
-    app.act(enroll("https://f.example"));
-    assert!(app.status.starts_with("Cannot reach policy service"));
+    app.act(enroll(HOME));
+    assert_eq!(app.status, "timeout");
     assert!(app.identity.is_none());
 
     fake.ok(1);
-    app.act(enroll("https://f.example"));
-    app.act(enroll("https://f.example"));
+    app.act(enroll(HOME));
+    app.act(enroll(HOME));
     assert_eq!(app.status, "Already enrolled");
 
     // The UI sends actions as JSON; anything else is refused before it reaches the app.
@@ -274,7 +285,7 @@ fn only_windows_installs_the_vpn() {
             child_allowed: false
         }
     );
-    app.act(enroll("https://family.example"));
+    app.act(enroll(HOME));
     assert_eq!(app.status, crate::app::CHILD_UNSUPPORTED);
     assert!(fake.sent().is_empty());
 
@@ -304,7 +315,7 @@ fn tunnel_failures_and_provisioning_changes_are_reported() {
     app.child_allowed = true;
     fake.ok(1);
     fake.ok(1);
-    app.act(enroll("https://f.example"));
+    app.act(enroll(HOME));
     app.act(Action::Connect);
     assert_eq!(app.status, "WireGuard: denied");
     app.connected = true;
@@ -340,7 +351,7 @@ fn shows_alerts_and_declines_location_requests() {
             r#"{"id":"r","minutes":20,"status":"pending","at":1}"#,
         ),
     )));
-    app.act(enroll("https://family.example"));
+    app.act(enroll(HOME));
     let asked = state(
         2,
         "allowed",
@@ -353,7 +364,7 @@ fn shows_alerts_and_declines_location_requests() {
     let sent = fake
         .sent()
         .into_iter()
-        .find(|r| r.url == "https://family.example/v1/device/location")
+        .find(|r| r.url.ends_with("/v1/device/location"))
         .unwrap();
     assert!(sent.body.unwrap().contains("cannot share its location"));
     assert!(child(&app)
@@ -650,8 +661,8 @@ fn background_tick_shows_a_tunnel_that_cannot_come_back() {
 }
 
 #[test]
-fn https_transport_sends_requests_and_keeps_the_policy_service_on_https() {
-    use crate::transport::{agent, Https};
+fn home_transport_probes_over_plain_http_but_reaches_home_only_by_its_wireguard_port() {
+    use crate::transport::{agent, Home};
     use temperance_core::Header;
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     let host = server.server_addr().to_ip().unwrap().to_string();
@@ -679,10 +690,7 @@ fn https_transport_sends_requests_and_keeps_the_policy_service_on_https() {
             .unwrap();
         (seen, body)
     });
-    let https = Https {
-        policy: agent(5, true),
-        probe: agent(5, false),
-    };
+    let home = Home { probe: agent(5) };
     let request = HttpRequest {
         method: "POST".into(),
         url: format!("http://{host}/generate_204"),
@@ -693,7 +701,7 @@ fn https_transport_sends_requests_and_keeps_the_policy_service_on_https() {
         body: Some("hello".into()),
     };
     assert_eq!(
-        https.probe(&request).unwrap(),
+        home.probe(&request).unwrap(),
         (
             302,
             Some("http://portal.example/".into()),
@@ -705,13 +713,13 @@ fn https_transport_sends_requests_and_keeps_the_policy_service_on_https() {
         (method.as_str(), header.as_deref(), body.as_str()),
         ("POST", Some("1"), "hello")
     );
-    assert!(https.send(&request).is_err(), "plain HTTP policy service");
+    assert!(home.send(&request, false).is_err(), "a web address");
     let bad = HttpRequest {
         url: "not a url".into(),
         ..request
     };
-    assert!(https.probe(&bad).is_err());
-    assert!(Https::system().send(&bad).is_err());
+    assert!(home.probe(&bad).is_err());
+    assert!(Home::system().send(&bad, true).is_err());
 }
 
 const IDENTITY: &str = r#"{"v":1,"host":"parkers.ddnsfree.com","port":51820,"pin":"PIN","key":"KEY","id":"par_1","name":"Robin's PC","household":"The Parkers"}"#;
@@ -825,7 +833,7 @@ fn a_parent_pastes_the_link_and_the_dashboard_opens_in_its_own_window() {
         }
     );
     // A parent's computer can't also become a child's.
-    app.act(enroll("https://family.example"));
+    app.act(enroll(HOME));
     assert_eq!(
         app.status,
         "This computer is paired as a parent's. Unpair it first."
@@ -929,7 +937,7 @@ fn boxed_transports_and_tunnels_forward_every_call() {
         transport.probe(&request).unwrap(),
         (302, Some("http://portal.example/".into()), String::new())
     );
-    assert_eq!(transport.send(&request), Err("no reply".into()));
+    assert_eq!(transport.send(&request, false), Err("no reply".into()));
 
     let fake_tunnel = FakeTunnel::default();
     fake_tunnel.set_age(Some(7));
@@ -1075,7 +1083,7 @@ mod commands {
         let view = call(
             &main,
             "act",
-            serde_json::json!({"action": {"action": "enroll", "service": "https://family.example",
+            serde_json::json!({"action": {"action": "enroll", "service": HOME,
                 "username": "alex", "password": "user-password", "name": "Laptop"}}),
         );
         assert_eq!(view["screen"], "child", "{view}");

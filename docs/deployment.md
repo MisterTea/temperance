@@ -34,37 +34,48 @@ On macOS the service is a launch agent of the signed-in user, so enable automati
 
 Edit the environment file (see `deploy/.env.example`):
 
-- `TEMPERANCE_PUBLIC_URL` — the HTTPS address of your dashboard (step 3).
+- `TEMPERANCE_PUBLIC_URL` — the address you open the dashboard at, such as `http://192.168.1.20:3000` (step 3).
 - `TEMPERANCE_VPN_ENDPOINT` — `host:51820`, where `host` is your public IPv4 address or, better, a dynamic DNS name that follows it, such as `myhome.ddnsfree.com:51820`. Temperance can keep a free [Dynu](https://www.dynu.com/) name up to date itself (dashboard **Settings → Remote access**, see the [router guide](routers.md#dynamic-dns-with-dynu)); your router's DDNS feature, DuckDNS or Cloudflare work too. Clients resolve the name again when the address changes. The port is the one the router exposes, and the gateway asks the router to forward that port.
 - `TEMPERANCE_TIMEZONE` — the family's IANA timezone.
 - `TEMPERANCE_GATEWAY_LISTEN` — `0.0.0.0:51820` to run the embedded gateway. Leave it unset only when a separate gateway host runs the CLI (below).
 
 Restart the service after changes (`sudo systemctl restart temperance`; on macOS `launchctl kickstart -k gui/$(id -u)/org.temperance.server`).
 
-Data lives in SQLite at `<data dir>/temperance.sqlite3` unless `TEMPERANCE_DATABASE_URL` points to PostgreSQL (`postgres://user:pass@host:5432/temperance`). The gateway's private key is created on first start at `<data dir>/gateway.key` (mode 600), and its public key is handed to clients automatically; set `TEMPERANCE_GATEWAY_PRIVATE_KEY` to supply one instead. Next to it, `<data dir>/parent.key` is the gateway's key for [parent phones](remote-parents.md), which reach the dashboard over the same UDP port. The embedded gateway forwards their requests to the dashboard with a secret generated at each start (`TEMPERANCE_FORWARD_SECRET`; set it yourself only if something else needs it). Set `TEMPERANCE_HOUSEHOLD_NAME` to the name parents see after pairing, or `TEMPERANCE_REMOTE_PARENTS=off` to turn parent access off.
+Data lives in SQLite at `<data dir>/temperance.sqlite3` unless `TEMPERANCE_DATABASE_URL` points to PostgreSQL (`postgres://user:pass@host:5432/temperance`). The gateway's private key is created on first start at `<data dir>/gateway.key` (mode 600), and its public key is handed to clients automatically; set `TEMPERANCE_GATEWAY_PRIVATE_KEY` to supply one instead. Next to it, `<data dir>/parent.key` is the gateway's key for [parent phones](remote-parents.md), which reach the dashboard over the same UDP port. The embedded gateway forwards their requests to the dashboard with a secret generated at each start (`TEMPERANCE_FORWARD_SECRET`; set it yourself only if something else needs it). Children's devices use the same key: they sign in and fetch their rules over that port too (step 4). Set `TEMPERANCE_HOUSEHOLD_NAME` to the name parents see after pairing, or `TEMPERANCE_REMOTE_PARENTS=off` to turn parent access off (children's devices are not affected).
 
 To cut a release, push a `v<version>` tag. `.github/workflows/release.yml` then cross-builds the add-ons against glibc 2.28 with `cargo zigbuild` and fails if either needs a newer symbol. It packages them with `deploy/linux/package.sh`, boots the result on Debian 10 and Rocky Linux 8, publishes the multi-arch image, and attaches the files to the release. Running `deploy/linux/package.sh` locally (after `npm run build` in `web/`) produces the same files in `dist/`; it needs `nfpm` for the `.deb` and `.rpm`.
 
+### Updating
+
+The dashboard footer shows the running version, and **Settings → Software updates** says when a newer release exists. To find out, the server asks the GitHub releases API every six hours, sending nothing but its version; set `TEMPERANCE_UPDATE_CHECK=off` to stop that. Development builds (from a checkout between tags) never report themselves as outdated.
+
+- **Docker with the updater:** choose **Update to …**. The dashboard asks the `updater` container (Watchtower, enabled with `COMPOSE_PROFILES=updater` and a `TEMPERANCE_UPDATER_TOKEN` in `.env`) to pull the new image and recreate the Temperance container. Data in the volume is kept, and the page reconnects when the new version is up. The updater only touches the Temperance container, and only it can reach the Docker socket; its API is not published outside the Compose network. With `TEMPERANCE_AUTO_UPDATE=true` it also updates on `TEMPERANCE_AUTO_UPDATE_SCHEDULE` (default `0 0 3 * * *`, 3:00 every night in `TEMPERANCE_TIMEZONE`).
+- **Docker without the updater:** `docker compose pull && docker compose up -d` in the install folder, or rerun the installer.
+- **Linux packages and tarball:** download the new release and install it over the old one (the commands are in the table above, and the dashboard shows them for this machine's architecture). The service unit cannot write its own program files, so it does not update itself.
+- **From a checkout:** `git pull`, then rerun the installer you used.
+
+Devices keep enforcing the rules they already have while Temperance restarts.
+
 ## 2. Forward UDP 51820
 
-**UDP 51820** is the only port that must be open to the internet. It carries both the family VPN and [parent phones](remote-parents.md) opening the dashboard away from home. Reserve the Temperance machine's LAN address in DHCP so it does not change.
+**UDP 51820** is the only port that must be open to the internet. It carries the family VPN, children's devices signing in and fetching their rules, and [parent phones](remote-parents.md) opening the dashboard away from home. Reserve the Temperance machine's LAN address in DHCP so it does not change.
 
 The gateway asks the router to forward the port with UPnP, renews the mapping every 20 minutes and removes it on shutdown. Check **Settings → Remote access** in the dashboard: a green status line means it worked. If the router has UPnP turned off or does not support it, forward the port by hand. The [router guide](routers.md) has step-by-step instructions for TP-Link (Archer and Deco), Amazon eero and Netgear (Nighthawk and Orbi) routers. UPnP can be turned off on the same page.
 
 If your router's own internet address is private (`10.x`, `100.64–127.x`, `172.16–31.x`, `192.168.x`), there is another router in front of it or your ISP uses carrier-grade NAT; the dashboard warns about this. Bridge the ISP's box, ask the ISP for a public address, or run the gateway on a small VPS with the CLI (below).
 
-## 3. HTTPS for the dashboard
+## 3. The dashboard on your home network
 
-The server listens on port 3000. Do not forward it as plain HTTP. Choose one:
+The server listens on port 3000. Anyone on the home network can open it over plain HTTP at the server's LAN name or address (for example `http://192.168.1.20:3000`); sign-in only checks that the page came from the address the browser used. No certificate or domain is needed: children's devices never use this port, and [parent phones](remote-parents.md) reach the dashboard from anywhere through the gateway. Do not forward port 3000 to the internet as plain HTTP. If you also want to open the dashboard in any browser away from home, put HTTPS in front of it:
 
 - **Cloudflare Tunnel** (no inbound port): `cloudflared tunnel --url http://localhost:3000`, or a named tunnel routing your hostname to `http://localhost:3000`. Set `TEMPERANCE_PUBLIC_URL` to that hostname.
 - **Caddy** (automatic Let's Encrypt): forward TCP 80 and 443 too, and use `deploy/Caddyfile` with `TEMPERANCE_POLICY_HOST` set to your hostname and `TEMPERANCE_UPSTREAM=127.0.0.1:3000`. The Docker setup includes both of these as optional services.
 
-Enrolled devices can always reach the dashboard and policy API, even while paused: the gateway exempts the `TEMPERANCE_PUBLIC_URL` and `TEMPERANCE_VPN_ENDPOINT` hostnames from filtering, and `http://10.77.0.1` inside the tunnel is the local dashboard.
+Children's devices reach home only through the gateway's UDP port, so they can always ask for more time, even while paused: inside the tunnel they talk to `10.77.0.1`, and before the tunnel is up (or when it can't connect) they use QUIC with the gateway's pinned key. The gateway also exempts the `TEMPERANCE_PUBLIC_URL` and `TEMPERANCE_VPN_ENDPOINT` hostnames from filtering.
 
 ## 4. First run
 
-Open the dashboard, sign in once with the admin password to create the owner account, create a family profile, and create an enrollment code. Enroll a test device, start its VPN, and test browsing, pause, bedtime, filtering and budgets before enrolling other devices.
+Open the dashboard, sign in once with the admin password to create the owner account, create a family profile, and add a username and password for the child under **Clients**. Then open **Devices**: once the gateway has started, **Set up a child's device** shows a QR code and a **Copy setup code** button. The setup code (`temperance://home#…`) carries your `TEMPERANCE_VPN_ENDPOINT` and the gateway's key; it is not a secret, but it only works with the child's username and password. On the child's device, scan the code (Android, iPhone) or paste it (Mac, Windows), sign in, allow the VPN, and test browsing, pause, bedtime, filtering and budgets before setting up other devices.
 
 ## Home-network devices (TVs, consoles, speakers)
 
@@ -85,8 +96,8 @@ TEMPERANCE_GATEWAY_TOKEN='same as the service' target/release/temperance-gateway
   --service https://temperance.example.com --key-file /var/lib/temperance/gateway.key
 ```
 
-It prints its public key; set `TEMPERANCE_VPN_PUBLIC_KEY` on the service to that value. It polls `/v1/gateway/state` and posts activity every 5 seconds. `--home-dns`, `--lan-network` and `--router-*` enable the home-network modes. The dashboard's UPnP and Dynu settings reach the CLI with the state; pass `--public-port` when the router exposes a different port than `--listen`. Add `--parent-key-file /var/lib/temperance/parent.key` to let [parent phones](remote-parents.md) through; the CLI forwards their requests to `--service`, authenticated with `TEMPERANCE_GATEWAY_TOKEN`.
+It prints its public key; set `TEMPERANCE_VPN_PUBLIC_KEY` on the service to that value. It polls `/v1/gateway/state` and posts activity every 5 seconds. `--home-dns`, `--lan-network` and `--router-*` enable the home-network modes. The dashboard's UPnP and Dynu settings reach the CLI with the state; pass `--public-port` when the router exposes a different port than `--listen`. Add `--parent-key-file /var/lib/temperance/parent.key`: children's devices sign in and fetch their rules through it, and so do [parent phones](remote-parents.md). The CLI forwards their requests to `--service`, authenticated with `TEMPERANCE_GATEWAY_TOKEN`. Without it there is no setup code and devices can't sign in.
 
 ## Backups and secrets
 
-Back up the data directory: `temperance.sqlite3` (stop the service, or use `sqlite3 temperance.sqlite3 ".backup copy.sqlite3"`) or your PostgreSQL database with `pg_dump`, and `gateway.key` and `parent.key`. The dashboard's Settings page also downloads a backup. Losing the database requires re-enrollment; losing the gateway key requires re-provisioning clients; losing the parent key requires pairing parent phones again. Rotate a compromised admin password or gateway token in the environment file and restart. Revoke individual devices with the dashboard's Remove action, and parent phones with **Revoke** under **Settings → Parent devices**. After ten wrong admin passwords from one address (or a hundred overall) in 15 minutes, sign-in pauses for up to 15 minutes. Do not use the VPN subnet `10.77.0.0/24` elsewhere on your network.
+Back up the data directory: `temperance.sqlite3` (stop the service, or use `sqlite3 temperance.sqlite3 ".backup copy.sqlite3"`) or your PostgreSQL database with `pg_dump`, and `gateway.key` and `parent.key`. The dashboard's Settings page also downloads a backup. Losing the database requires re-enrollment; losing the gateway key requires re-provisioning clients; losing the parent key requires setting up children's devices and pairing parent phones again, since they pin it. Rotate a compromised admin password or gateway token in the environment file and restart. Revoke individual devices with the dashboard's Remove action, and parent phones with **Revoke** under **Settings → Parent devices**. After ten wrong admin passwords from one address (or a hundred overall) in 15 minutes, sign-in pauses for up to 15 minutes. Do not use the VPN subnet `10.77.0.0/24` elsewhere on your network.

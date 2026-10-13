@@ -1,6 +1,8 @@
-//! Parent phones away from home: QUIC on the WireGuard socket. A phone pairs
-//! once with a code from the dashboard; afterwards each request it sends is
-//! forwarded to the dashboard marked with the paired parent's id.
+//! QUIC on the WireGuard socket. A parent's phone pairs once with a code from
+//! the dashboard; afterwards each request it sends is forwarded to the
+//! dashboard marked with the paired parent's id. A child's device that is not
+//! connected to the VPN (yet) sends its sign-in and `/v1/device/…` requests
+//! the same way, unmarked: its device token authenticates it.
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, IoSliceMut};
@@ -18,8 +20,8 @@ use serde_json::{json, Value};
 use temperance_core::remote::client::UNPAIRED;
 use temperance_core::remote::tls::{self, Identity};
 use temperance_core::remote::{
-    end_to_end, receive, send, PairReply, PairRequest, RequestHead, ResponseHead, MAX_BODY,
-    PAIR_ALPN, PARENT_ALPN,
+    end_to_end, receive, send, PairReply, PairRequest, RequestHead, ResponseHead, DEVICE_ALPN,
+    MAX_BODY, PAIR_ALPN, PARENT_ALPN,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -40,6 +42,20 @@ pub struct Config {
     pub secret: String,
     /// Where the dashboard is, e.g. `http://127.0.0.1:3000`.
     pub target: String,
+    /// `false` refuses parent phones; children's devices are still served.
+    #[serde(default = "enabled")]
+    pub parents: bool,
+}
+
+fn enabled() -> bool {
+    true
+}
+
+/// Who a forwarded request is from.
+#[derive(Clone)]
+enum Caller {
+    Parent(String),
+    Device(IpAddr),
 }
 
 /// A paired phone as `service.gatewayState()` lists it.
@@ -252,6 +268,16 @@ impl Parents {
             connection.close(0u32.into(), b"");
             return;
         };
+        if alpn == DEVICE_ALPN {
+            while let Ok((tx, rx)) = connection.accept_bi().await {
+                tokio::spawn(self.clone().forward(Caller::Device(from.ip()), tx, rx));
+            }
+            return;
+        }
+        if !self.config.parents {
+            connection.close(UNPAIRED.into(), b"parent access is off");
+            return;
+        }
         if alpn == PAIR_ALPN {
             self.pairing(connection, from.ip(), key).await;
             return;
@@ -268,7 +294,7 @@ impl Parents {
             .expect("connections lock")
             .push((key, connection.clone()));
         while let Ok((tx, rx)) = connection.accept_bi().await {
-            tokio::spawn(self.clone().forward(id.clone(), tx, rx));
+            tokio::spawn(self.clone().forward(Caller::Parent(id.clone()), tx, rx));
         }
         self.connections
             .lock()
@@ -342,7 +368,7 @@ impl Parents {
 
     async fn forward(
         self: Arc<Self>,
-        id: String,
+        caller: Caller,
         mut tx: quinn::SendStream,
         mut rx: quinn::RecvStream,
     ) {
@@ -350,28 +376,42 @@ impl Parents {
             return;
         };
         let parents = self.clone();
-        let (head, body) = tokio::task::spawn_blocking(move || parents.call(&id, head, body))
+        let (head, body) = tokio::task::spawn_blocking(move || parents.call(&caller, head, body))
             .await
             .unwrap_or_else(|_| text(502, "The gateway could not forward this request."));
         let _ = send(&mut tx, &head, &body).await;
     }
 
-    /// Gateway-only routes are never reachable through a parent's phone.
-    fn call(&self, id: &str, head: RequestHead, body: Vec<u8>) -> (ResponseHead, Vec<u8>) {
-        if !head.path.starts_with('/') || head.path.starts_with("/v1/gateway") {
+    /// Gateway-only routes are never reachable through a phone, and a child's
+    /// device reaches only what the app uses.
+    fn call(&self, caller: &Caller, head: RequestHead, body: Vec<u8>) -> (ResponseHead, Vec<u8>) {
+        if !allowed(caller, &head.path) {
             return text(404, "Not found");
         }
         let mut request = ureq::http::Request::builder()
             .method(head.method.as_str())
             .uri(format!("{}{}", self.config.target, head.path));
         for (name, value) in &head.headers {
-            if end_to_end(name) && !name.to_ascii_lowercase().starts_with("x-temperance-") {
+            let lower = name.to_ascii_lowercase();
+            let spoofable = lower.starts_with("x-temperance-")
+                || [
+                    "x-forwarded-for",
+                    "x-real-ip",
+                    "forwarded",
+                    "cf-connecting-ip",
+                ]
+                .contains(&lower.as_str());
+            if end_to_end(name) && !spoofable {
                 request = request.header(name, value);
             }
         }
-        request = request
-            .header(FORWARDED, &self.config.secret)
-            .header(PARENT, id);
+        request = match caller {
+            Caller::Parent(id) => request
+                .header(FORWARDED, &self.config.secret)
+                .header(PARENT, id),
+            // The dashboard's sign-in limits count per address.
+            Caller::Device(ip) => request.header("x-forwarded-for", ip.to_string()),
+        };
         let sent = if body.is_empty() {
             request
                 .body(ureq::SendBody::none())
@@ -402,6 +442,19 @@ impl Parents {
             Err(_) => text(502, "The dashboard's reply was too large."),
         }
     }
+}
+
+fn allowed(caller: &Caller, path: &str) -> bool {
+    let route = path.split('?').next().unwrap_or_default();
+    let plain = route.starts_with('/')
+        && !route.contains("//")
+        && !route.split('/').any(|s| s == "." || s == "..")
+        && !route.contains(['%', '\\']);
+    plain
+        && match caller {
+            Caller::Parent(_) => !route.starts_with("/v1/gateway"),
+            Caller::Device(_) => route == "/v1/enroll" || route.starts_with("/v1/device/"),
+        }
 }
 
 fn failed(message: &str) -> PairReply {
@@ -440,6 +493,29 @@ mod tests {
         assert!(!limiter.allow("192.0.2.1".parse().unwrap(), now));
         let later = now + Duration::from_secs(61);
         assert!(limiter.allow(one, later));
+    }
+
+    #[test]
+    fn devices_reach_only_their_own_routes() {
+        let parent = Caller::Parent("par_1".into());
+        let device = Caller::Device("198.51.100.1".parse().unwrap());
+        for path in ["/v1/device/login", "/v1/device/state?x=1", "/v1/enroll"] {
+            assert!(allowed(&device, path) && allowed(&parent, path), "{path}");
+        }
+        for path in ["/api/state", "/", "/v1/enrollx", "/v1/gateway/state"] {
+            assert!(!allowed(&device, path), "{path}");
+        }
+        assert!(allowed(&parent, "/api/state") && !allowed(&parent, "/v1/gateway/state"));
+        for path in [
+            "/v1/device/../api/state",
+            "/v1/device/%2e%2e/api/state",
+            "/v1/device//x",
+            "/v1/device/.\\x",
+            "v1/device/state",
+        ] {
+            assert!(!allowed(&device, path) && !allowed(&parent, path), "{path}");
+        }
+        assert!(!allowed(&parent, "/x/../v1/gateway/state"));
     }
 
     #[test]

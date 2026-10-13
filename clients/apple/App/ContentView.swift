@@ -1,10 +1,14 @@
 import SwiftUI
+#if os(iOS)
+import VisionKit
+#endif
 
 struct ContentView: View {
     @ObservedObject var client: Client
     /// Back to the mode choice, offered until the device is enrolled.
     var back: (() -> Void)?
-    @State private var service = ""
+    @State private var home = ""
+    @State private var scanning = false
     @State private var username = ""
     @State private var password = ""
     @State private var name = ""
@@ -23,6 +27,11 @@ struct ContentView: View {
                 }
             }.padding(32).frame(maxWidth: 600, alignment: .leading).disabled(client.busy)
         }
+        #if os(iOS)
+        .sheet(isPresented: $scanning) {
+            QRScanner(prefix: "temperance://home#") { code in scanning = false; home = code }.ignoresSafeArea()
+        }
+        #endif
         .refreshable { await client.refresh() }
         .task { while !Task.isCancelled { await client.refresh(); try? await Task.sleep(nanoseconds: 30_000_000_000) } }
     }
@@ -30,16 +39,24 @@ struct ContentView: View {
     private var signIn: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Sign in this \(deviceNoun)").font(.title2).bold()
-            Text("Use the username and password a parent made for you on the family dashboard. Your password isn't saved on this \(deviceNoun).")
-            Field("Family dashboard address") {
-                TextField("Family dashboard address", text: $service, prompt: Text(verbatim: "https://myhome.example.com")).plainEntry(.URL)
+            Text("On the family dashboard at home, a parent opens Devices and shows the setup code. Then use the username and password a parent made for you. Your password isn't saved on this \(deviceNoun).")
+            #if os(iOS)
+            if DataScannerViewController.isSupported {
+                Button { scanning = true } label: {
+                    Label("Scan the setup code", systemImage: "qrcode.viewfinder")
+                }.buttonStyle(.bordered).controlSize(.large)
+            }
+            #endif
+            Field(setupCodeLabel) {
+                TextField(setupCodeLabel, text: $home, prompt: Text(verbatim: "temperance://home#…"), axis: .vertical)
+                    .lineLimit(1...3).plainEntry(.URL)
             }
             Field("Username") { TextField("Username", text: $username).plainEntry(.username) }
-            Field("Password") { SecureField("Password", text: $password).plainEntry(.password) }
+            PasswordField(label: "Password", text: $password)
             Field("Name for this \(deviceNoun)") {
                 TextField("Name for this \(deviceNoun)", text: $name, prompt: Text(verbatim: "Alex's \(deviceNoun)"))
             }
-            Button { Task { await client.enroll(service: service, username: username, password: password, name: name); password = "" } } label: {
+            Button { Task { await client.enroll(home: home, username: username, password: password, name: name); password = "" } } label: {
                 Text("Sign in").frame(maxWidth: .infinity)
             }.buttonStyle(.borderedProminent).controlSize(.large)
             if client.busy { ProgressView().frame(maxWidth: .infinity) }
@@ -114,6 +131,47 @@ struct Field<Content: View>: View {
             content.textFieldStyle(.roundedBorder).accessibilityLabel(Text(label))
         }
     }
+}
+
+/// A password field with an eye button inside it that shows or masks what was typed.
+struct PasswordField: View {
+    let label: String
+    @Binding var text: String
+    @State private var shown = false
+    @FocusState private var focused: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.subheadline).foregroundStyle(.secondary).accessibilityHidden(true)
+            HStack(spacing: 0) {
+                Group {
+                    if shown { TextField(label, text: $text) } else { SecureField(label, text: $text) }
+                }
+                .textFieldStyle(.plain).plainEntry(.password).focused($focused)
+                .accessibilityLabel(Text(label))
+                Button {
+                    shown.toggle()
+                    focused = true
+                } label: {
+                    Image(systemName: shown ? "eye.slash" : "eye")
+                        .frame(width: Self.button.width, height: Self.button.height).contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless).foregroundStyle(.secondary)
+                .accessibilityLabel(shown ? "Hide password" : "Show password")
+                .accessibilityIdentifier("revealPassword")
+                .help(shown ? "Hide password" : "Show password")
+            }
+            .padding(.leading, 7).padding(.vertical, 1)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Self.fill))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(.quaternary))
+        }
+    }
+    #if os(iOS)
+    private static let fill = Color(uiColor: .systemBackground)
+    private static let button = CGSize(width: 40, height: 34)
+    #else
+    private static let fill = Color(nsColor: .textBackgroundColor)
+    private static let button = CGSize(width: 28, height: 22)
+    #endif
 }
 
 enum Entry { case URL, username, password }

@@ -72,6 +72,29 @@ async function paired(repo: TestRepository) {
   return { headers, id: id as string, code: code as string };
 }
 
+describe("children's devices", () => {
+  it("get a setup code naming home and the gateway's pin once it checks in", async () => {
+    const repo = new TestRepository();
+    const headers = await admin(repo);
+    const setup = async () =>
+      (await (await call(repo, "api/state", undefined, headers)).json())
+        .device_setup as string | null;
+    expect(await setup()).toBeNull();
+    await reportPin(repo, "PIN-2");
+    const link = (await setup())!;
+    expect(link.startsWith("temperance://home#")).toBe(true);
+    expect(
+      JSON.parse(Buffer.from(link.split("#")[1], "base64url").toString()),
+    ).toEqual({
+      v: 1,
+      host: "home.example.net",
+      port: 51820,
+      pin: "PIN-2",
+      household: "The Parkers",
+    });
+  });
+});
+
 describe("parent phones", () => {
   it("waits for the gateway's pin, then links the endpoint, pin and household", async () => {
     const repo = new TestRepository();

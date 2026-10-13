@@ -2,7 +2,8 @@
 # Installs Temperance with Docker Compose into ~/temperance (or $TEMPERANCE_DIR):
 #   sh -c "$(curl -fsSL https://raw.githubusercontent.com/MisterTea/temperance/main/deploy/docker/install.sh)"
 # Without a terminal, set TEMPERANCE_HOSTNAME and optionally TEMPERANCE_HTTPS
-# (caddy, cloudflared or none), CLOUDFLARE_TUNNEL_TOKEN and TEMPERANCE_TIMEZONE.
+# (caddy, cloudflared or none), CLOUDFLARE_TUNNEL_TOKEN, TEMPERANCE_TIMEZONE and
+# TEMPERANCE_UPDATES (yes or no: let the dashboard install updates).
 # Rerun it to upgrade; an existing .env is kept.
 set -eu
 
@@ -44,25 +45,40 @@ if [ ! -f .env ]; then
   ask TEMPERANCE_HOSTNAME "Public DNS name for this home (dynamic DNS works)" ""
   [ -n "$TEMPERANCE_HOSTNAME" ] || fail "a public hostname is required, e.g. myhome.ddnsfree.com"
   ask TEMPERANCE_TIMEZONE "Family timezone" "${zone:-UTC}"
-  ask TEMPERANCE_HTTPS "HTTPS: caddy (Let's Encrypt, forward TCP 80/443), cloudflared (Cloudflare Tunnel), or none" caddy
+  # Devices and parent phones only use the UDP port; HTTPS is for browsers away from home.
+  ask TEMPERANCE_HTTPS "HTTPS for browsers away from home: none, caddy (Let's Encrypt, forward TCP 80/443) or cloudflared (Cloudflare Tunnel)" none
+  public=https://$TEMPERANCE_HOSTNAME
   case $TEMPERANCE_HTTPS in
     caddy) profiles=caddy ;;
     cloudflared) profiles=cloudflared; ask CLOUDFLARE_TUNNEL_TOKEN "Cloudflare tunnel token" "" ;;
-    none) profiles= ;;
+    none) profiles=; public=http://localhost:8788 ;;
     *) fail "TEMPERANCE_HTTPS must be caddy, cloudflared or none" ;;
+  esac
+  ask TEMPERANCE_UPDATES "Install updates from the dashboard (runs a Watchtower container with Docker access): yes or no" yes
+  updater_token=
+  case $TEMPERANCE_UPDATES in
+    yes) profiles=${profiles:+$profiles,}updater; updater_token=$(secret 36) ;;
+    no) ;;
+    *) fail "TEMPERANCE_UPDATES must be yes or no" ;;
   esac
   password=$(secret 18)
   umask 077
   cat > .env << EOF
 TEMPERANCE_ADMIN_PASSWORD=$password
 TEMPERANCE_GATEWAY_TOKEN=$(secret 36)
-TEMPERANCE_PUBLIC_URL=https://$TEMPERANCE_HOSTNAME
+TEMPERANCE_PUBLIC_URL=$public
 TEMPERANCE_VPN_ENDPOINT=$TEMPERANCE_HOSTNAME:${TEMPERANCE_WIREGUARD_PORT:-51820}
 TEMPERANCE_TIMEZONE=$TEMPERANCE_TIMEZONE
 
-# HTTPS front end to start with Temperance: caddy, cloudflared, or empty if you run your own.
+# Extra services: caddy or cloudflared for HTTPS (or neither if you run your own),
+# and updater to install new versions from the dashboard.
 COMPOSE_PROFILES=$profiles
 CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+
+# Shared by Temperance and the updater container. TEMPERANCE_AUTO_UPDATE=true also
+# updates every night at 3:00 (TEMPERANCE_AUTO_UPDATE_SCHEDULE, a 6-field cron).
+TEMPERANCE_UPDATER_TOKEN=$updater_token
+TEMPERANCE_AUTO_UPDATE=false
 
 # Host side of the published ports. Forward UDP $TEMPERANCE_HOSTNAME:${TEMPERANCE_WIREGUARD_PORT:-51820} on your router to this machine.
 TEMPERANCE_DASHBOARD_PORT=127.0.0.1:8788
@@ -72,6 +88,17 @@ TEMPERANCE_WIREGUARD_PORT=${TEMPERANCE_WIREGUARD_PORT:-51820}
 TEMPERANCE_DATABASE_URL=
 EOF
   echo "Wrote $dir/.env with a new admin password: $password"
+elif ! grep -q '^TEMPERANCE_UPDATER_TOKEN=.' .env; then
+  # Installs from before the updater existed: offer it once, keeping everything else.
+  ask TEMPERANCE_UPDATES "Install updates from the dashboard from now on (runs a Watchtower container with Docker access): yes or no" no
+  if [ "$TEMPERANCE_UPDATES" = yes ]; then
+    profiles=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -1)
+    umask 077
+    sed -i.bak -e '/^TEMPERANCE_UPDATER_TOKEN=/d' -e '/^COMPOSE_PROFILES=/d' .env && rm -f .env.bak
+    printf '\nCOMPOSE_PROFILES=%s\nTEMPERANCE_UPDATER_TOKEN=%s\nTEMPERANCE_AUTO_UPDATE=false\n' \
+      "${profiles:+$profiles,}updater" "$(secret 36)" >> .env
+    echo "Turned on dashboard updates in $dir/.env"
+  fi
 fi
 
 docker compose pull --quiet || echo "warning: could not pull images; using local copies" >&2
@@ -93,5 +120,5 @@ Temperance is running from $dir.
   Password:   TEMPERANCE_ADMIN_PASSWORD in $dir/.env
   Router:     forward UDP port $(setting TEMPERANCE_WIREGUARD_PORT) to this machine$( [ "$(setting COMPOSE_PROFILES)" = caddy ] && echo ", plus TCP 80 and 443 for Caddy")
               (how-to for TP-Link, eero and Netgear: https://github.com/MisterTea/temperance/blob/main/docs/routers.md)
-  Upgrade:    rerun this installer, or: cd $dir && docker compose pull && docker compose up -d
+  Upgrade:    $(case ",$(setting COMPOSE_PROFILES)," in *,updater,*) echo "Settings > Software updates in the dashboard, or rerun this installer" ;; *) echo "rerun this installer, or: cd $dir && docker compose pull && docker compose up -d" ;; esac)
 EOF

@@ -1,7 +1,7 @@
 # Client and server together in isolation; start with systest/run.sh.
 #
-#   lan (172.30.0.0/24)  client ── caddy (server.test, HTTPS) ── server
-#                        client ── server:51820/udp (WireGuard)
+#   lan (172.30.0.0/24)  client ── server:51820/udp (WireGuard, and the devices' QUIC API)
+#                        client ── server:3000 (dashboard, plain HTTP; the parent only)
 #   wan (198.51.100.0/24)          server ── internet (DNS .53, sites .10, .11)
 #
 # Both networks are internal (no route to the real internet), and the client is not on
@@ -16,7 +16,7 @@ services:
     environment:
       TEMPERANCE_ADMIN_PASSWORD: system-test-admin-password
       TEMPERANCE_GATEWAY_TOKEN: system-test-gateway-token-0123456789abcdef
-      TEMPERANCE_PUBLIC_URL: https://server.test
+      TEMPERANCE_PUBLIC_URL: http://172.30.0.10:3000
       TEMPERANCE_VPN_ENDPOINT: 172.30.0.10:51820
       TEMPERANCE_TIMEZONE: UTC
       TEMPERANCE_DATA_DIR: /data
@@ -31,15 +31,6 @@ services:
       interval: 2s
       retries: 60
 
-  caddy:
-    image: caddy:2
-    command: caddy reverse-proxy --from https://server.test --to server:3000 --internal-certs
-    volumes: [caddy-data:/data]
-    networks:
-      lan:
-        ipv4_address: 172.30.0.20
-        aliases: [server.test]
-
   internet:
     build: internet
     cap_add: [NET_ADMIN]
@@ -53,12 +44,10 @@ services:
     environment:
       TEMPERANCE_ADMIN_PASSWORD: system-test-admin-password
     cap_add: [NET_ADMIN]
-    volumes: [caddy-data:/caddy:ro]
     networks:
       lan: { ipv4_address: 172.30.0.30 }
     depends_on:
       server: { condition: service_healthy }
-      caddy: { condition: service_started }
       internet: { condition: service_started }
 
 networks:
@@ -68,6 +57,3 @@ networks:
   wan:
     internal: true
     ipam: { config: [{ subnet: 198.51.100.0/24 }] }
-
-volumes:
-  caddy-data:

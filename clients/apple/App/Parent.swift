@@ -23,7 +23,7 @@ enum Mode: String {
          start: @escaping (String) throws -> RemoteSessionProtocol = { try RemoteSession.start(identity: $0) }) {
         self.store = store; self.pairing = pair; self.starting = start
         do { if let identity = try store.load() { paired = try describeParentIdentity(identity: identity) } }
-        catch { status = error.localizedDescription }
+        catch { status = error.message }
     }
 
     /// The pairing dials home, so it runs off the main thread.
@@ -38,7 +38,7 @@ enum Mode: String {
             paired = try describeParentIdentity(identity: identity)
             status = ""
             open()
-        } catch { status = error.localizedDescription }
+        } catch { status = error.message }
     }
 
     func open() {
@@ -47,7 +47,7 @@ enum Mode: String {
             let session = try self.session ?? starting(identity)
             self.session = session
             dashboard = URL(string: session.url())
-        } catch { status = error.localizedDescription }
+        } catch { status = error.message }
     }
 
     func close() {
@@ -59,6 +59,6 @@ enum Mode: String {
     func forget() {
         close()
         do { try store.clear(); paired = nil; status = "" }
-        catch { status = error.localizedDescription }
+        catch { status = error.message }
     }
 }

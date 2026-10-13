@@ -1,11 +1,14 @@
 # Temperance in Docker. Settings live in .env next to this file (see .env.example,
-# or let install.sh write it). Upgrade with `docker compose pull && docker compose up -d`.
+# or let install.sh write it). Upgrade from the dashboard (Settings → Software updates)
+# with the updater below, or with `docker compose pull && docker compose up -d`.
 name: temperance
 services:
   temperance:
     image: ${TEMPERANCE_IMAGE:-ghcr.io/mistertea/temperance:latest}
     restart: unless-stopped
     env_file: .env
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     environment:
       TEMPERANCE_DATA_DIR: /data
       TEMPERANCE_GATEWAY_LISTEN: 0.0.0.0:51820
@@ -44,6 +47,25 @@ services:
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on: [temperance]
+
+  # COMPOSE_PROFILES=updater: Watchtower pulls a new Temperance image and recreates the
+  # container when the dashboard asks (TEMPERANCE_UPDATER_TOKEN must be set), and also
+  # nightly when TEMPERANCE_AUTO_UPDATE=true. It needs the Docker socket, so it is a
+  # separate container; Temperance itself never gets it. Its API is not published.
+  updater:
+    image: nickfedor/watchtower:latest
+    profiles: [updater]
+    restart: unless-stopped
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_HTTP_API_ENDPOINTS: update
+      WATCHTOWER_HTTP_API_TOKEN: ${TEMPERANCE_UPDATER_TOKEN:-}
+      WATCHTOWER_HTTP_API_PERIODIC_POLLS: ${TEMPERANCE_AUTO_UPDATE:-false}
+      WATCHTOWER_SCHEDULE: ${TEMPERANCE_AUTO_UPDATE_SCHEDULE:-0 0 3 * * *}
+      TZ: ${TEMPERANCE_TIMEZONE:-UTC}
+    security_opt: [no-new-privileges:true]
 
 volumes:
   temperance-data:

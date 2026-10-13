@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Insets
 import android.provider.Settings
+import android.text.method.PasswordTransformationMethod
 import android.view.View
 import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
@@ -14,6 +15,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.RadioGroup
 import android.widget.TextView
+import com.google.android.material.textfield.TextInputLayout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -51,12 +53,30 @@ class MainActivityTest {
     private fun select(id: Int) = activity.onOptionsItemSelected(menu().findItem(id))
     private fun nextActivity() = shadowOf(activity).nextStartedActivity?.action
 
+    @Test fun `the password can be shown and masked again`() {
+        launch()
+        val layout = view<TextInputLayout>(R.id.password_layout)
+        val password = view<EditText>(R.id.password)
+        val reveal = layout.findViewById<View>(com.google.android.material.R.id.text_input_end_icon)
+        assertEquals(TextInputLayout.END_ICON_PASSWORD_TOGGLE, layout.endIconMode)
+        assertTrue(reveal.isShown)
+        password.setText("correct horse")
+        password.setSelection(password.length())
+        assertTrue(password.transformationMethod is PasswordTransformationMethod)
+        reveal.performClick()
+        assertEquals(null, password.transformationMethod)
+        assertEquals("correct horse", password.text.toString())
+        assertEquals(password.length(), password.selectionEnd)
+        reveal.performClick()
+        assertTrue(password.transformationMethod is PasswordTransformationMethod)
+    }
+
     @Test fun `signing in reports errors, then asks for the VPN and explains a refusal`() {
         ShadowVpnService.setPrepareResult(Intent("android.net.vpn.PREPARE"))
         launch()
         assertEquals(MainActivity.Screen.SETUP, activity.screen)
         assertFalse(menu().findItem(R.id.menu_refresh).isVisible)
-        view<EditText>(R.id.server).setText("family.example")
+        view<EditText>(R.id.server).setText(FakeServer.HOME)
         view<EditText>(R.id.username).setText("alex")
         view<EditText>(R.id.password).setText("wrong")
         view<Button>(R.id.sign_in).performClick()
@@ -90,7 +110,7 @@ class MainActivityTest {
     }
 
     @Test fun `the status screen shows rules, health and Wi-Fi sign-in`() {
-        app.signIn("family.example", "alex", "correct horse")
+        app.signIn(FakeServer.HOME, "alex", "correct horse")
         launch()
         assertEquals(MainActivity.Screen.STATUS, activity.screen)
         assertEquals(SessionService::class.java.name, shadowOf(activity).nextStartedService.component?.className)
@@ -128,7 +148,7 @@ class MainActivityTest {
     }
 
     @Test fun `asking for more time sends the chosen minutes`() {
-        app.signIn("family.example", "alex", "correct horse")
+        app.signIn(FakeServer.HOME, "alex", "correct horse")
         launch()
         view<Button>(R.id.ask_time).performClick()
         val dialog = activity.dialog!!
@@ -149,7 +169,7 @@ class MainActivityTest {
     }
 
     @Test fun `the menu refreshes, opens settings, asks for location and shows about`() {
-        app.signIn("family.example", "alex", "correct horse")
+        app.signIn(FakeServer.HOME, "alex", "correct horse")
         launch()
         assertTrue(menu().findItem(R.id.menu_refresh).isVisible)
         server.version = 7
@@ -174,7 +194,7 @@ class MainActivityTest {
 
         select(R.id.menu_about)
         val about = shadowOf(activity.dialog!!)
-        assertTrue(about.message.contains("Server https://family.example"))
+        assertTrue(about.message.contains("Home family.example:51820"))
         assertTrue(about.message.contains("Core "))
         assertFalse(activity.onOptionsItemSelected(RoboMenu(activity).add("other")))
     }

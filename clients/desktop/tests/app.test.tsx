@@ -129,8 +129,8 @@ test("a child's computer signs in, and protection can be restarted if it stops",
     screen.getByRole("button", { name: /This is my child's computer/ }),
   );
   await user.type(
-    screen.getByLabelText("Family dashboard address"),
-    "https://home.example",
+    screen.getByLabelText("Setup code"),
+    "temperance://home#CODE",
   );
   await user.type(screen.getByLabelText("Username"), "alex");
   await user.type(screen.getByLabelText("Password"), "secret");
@@ -138,7 +138,7 @@ test("a child's computer signs in, and protection can be restarted if it stops",
   await user.click(screen.getByRole("button", { name: "Sign in" }));
   expect(actions[0]).toEqual({
     action: "enroll",
-    service: "https://home.example",
+    service: "temperance://home#CODE",
     username: "alex",
     password: "secret",
     name: "Laptop",
@@ -151,6 +151,58 @@ test("a child's computer signs in, and protection can be restarted if it stops",
   );
   expect(screen.getByText("55 min left today")).toBeTruthy();
   expect(screen.getByText("Bedtime starts at 21:00")).toBeTruthy();
+});
+
+test("the password can be shown and masked again", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "view")
+        return { status: "", screen: "choose", child_allowed: true };
+    },
+    { shouldMockEvents: true },
+  );
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(
+    await screen.findByRole("button", { name: /This is my child's computer/ }),
+  );
+  const password = screen.getByLabelText("Password") as HTMLInputElement;
+  await user.type(password, "secret");
+  expect(password.type).toBe("password");
+  await user.click(screen.getByRole("button", { name: "Show password" }));
+  expect(password.type).toBe("text");
+  expect(password.value).toBe("secret");
+  const hide = screen.getByRole("button", { name: "Hide password" });
+  expect(hide.getAttribute("aria-pressed")).toBe("true");
+  await user.click(hide);
+  expect(password.type).toBe("password");
+});
+
+test("WebView2's own password reveal button is used instead of ours", async () => {
+  vi.stubGlobal("CSS", {
+    supports: (query: string) => query === "selector(::-ms-reveal)",
+  });
+  mockIPC(
+    (cmd) => {
+      if (cmd === "view")
+        return { status: "", screen: "choose", child_allowed: true };
+    },
+    { shouldMockEvents: true },
+  );
+  try {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: /This is my child's computer/,
+      }),
+    );
+    const password = screen.getByLabelText("Password") as HTMLInputElement;
+    expect(password.type).toBe("password");
+    expect(screen.queryByRole("button", { name: "Show password" })).toBeNull();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 test("signing in says what it is doing until the reply arrives", async () => {
@@ -169,8 +221,8 @@ test("signing in says what it is doing until the reply arrives", async () => {
     await screen.findByRole("button", { name: /This is my child's computer/ }),
   );
   await user.type(
-    screen.getByLabelText("Family dashboard address"),
-    "https://home.example",
+    screen.getByLabelText("Setup code"),
+    "temperance://home#CODE",
   );
   await user.type(screen.getByLabelText("Username"), "alex");
   await user.type(screen.getByLabelText("Password"), "secret");
