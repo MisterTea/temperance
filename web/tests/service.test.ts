@@ -7,9 +7,11 @@ import {
   domainReason,
   inWindow,
   localTime,
+  normalizeDomain,
   profileSchema,
 } from "../src/lib/policy";
 import { emptyState } from "../src/lib/model";
+import { FREE_DOMAINS } from "../src/lib/free-domains";
 const PUBLIC = btoa(
   String.fromCharCode(...Array.from({ length: 32 }, (_, n) => n)),
 );
@@ -446,6 +448,69 @@ describe("VPN endpoint", () => {
       "home.example.net:51820\nPostUp=x",
     ])
       expect(() => service.vpnEndpoint(bad), bad).toThrow(/host:port/);
+  });
+});
+describe("free domains", () => {
+  it("starts from the built-in list and reaches the gateway", () => {
+    const state = emptyState();
+    const shown = service.snapshot(state);
+    expect(shown.free_domains_default).toBe(true);
+    expect(shown.free_domains).toEqual([...FREE_DOMAINS]);
+    expect(shown.free_domains).toEqual(
+      expect.arrayContaining(["play.googleapis.com", "samsungcloudcdn.com"]),
+    );
+    expect(service.gatewayState(state).free_domains).toEqual(
+      shown.free_domains,
+    );
+  });
+  it("keeps the built-in list well formed and free of media hosts", () => {
+    expect(new Set(FREE_DOMAINS).size).toBe(FREE_DOMAINS.length);
+    for (const d of FREE_DOMAINS) expect(normalizeDomain(d)).toBe(d);
+    for (const media of [
+      "googleapis.com",
+      "googleusercontent.com",
+      "ggpht.com",
+      "gstatic.com",
+      "google.com",
+      "www.google.com",
+      "youtube.com",
+      "googlevideo.com",
+      "apple.com",
+      "itunes.apple.com",
+      "icloud.com",
+      "xboxlive.com",
+      "doh.dns.apple.com",
+      "mask.icloud.com",
+    ])
+      expect(FREE_DOMAINS, media).not.toContain(media);
+  });
+  it("saves an edited list and restores the built-in one", () => {
+    const state = emptyState();
+    service.settings(state, {
+      free_domains: [" Updates.Example.com. ", "*.cdn.example", "cdn.example"],
+    });
+    expect(state.free_domains).toEqual(["updates.example.com", "cdn.example"]);
+    expect(service.snapshot(state).free_domains_default).toBe(false);
+    expect(state.events.at(-1)?.message).toBe("Free domains updated");
+    service.settings(state, { free_domains: [] });
+    expect(service.gatewayState(state).free_domains).toEqual([]);
+    service.settings(state, { free_domains: null });
+    expect(state.free_domains).toBeUndefined();
+    expect(service.snapshot(state).free_domains).toEqual([...FREE_DOMAINS]);
+  });
+  it("names the entry that is not a domain", async () => {
+    const repo = new TestRepository();
+    const response = await request(
+      repo,
+      "api/settings",
+      { free_domains: ["ok.example", "https://bad.example/path"] },
+      ADMIN,
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toBe(
+      "free_domains.1: https://bad.example/path is not a domain name",
+    );
+    expect((await repo.read()).state.free_domains).toBeUndefined();
   });
 });
 describe("remote access settings", () => {

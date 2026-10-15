@@ -160,6 +160,8 @@ export interface State {
   paused: boolean;
   home_profile_id?: number;
   extra_domains: Record<string, string[]>;
+  /** Domains that never count against a client's time; unset means `FREE_DOMAINS`. */
+  free_domains?: string[];
   retention_days: number;
   offline_grace_seconds: number;
   gateway_seen?: number;

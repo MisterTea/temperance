@@ -2129,6 +2129,58 @@ export function Dashboard() {
                 <button className="primary">Save settings</button>
               </form>
             </section>
+            <section>
+              <h2>Free domains</h2>
+              <p>
+                Traffic to these domains never counts against a client’s time,
+                and keeps working after a time limit runs out or during focus
+                time. They cover system and app updates, push notifications,
+                connectivity checks and clock sync. Pause, bedtime and Off Time
+                still block them, and so does a site you block for a client.
+                Each entry includes its subdomains.
+              </p>
+              <form
+                key={state.version}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const f = new FormData(e.currentTarget);
+                  act(() =>
+                    save("/api/settings", {
+                      free_domains: String(f.get("free_domains"))
+                        .split(/\s+/)
+                        .filter(Boolean),
+                    }),
+                  );
+                }}
+              >
+                <label htmlFor="free-domains">Free domains, one per line</label>
+                <textarea
+                  id="free-domains"
+                  name="free_domains"
+                  rows={10}
+                  defaultValue={state.free_domains.join("\n")}
+                />
+                <small>
+                  {plural(state.free_domains.length, "domain")}
+                  {state.free_domains_default
+                    ? " · the built-in list"
+                    : " · edited for this household"}
+                </small>
+                <div className="actions">
+                  <button className="primary">Save free domains</button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={state.free_domains_default}
+                    onClick={() =>
+                      act(() => save("/api/settings", { free_domains: null }))
+                    }
+                  >
+                    Restore built-in list
+                  </button>
+                </div>
+              </form>
+            </section>
             <RemoteAccess
               state={state}
               onSave={(network) =>
