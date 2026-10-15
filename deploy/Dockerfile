@@ -13,6 +13,7 @@ COPY web/gateway-addon/ ./gateway-addon/
 RUN npm ci
 COPY web/ ./
 COPY specs/ /app/specs/
+COPY scripts/ /app/scripts/
 COPY --from=gateway /src/core/target/release/libtemperance_gateway.so ./gateway-addon/
 RUN mv gateway-addon/libtemperance_gateway.so \
       "gateway-addon/temperance-gateway.$(node -p 'process.platform + "-" + process.arch').node" \

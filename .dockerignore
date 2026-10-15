@@ -18,3 +18,12 @@ core/target
 systest/target
 .env
 web/gateway-addon/*.node
+# Operator credentials must never enter a Docker build context.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.jks
+**/*.keystore
+**/*.p12
+**/*.mobileprovision
+core/lcov.info
