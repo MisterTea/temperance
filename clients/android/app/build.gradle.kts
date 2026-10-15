@@ -78,7 +78,7 @@ tasks.register<JacocoCoverageVerification>("unitTestCoverageCheck") {
 
 dependencies {
     implementation("com.wireguard.android:tunnel:1.0.20260102")
-    implementation("net.java.dev.jna:jna:5.17.0@aar")
+    implementation("net.java.dev.jna:jna:5.19.1@aar")
     // Parent mode: scan the dashboard's pairing QR code.
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")
@@ -89,7 +89,7 @@ dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation("net.java.dev.jna:jna:5.17.0")
+    testImplementation("net.java.dev.jna:jna:5.19.1")
     testImplementation("org.robolectric:robolectric:4.16")
 
     androidTestImplementation("androidx.test:runner:1.7.0")
