@@ -11,15 +11,15 @@ let homePrefix = "temperance://home#"
 /// What to say when a scan isn't the code this screen asked for.
 func scanMismatch(expected prefix: String, code: String) -> String {
     if prefix == pairPrefix && code.hasPrefix(homePrefix) {
-        return "This code sets up a child's device. To pair a parent's phone, scan the code under Devices → Parent devices."
+        return "This code sets up a client's device. To pair an admin's phone, scan the code under Devices → Admin devices."
     }
     if prefix == homePrefix && code.hasPrefix(pairPrefix) {
-        return "This code pairs a parent's phone. To set up a child's device, scan the code under Devices."
+        return "This code pairs an admin's phone. To set up a client's device, scan the code under Devices."
     }
     if prefix == homePrefix {
-        return "This isn't a device setup code. Scan the code under Devices → Set up a child's device."
+        return "This isn't a device setup code. Scan the code under Devices → Set up a client's device."
     }
-    return "This is not a Temperance pairing code. Scan the code under Devices → Parent devices."
+    return "This is not a Temperance pairing code. Scan the code under Devices → Admin devices."
 }
 
 /// The first screen of a fresh install, then whichever mode it chose. An
@@ -53,14 +53,14 @@ struct ModeChoice: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             BrandHeader()
-            Text("Is this your child's device, or are you a parent?").font(.title3).fixedSize(horizontal: false, vertical: true)
+            Text("Is this a client's device, or are you an admin?").font(.title3).fixedSize(horizontal: false, vertical: true)
             Button { choose(.child) } label: {
-                Label("This is my child's device", systemImage: deviceSymbol).frame(maxWidth: .infinity)
+                Label("This is a client's device", systemImage: deviceSymbol).frame(maxWidth: .infinity)
             }.buttonStyle(.borderedProminent).controlSize(.large)
             Button { choose(.parent) } label: {
-                Label("I'm a parent", systemImage: "person.badge.key").frame(maxWidth: .infinity)
+                Label("I'm an admin", systemImage: "person.badge.key").frame(maxWidth: .infinity)
             }.buttonStyle(.bordered).controlSize(.large)
-            Text("A child's device installs the family VPN. A parent's phone or computer opens the family dashboard from anywhere, with no VPN.")
+            Text("A client's device installs the family VPN. An admin's phone or computer opens the family dashboard from anywhere, with no VPN.")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(32).frame(maxWidth: 600)
     }
@@ -104,7 +104,7 @@ struct ParentView: View {
                             }
                     } else {
                         Text("Pair this \(deviceNoun)").font(.title2).bold()
-                        Text("On the family dashboard at home, open Devices → Parent devices and choose Pair a parent device.")
+                        Text("On the family dashboard at home, open Devices → Admin devices and choose Pair an admin device.")
                         #if os(iOS)
                         if DataScannerViewController.isSupported {
                             Button { scanning = true } label: {
@@ -123,7 +123,7 @@ struct ParentView: View {
                             Text("Pair").frame(maxWidth: .infinity)
                         }.buttonStyle(.borderedProminent).controlSize(.large).disabled(link.isEmpty || name.isEmpty)
                         if parent.busy { ProgressView().frame(maxWidth: .infinity) }
-                        Button("This is a child's device instead", action: back)
+                        Button("This is a client's device instead", action: back)
                     }
                     if !parent.status.isEmpty { Text(parent.status).foregroundStyle(.red).accessibilityIdentifier("status") }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(32).frame(maxWidth: 600).disabled(parent.busy)

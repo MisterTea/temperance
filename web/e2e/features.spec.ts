@@ -455,7 +455,7 @@ test("parents pair a phone and reach the dashboard through the gateway", async (
   await page.goto("/");
   await openTab(page, "Devices");
   const section = page.locator("section", {
-    has: page.getByRole("heading", { name: "Parent devices" }),
+    has: page.getByRole("heading", { name: "Admin devices" }),
   });
   await page.evaluate(() => {
     Object.defineProperty(navigator, "clipboard", {
@@ -465,7 +465,7 @@ test("parents pair a phone and reach the dashboard through the gateway", async (
       },
     });
   });
-  await section.getByRole("button", { name: "Pair a parent device" }).click();
+  await section.getByRole("button", { name: "Pair an admin device" }).click();
   await expect(section.getByRole("img", { name: /QR code/ })).toBeVisible();
   await expect(section.getByRole("timer")).toContainText("Works once");
   await expectCleanLayout(page, "devices-parent-pairing");
@@ -492,7 +492,7 @@ test("parents pair a phone and reach the dashboard through the gateway", async (
   const away = await phone.newPage();
   await away.goto("/");
   await expect(
-    away.getByText(`PARENT · ${name.toUpperCase()}`),
+    away.getByText(`ADMIN · ${name.toUpperCase()}`),
   ).toBeVisible();
   await expect(away.getByRole("button", { name: "Sign out" })).toHaveCount(0);
 

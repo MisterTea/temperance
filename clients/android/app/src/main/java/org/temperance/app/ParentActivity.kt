@@ -21,7 +21,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.TextView
 
-/** A parent's phone: pair once, then the family dashboard through the home gateway. */
+/** An admin's phone: pair once, then the family dashboard through the home gateway. */
 class ParentActivity : Activity() {
     private val app get() = application as TemperanceApp
     private val handler = Handler(Looper.getMainLooper())

@@ -6,7 +6,7 @@ export interface Device {
   ip: string;
   name: string;
   profile_id: number;
-  /** A parent's device. It is not a child client and cannot be turned into one. */
+  /** An admin's own device. It is not a client's device and cannot be turned into one. */
   admin?: boolean;
   public_key: string;
   token_hash: string;
@@ -62,6 +62,11 @@ export interface User {
   id: string;
   username: string;
   password_hash: string;
+  /**
+   * `user` is a client's sign-in. `owner` is the account created from the admin
+   * password. `parent` is not used for new accounts: a paired admin device is a
+   * `Parent` record, not this role.
+   */
   role: "user" | "owner" | "parent";
   profile_id?: number;
   disabled?: boolean;
@@ -99,7 +104,7 @@ export interface NetworkStatus {
   ddns: ReachStatus | null;
   reported_at: number;
 }
-/** A parent's phone paired to open the dashboard through the gateway. */
+/** An admin's phone paired to open the dashboard through the gateway. The wire name stays `parent`. */
 export interface Parent {
   id: string;
   name: string;

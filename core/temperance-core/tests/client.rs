@@ -8,7 +8,7 @@ const SERVER_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 const SUNDAY_1PM: i64 = 1_791_741_600;
 const PIN: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 
-/// The dashboard's "Set up a child's device" code.
+/// The dashboard's "Set up a client's device" code.
 fn home() -> String {
     format_home_link(&HomeLink {
         v: 1,

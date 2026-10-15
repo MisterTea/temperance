@@ -55,7 +55,7 @@ test("a parent chooses parent mode, pastes the link and opens the dashboard", as
   );
   const user = userEvent.setup();
   render(<App />);
-  await user.click(await screen.findByRole("button", { name: /I'm a parent/ }));
+  await user.click(await screen.findByRole("button", { name: /I'm an admin/ }));
   // No "Please fill out this field" tooltip while the pointer rests on an empty field.
   expect(screen.getByLabelText(/Pairing link/).getAttribute("title")).toBe("");
   expect(
@@ -120,13 +120,13 @@ test("a child's computer signs in, and protection can be restarted if it stops",
   const user = userEvent.setup();
   render(<App />);
   await user.click(
-    await screen.findByRole("button", { name: /This is my child's computer/ }),
+    await screen.findByRole("button", { name: /This is a client's computer/ }),
   );
   await user.click(
-    screen.getByRole("button", { name: "I'm a parent instead" }),
+    screen.getByRole("button", { name: "I'm an admin instead" }),
   );
   await user.click(
-    screen.getByRole("button", { name: /This is my child's computer/ }),
+    screen.getByRole("button", { name: /This is a client's computer/ }),
   );
   await user.type(
     screen.getByLabelText("Setup code"),
@@ -163,7 +163,7 @@ test("the password can be shown and masked again", async () => {
   const user = userEvent.setup();
   render(<App />);
   await user.click(
-    await screen.findByRole("button", { name: /This is my child's computer/ }),
+    await screen.findByRole("button", { name: /This is a client's computer/ }),
   );
   const password = screen.getByLabelText("Password") as HTMLInputElement;
   await user.type(password, "secret");
@@ -193,7 +193,7 @@ test("WebView2's own password reveal button is used instead of ours", async () =
     render(<App />);
     await user.click(
       await screen.findByRole("button", {
-        name: /This is my child's computer/,
+        name: /This is a client's computer/,
       }),
     );
     const password = screen.getByLabelText("Password") as HTMLInputElement;
@@ -217,7 +217,7 @@ test("signing in says what it is doing until the reply arrives", async () => {
   const user = userEvent.setup();
   render(<App />);
   await user.click(
-    await screen.findByRole("button", { name: /This is my child's computer/ }),
+    await screen.findByRole("button", { name: /This is a client's computer/ }),
   );
   await user.type(
     screen.getByLabelText("Setup code"),
@@ -319,7 +319,7 @@ test("Linux and macOS go straight to parent pairing, and errors show in the stat
   expect(
     await screen.findByRole("heading", { name: /from anywhere/ }),
   ).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /child's computer/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /client's computer/ })).toBeNull();
   expect(screen.getByText(/protected through your home network/)).toBeTruthy();
   await user.type(screen.getByLabelText(/Pairing link/), "x");
   await user.type(screen.getByLabelText("Name for this computer"), "PC");

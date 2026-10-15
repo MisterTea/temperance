@@ -1,6 +1,6 @@
 [package]
 name = "temperance-desktop"
-description = "Temperance for Windows (child and parent mode) and Linux (parent mode), built with Tauri"
+description = "Temperance for Windows (client and admin mode) and Linux (admin mode), built with Tauri"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

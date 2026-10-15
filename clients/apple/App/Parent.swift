@@ -1,11 +1,11 @@
 import Foundation
 
-/// Which app this install is: a child's protected device or a parent's remote.
+/// Which app this install is: a client's protected device or an admin's remote.
 enum Mode: String {
     case child, parent
 }
 
-/// Parent mode: pair once with the dashboard's QR code, then open the home
+/// Admin mode: pair once with the dashboard's QR code, then open the home
 /// dashboard through the gateway's UDP port (`RemoteSession` in the shared core).
 /// It never asks for VPN permission.
 @MainActor final class Parent: ObservableObject {

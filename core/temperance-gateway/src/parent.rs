@@ -1,6 +1,6 @@
-//! QUIC on the WireGuard socket. A parent's phone pairs once with a code from
+//! QUIC on the WireGuard socket. An admin's phone pairs once with a code from
 //! the dashboard; afterwards each request it sends is forwarded to the
-//! dashboard marked with the paired parent's id. A child's device that is not
+//! dashboard marked with the paired admin device's id. A client's device that is not
 //! connected to the VPN (yet) sends its sign-in and `/v1/device/…` requests
 //! the same way, unmarked: its device token authenticates it.
 use std::collections::HashMap;

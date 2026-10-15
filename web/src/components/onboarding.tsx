@@ -17,8 +17,8 @@ type Age = (typeof AGES)[number]["value"];
 const minutes = (text: string) => (text === "" ? "" : Number(text));
 
 /**
- * First-run experience. `mode="account"` starts on a fresh install (no parent
- * accounts); `mode="rules"` resumes after the owner exists but no rules do.
+ * First-run experience. `mode="account"` starts on a fresh install (no admin
+ * account); `mode="rules"` resumes after the owner exists but no rules do.
  */
 export function Onboarding({
   mode,
@@ -124,7 +124,7 @@ export function Onboarding({
             });
           }}
         >
-          <h1 id="account">Sign in as administrator</h1>
+          <h1 id="account">Sign in with the admin password</h1>
           <label>
             Admin password
             <input

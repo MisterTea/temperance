@@ -11,7 +11,7 @@ Client and server tested together, in isolation. One Docker Compose project star
   dashboard's setup code and signs in through `temperance-core`, the same library the
   apps use, over the gateway's WireGuard port (pinned QUIC). It then brings up a kernel
   WireGuard interface from the provisioning it was issued and browses through it; its
-  later requests go inside the tunnel. It also acts as the parent, using the dashboard
+  later requests go inside the tunnel. It also acts as the admin, using the dashboard
   API over plain HTTP with the admin password.
 
 Both networks are `internal`, so nothing reaches the real internet. The client isn't

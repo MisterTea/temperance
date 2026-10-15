@@ -8,7 +8,7 @@ use crate::{policy::Profile, policy::Window, tunnel::Tunnel, CoreError};
 
 const HOME_PREFIX: &str = "temperance://home#";
 
-/// Where a family's Temperance is: the dashboard's "Set up a child's device"
+/// Where a family's Temperance is: the dashboard's "Set up a client's device"
 /// code. The gateway's key is pinned, so no certificate authority or web
 /// address is involved.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
@@ -91,7 +91,7 @@ fn invalid(message: impl Into<String>) -> CoreError {
 #[uniffi::export]
 pub fn parse_home_link(link: String) -> Result<HomeLink, CoreError> {
     let bad = || {
-        invalid("Scan or paste the setup code from your family's Temperance dashboard (Devices → Set up a child's device).")
+        invalid("Scan or paste the setup code from your family's Temperance dashboard (Devices → Set up a client's device).")
     };
     let encoded = link.trim().strip_prefix(HOME_PREFIX).ok_or_else(bad)?;
     let json = URL_SAFE_NO_PAD

@@ -87,7 +87,7 @@ export async function handle(
     if (path.startsWith("api/")) {
       const { state } = await repo.read();
       const actor = await principal(request, state);
-      if (!actor) throw new HTTPError(401, "Administrator sign-in required");
+      if (!actor) throw new HTTPError(401, "Admin sign-in required");
       if (
         write &&
         actor.role === "admin" &&
@@ -498,8 +498,9 @@ async function fromGateway(request: Request) {
       return true;
   return false;
 }
-// Only the administrator password/session, or a parent phone paired by it, can
-// change family policies or IAM users.
+// Only the admin password/session, or an admin device paired by it, can
+// change family policies or client sign-ins. The paired-device actor is still
+// named `parent` because that is the wire header.
 async function principal(
   request: Request,
   state: State,

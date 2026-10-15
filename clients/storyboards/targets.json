@@ -1,15 +1,15 @@
 {
   "choose.child": {
-    "android": "This is my child's device",
-    "ios": "This is my child's device",
-    "macos": "This is my child's device",
-    "windows": "This is my child's computer"
+    "android": "This is a client's device",
+    "ios": "This is a client's device",
+    "macos": "This is a client's device",
+    "windows": "This is a client's computer"
   },
   "choose.parent": {
-    "android": "I'm a parent",
-    "ios": "I'm a parent",
-    "macos": "I'm a parent",
-    "windows": "I'm a parent"
+    "android": "I'm an admin",
+    "ios": "I'm an admin",
+    "macos": "I'm an admin",
+    "windows": "I'm an admin"
   },
   "signin.server": {
     "android": { "id": "server" },
@@ -138,10 +138,10 @@
     "windows": "Pair and open the dashboard"
   },
   "dashboard.away": {
-    "android": "/parent ·/i",
-    "ios": "/parent ·/i",
-    "macos": "/parent ·/i",
-    "windows": { "regex": "/parent ·/i", "window": "dashboard" }
+    "android": "/admin ·/i",
+    "ios": "/admin ·/i",
+    "macos": "/admin ·/i",
+    "windows": { "regex": "/admin ·/i", "window": "dashboard" }
   },
   "dashboard.approve": {
     "android": "Approve",

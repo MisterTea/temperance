@@ -2,23 +2,23 @@
 
 Open source family VPN and DNS controls inspired by [Circle](https://meetcircle.com/pages/features-usage). Manage clients, devices, filters, pauses, bedtime and schedules, and daily time budgets from one program you run at home. Phones and computers are enforced through its built-in WireGuard VPN wherever they are; TVs and consoles on the home network are enforced through its DNS or (on Linux) router mode. There is no Temperance cloud service or telemetry.
 
-**Status: working MVP with VPN client source for macOS, Windows, Android, and iOS; not a complete Circle replacement.** Temperance is an independent project and has no affiliation with Circle. It uses original code and a distinct interface.
+**Status: working MVP with device-app source for macOS, Windows, Android, and iOS; not a complete Circle replacement.** Temperance is an independent project and has no affiliation with Circle. It uses original code and a distinct interface.
 
 ## VPN apps and policy service
 
-Temperance is one home program: the authenticated Next.js dashboard and policy service with a WireGuard gateway written in Rust embedded as a native add-on, plus device applications for **macOS, Windows, Android, and iOS**. It runs on Linux, macOS or Windows with a single forwarded UDP port. Parents update profiles and create client users in the admin-password-protected dashboard. Devices generate VPN keys locally and install a full tunnel. The gateway applies DNS filters plus per-connection pauses, bedtime, and observed-network-minute budgets, re-checking policy every few seconds. A 15-second policy lease stops forwarding if enforcement stops.
+Temperance is one home program: the authenticated Next.js dashboard and policy service with a WireGuard gateway written in Rust embedded as a native add-on, plus device applications for **macOS, Windows, Android, and iOS**. It runs on Linux, macOS or Windows with a single forwarded UDP port. Admins update clients and create their sign-ins in the admin-password-protected dashboard. Devices generate VPN keys locally and install a full tunnel. The gateway applies DNS filters plus per-connection pauses, bedtime, and observed-network-minute budgets, re-checking policy every few seconds. A 15-second policy lease stops forwarding if enforcement stops.
 
 - [Run Temperance at home](docs/deployment.md) (Linux `.deb`/`.rpm`/tarball releases; installers for Linux, macOS and Windows; port forwarding; HTTPS), or [with Docker](#run-with-docker)
 - [Router guide](docs/routers.md): automatic UPnP port forwarding, Dynu dynamic DNS, and manual steps for TP-Link, eero and Netgear routers
-- [Parent phones](docs/remote-parents.md): open the family dashboard from work or mobile data, paired with a QR code, over the same UDP port and without a VPN or HTTPS setup
+- [Admin devices](docs/remote-parents.md): open the family dashboard from work or mobile data, paired with a QR code, over the same UDP port and without a VPN or HTTPS setup
 - [Build/install the device apps](clients/README.md)
 - [Develop the web service, or host the dashboard on Vercel/Cloudflare with a separate gateway](web/README.md)
 - [Circle research and feature-parity audit](docs/research/circle-feature-audit.md)
 - [Architecture, API, and enforcement limits](docs/architecture.md)
 
-All four clients and the gateway share one Rust business-logic layer, [`core/temperance-core`](core): the enrollment/refresh protocol, key generation, tunnel validation, the policy engine, the child status view, child alerts, time requests and location answers. It is linked natively into the Tauri desktop app for Windows and Linux and compiled through UniFFI into an XCFramework with Swift bindings (iOS, macOS) and Android `.so` libraries with Kotlin bindings. Platform code only provides secure storage, VPN APIs and UI; the core also does the networking, reaching home only through the gateway's WireGuard UDP port. The mobile apps embed WireGuard; the Apple apps use native SwiftUI/Network Extension. Windows uses the Tauri app (a React UI over the Rust core) and the official WireGuard tunnel service. On Linux the same app is for parents only; Linux computers can be protected as home-network devices behind the gateway.
+All four apps and the gateway share one Rust business-logic layer, [`core/temperance-core`](core): the enrollment/refresh protocol, key generation, tunnel validation, the policy engine, the status view a client sees, alerts, time requests and location answers. It is linked natively into the Tauri desktop app for Windows and Linux and compiled through UniFFI into an XCFramework with Swift bindings (iOS, macOS) and Android `.so` libraries with Kotlin bindings. Platform code only provides secure storage, VPN APIs and UI; the core also does the networking, reaching home only through the gateway's WireGuard UDP port. The mobile apps embed WireGuard; the Apple apps use native SwiftUI/Network Extension. Windows uses the Tauri app (a React UI over the Rust core) and the official WireGuard tunnel service. On Linux the same app is for admins only; Linux computers can be protected as home-network devices behind the gateway.
 
-The website uses a single admin password to manage policy. A client has the rules and the time budget. Client apps take the dashboard's setup code (a QR code under **Devices**) and sign in with that client's username and password, without OAuth or a separate rules picker. Stored user passwords are salted hashes, and apps persist only scoped device credentials. Data lives in SQLite in the data directory by default, or in PostgreSQL when `TEMPERANCE_DATABASE_URL` points to one. Apple VPN builds require your signing team and entitlements for installation. Android debug APKs are test artifacts. Unmanaged-device VPN removal and comprehensive encrypted-DNS/content filtering remain limitations. The repository includes CI build artifacts and end-to-end tests with real encrypted traffic. Version tags publish Linux packages and a container image; it does not provision a server or publish app-store releases automatically.
+The website uses a single admin password to manage policy. A client has the rules and the time budget. The apps take the dashboard's setup code (a QR code under **Devices**) and sign in with that client's username and password, without OAuth or a separate rules picker. Stored user passwords are salted hashes, and apps persist only scoped device credentials. Data lives in SQLite in the data directory by default, or in PostgreSQL when `TEMPERANCE_DATABASE_URL` points to one. Apple VPN builds require your signing team and entitlements for installation. Android debug APKs are test artifacts. Unmanaged-device VPN removal and comprehensive encrypted-DNS/content filtering remain limitations. The repository includes CI build artifacts and end-to-end tests with real encrypted traffic. Version tags publish Linux packages and a container image; it does not provision a server or publish app-store releases automatically.
 
 ## Run locally
 
@@ -42,7 +42,7 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/MisterTea/temperance/main/
 
 The installer asks for your public hostname, timezone and HTTPS method. It writes `~/temperance/compose.yml` and a `.env` with a generated admin password, then starts the containers and waits for them to report healthy. Unless you answer no, it also starts an `updater` container ([Watchtower](https://github.com/nicholas-fedor/watchtower)), so **Settings → Software updates** in the dashboard installs new versions with one click; set `TEMPERANCE_AUTO_UPDATE=true` in `.env` to also update every night at 3:00. Rerun the installer to upgrade by hand, or to turn the updater on for an older install. To set it up by hand, copy [`deploy/docker/compose.yml`](deploy/docker/compose.yml) and [`deploy/docker/.env.example`](deploy/docker/.env.example) (as `.env`) into one directory and run `docker compose up -d`.
 
-Children's devices and parent phones reach home only through the gateway's UDP port, so HTTPS is optional. To also open the dashboard in any browser away from home, `.env` picks a front end with `COMPOSE_PROFILES`:
+Client devices and admin phones reach home only through the gateway's UDP port, so HTTPS is optional. To also open the dashboard in any browser away from home, `.env` picks a front end with `COMPOSE_PROFILES`:
 
 - `caddy`: Caddy gets a Let's Encrypt certificate for `TEMPERANCE_PUBLIC_URL`.
 - `cloudflared`: a Cloudflare Tunnel; route its public hostname to `http://temperance:3000`.
@@ -82,10 +82,10 @@ clients/android/gradlew -p clients/android unitTestCoverageCheck  # Android app 
 xcodebuild -project clients/apple/Temperance.xcodeproj -scheme TemperanceMac -derivedDataPath build/apple \
   -resultBundlePath build/apple-tests.xcresult -enableCodeCoverage YES CODE_SIGNING_ALLOWED=NO test \
   && clients/apple/coverage.py build/apple-tests.xcresult        # Apple app (80% gate)
-sh systest/run.sh                                                # client + server system tests (Docker, Linux)
+sh systest/run.sh                                                # app + server system tests (Docker, Linux)
 ```
 
-The system tests ([systest/README.md](systest/README.md)) run the real server image and a headless client together in an isolated Docker network. The fake internet there can only be reached through the WireGuard tunnel. They cover enrolling, filtering, time limits with parent approval, pause, bedtime and revoking a device.
+The system tests ([systest/README.md](systest/README.md)) run the real server image and a headless app together in an isolated Docker network. The fake internet there can only be reached through the WireGuard tunnel. They cover enrolling, filtering, time limits with an admin's approval, pause, bedtime and revoking a device.
 
 Every project must keep at least 80% line coverage from its unit tests. In CI the Rust gate applies to each crate separately, and generated UniFFI bindings are left out of the Android and Apple numbers. GitHub Actions run all of these, Playwright on both SQLite and PostgreSQL, the gateway's tunnel test and add-on builds on Linux (x64 and arm64), macOS and Windows, the router-mode test in network namespaces, the desktop UI tests, Tauri installers for Windows (x64 and arm64) and Linux, the Android APK and the unsigned macOS/iOS apps.
 
@@ -93,7 +93,7 @@ Gateway layout (`core/temperance-gateway`): `wg.rs` runs WireGuard peers, `gatew
 
 ## Next milestones
 
-1. Push/e-mail delivery of parent notifications.
+1. Push/e-mail delivery of admin notifications.
 2. IPv6 internet forwarding and operational metrics.
 3. Physical-device acceptance testing and signed store releases.
 

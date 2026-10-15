@@ -127,14 +127,14 @@ function Choose({ childAllowed, run }: { childAllowed: boolean; run: Run }) {
     return <ParentPair run={run} back={() => setMode(undefined)} />;
   return (
     <section>
-      <h1>Is this your child&apos;s computer, or are you a parent?</h1>
+      <h1>Is this a client&apos;s computer, or are you an admin?</h1>
       <div className="choices">
         <button className="choice" onClick={() => setMode("child")}>
-          <strong>This is my child&apos;s computer</strong>
+          <strong>This is a client&apos;s computer</strong>
           <span>Installs your family&apos;s VPN so the rules apply here.</span>
         </button>
         <button className="choice" onClick={() => setMode("parent")}>
-          <strong>I&apos;m a parent</strong>
+          <strong>I&apos;m an admin</strong>
           <span>Opens the family dashboard from anywhere. No VPN.</span>
         </button>
       </div>
@@ -239,7 +239,7 @@ function ChildSetup({ run, back }: { run: Run; back: () => void }) {
       <h1>Sign in this computer</h1>
       <p>
         On the family dashboard at home, open Devices and copy the setup code
-        for a child&apos;s device. Then use the username and password a parent
+        for a client&apos;s device. Then use the username and password an admin
         created on the overview.
       </p>
       <form
@@ -272,7 +272,7 @@ function ChildSetup({ run, back }: { run: Run; back: () => void }) {
         <button type="submit">Sign in</button>
       </form>
       <button className="link" onClick={back}>
-        I&apos;m a parent instead
+        I&apos;m an admin instead
       </button>
     </section>
   );
@@ -284,8 +284,8 @@ function ParentPair({ run, back }: { run: Run; back?: () => void }) {
       <h1>Open the family dashboard from anywhere</h1>
       <p>
         At home, open the dashboard&apos;s{" "}
-        <strong>Devices → Parent devices</strong>, choose{" "}
-        <strong>Pair a parent device</strong>, then{" "}
+        <strong>Devices → Admin devices</strong>, choose{" "}
+        <strong>Pair an admin device</strong>, then{" "}
         <strong>Copy pairing link</strong>.
       </p>
       <form
@@ -311,11 +311,11 @@ function ParentPair({ run, back }: { run: Run; back?: () => void }) {
       </form>
       {back ? (
         <button className="link" onClick={back}>
-          This is my child&apos;s computer instead
+          This is a client&apos;s computer instead
         </button>
       ) : (
         <p className="meta">
-          A child&apos;s computer running Linux or macOS is protected through
+          A client&apos;s computer running Linux or macOS is protected through
           your home network instead; see the dashboard&apos;s Devices page.
         </p>
       )}

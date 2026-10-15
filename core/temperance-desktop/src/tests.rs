@@ -836,7 +836,7 @@ fn a_parent_pastes_the_link_and_the_dashboard_opens_in_its_own_window() {
     app.act(enroll(HOME));
     assert_eq!(
         app.status,
-        "This computer is paired as a parent's. Unpair it first."
+        "This computer is paired as an admin device. Unpair it first."
     );
 
     // Opening again reuses the running session.
@@ -882,7 +882,7 @@ fn a_child_computer_cannot_pair_and_a_damaged_pairing_can_be_forgotten() {
     child.act(pair(&pairing_link(), "PC"));
     assert_eq!(
         child.status,
-        "This computer is enrolled as a child's device."
+        "This computer is enrolled as a client's device."
     );
     assert!(fakes.paired.lock().unwrap().is_empty());
 }

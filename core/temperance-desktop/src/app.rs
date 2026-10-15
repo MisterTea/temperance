@@ -137,7 +137,7 @@ pub struct Child {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "screen", rename_all = "snake_case")]
 pub enum Screen {
-    /// First run: a child's computer (where the VPN is supported) or a parent's.
+    /// First run: a client's computer (where the VPN is supported) or an admin's.
     Choose {
         child_allowed: bool,
     },
@@ -234,10 +234,10 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         })
     }
 
-    /// Pairs this computer as a parent's, using the link under Devices → Parent devices.
+    /// Pairs this computer as an admin's, using the link under Devices → Admin devices.
     pub fn pair_parent(&mut self, link: &str, name: &str) -> Result<(), String> {
         if self.identity.as_ref().is_some_and(|i| i.state.is_some()) {
-            return Err("This computer is enrolled as a child's device.".into());
+            return Err("This computer is enrolled as a client's device.".into());
         }
         let link = link.trim();
         core::remote::parse_pairing_link(link.into()).map_err(|e| e.to_string())?;
@@ -390,7 +390,7 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             return Err("Already enrolled".into());
         }
         if self.parent.is_some() {
-            return Err("This computer is paired as a parent's. Unpair it first.".into());
+            return Err("This computer is paired as an admin device. Unpair it first.".into());
         }
         let service = core::validate_service(service.into()).map_err(|e| e.to_string())?;
         let keys = core::generate_keypair();

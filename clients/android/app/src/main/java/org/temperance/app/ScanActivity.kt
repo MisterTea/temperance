@@ -28,7 +28,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
 
-/** Scans a dashboard QR code (pairing, or a child's device setup) with CameraX and ML Kit, and returns the link. */
+/** Scans a dashboard QR code (pairing, or a client's device setup) with CameraX and ML Kit, and returns the link. */
 class ScanActivity : Activity(), LifecycleOwner {
     private val registry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = registry

@@ -116,7 +116,7 @@ open class TemperanceApp : Application() {
     protected open fun createVault() = Vault(this)
     protected open fun createParentVault() = Sealed(this, "parent_vault")
 
-    /** A parent's phone: the pairing (its key and the gateway's pinned key) and the running session. */
+    /** An admin's phone: the pairing (its key and the gateway's pinned key) and the running session. */
     lateinit var parentVault: Sealed
     /** Replaced by tests: both dial the home gateway. */
     var pairing: (String, String) -> String = { link, name -> pairParent(link, name) }

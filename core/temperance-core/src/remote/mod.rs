@@ -1,7 +1,7 @@
-//! Parent mode: the app reaches the home gateway with QUIC on the gateway's
+//! Admin devices: the app reaches the home gateway with QUIC on the gateway's
 //! WireGuard port. Both sides pin each other's keys at pairing, so there is no
 //! certificate authority and nothing for the household to set up beyond the
-//! port forward children's devices already need.
+//! port forward client devices already need. The protocol name stays `parent`.
 use std::io;
 use std::time::Duration;
 
@@ -21,8 +21,8 @@ pub use device::{home_send, HttpResponse};
 pub const PAIR_ALPN: &[u8] = b"temperance-pair/1";
 /// A paired phone's requests to the dashboard.
 pub const PARENT_ALPN: &[u8] = b"temperance-parent/1";
-/// A child's device: sign-in, enrollment and `/v1/device/…` only, with its
-/// device token. Any client key is accepted.
+/// A client's device: sign-in, enrollment and `/v1/device/…` only, with its
+/// device token. Any device key is accepted.
 pub const DEVICE_ALPN: &[u8] = b"temperance-device/1";
 /// Both sides ignore the name and check pinned keys instead.
 pub const SERVER_NAME: &str = "temperance";
@@ -45,7 +45,7 @@ pub fn is_quic(datagram: &[u8]) -> bool {
     datagram.first().is_some_and(|b| b & 0x40 != 0)
 }
 
-/// What the dashboard's "Pair a parent device" QR code carries.
+/// What the dashboard's "Pair an admin device" QR code carries.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct PairingLink {
     pub v: u32,
@@ -68,7 +68,7 @@ fn invalid(message: impl Into<String>) -> CoreError {
 pub fn parse_pairing_link(link: String) -> Result<PairingLink, CoreError> {
     let bad = || {
         invalid(
-            "This is not a Temperance pairing code. Scan the code under Devices → Parent devices.",
+            "This is not a Temperance pairing code. Scan the code under Devices → Admin devices.",
         )
     };
     let encoded = link.trim().strip_prefix(LINK_PREFIX).ok_or_else(bad)?;

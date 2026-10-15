@@ -86,7 +86,7 @@ fn call(request: core::HttpRequest) -> (u16, String) {
     (reply.status, reply.body)
 }
 
-/// The dashboard's setup code for a child's device, once the gateway has reported its key.
+/// The dashboard's setup code for a client's device, once the gateway has reported its key.
 fn home() -> &'static str {
     static HOME: OnceLock<String> = OnceLock::new();
     HOME.get_or_init(|| {

@@ -38,7 +38,7 @@ struct ContentView: View {
     private var signIn: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Sign in this \(deviceNoun)").font(.title2).bold()
-            Text("On the family dashboard at home, a parent opens Devices and shows the setup code. Then use the username and password a parent made for you. Your password isn't saved on this \(deviceNoun).")
+            Text("On the family dashboard at home, an admin opens Devices and shows the setup code. Then use the username and password an admin made for this client. Your password isn't saved on this \(deviceNoun).")
             #if os(iOS)
             if DataScannerViewController.isSupported {
                 Button { scanning = true } label: {
@@ -56,7 +56,7 @@ struct ContentView: View {
                 Text("Sign in").frame(maxWidth: .infinity)
             }.buttonStyle(.borderedProminent).controlSize(.large)
             if client.busy { ProgressView().frame(maxWidth: .infinity) }
-            if let back { Button("I'm a parent instead", action: back) }
+            if let back { Button("I'm an admin instead", action: back) }
         }
     }
 
@@ -107,7 +107,7 @@ struct ContentView: View {
                 }
             }
             if client.canAskPermissions {
-                Button("Allow alerts and parent location requests") { client.allowAlerts() }
+                Button("Allow alerts and location requests") { client.allowAlerts() }
             }
             #if os(macOS)
             Button("Check for new rules") { Task { await client.refresh() } }

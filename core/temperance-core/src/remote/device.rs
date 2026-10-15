@@ -1,4 +1,4 @@
-//! A child's device talking to its home. While the device's WireGuard tunnel
+//! A client's device talking to its home. While the device's WireGuard tunnel
 //! is up, requests go to the gateway inside it as plain HTTP: the tunnel
 //! already encrypts and authenticates them, and the gateway admits them even
 //! while the device is paused. Otherwise (setting up, or with the VPN off) they

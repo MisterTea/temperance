@@ -29,7 +29,7 @@
     "targets": ["nsis", "deb", "appimage"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico", "icons/icon.png"],
     "shortDescription": "Temperance family controls",
-    "longDescription": "Windows: protect a child's computer with your family's VPN, or open the family dashboard as a parent. Linux: open the family dashboard as a parent.",
+    "longDescription": "Windows: protect a client's computer with your family's VPN, or open the family dashboard as an admin. Linux: open the family dashboard as an admin.",
     "category": "Utility",
     "linux": {
       "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"] }

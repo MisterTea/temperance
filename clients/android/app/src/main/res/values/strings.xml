@@ -2,7 +2,7 @@
     <string name="app_name">Temperance</string>
 
     <string name="setup_title">Connect this device</string>
-    <string name="setup_intro">On the family dashboard at home, a parent opens Devices and shows the setup code. Scan it, then sign in with the username and password for your client. Your rules and time budget come with that sign-in. Your password is not saved on this device.</string>
+    <string name="setup_intro">On the family dashboard at home, an admin opens Devices and shows the setup code. Scan it, then sign in with the client\'s username and password. Your rules and time budget come with that sign-in. Your password is not saved on this device.</string>
     <string name="scan_setup">Scan the setup code</string>
     <string name="server_label">Setup code</string>
     <string name="server_hint">temperance://home#…</string>
@@ -19,7 +19,7 @@
     <string name="wifi_sign_in">Sign in to Wi-Fi</string>
     <string name="ask_time">Ask for more time</string>
     <string name="recent_alerts">Recent alerts</string>
-    <string name="always_on_note">Parents: so the VPN can\'t be switched off, open the menu, choose Always-on VPN settings, and turn on Always-on VPN and Block connections without VPN.</string>
+    <string name="always_on_note">Admins: so the VPN can\'t be switched off, open the menu, choose Always-on VPN settings, and turn on Always-on VPN and Block connections without VPN.</string>
 
     <string name="menu_refresh">Refresh</string>
     <string name="menu_vpn_settings">Always-on VPN settings</string>
@@ -41,14 +41,14 @@
     <string name="about_text">Temperance %1$s\nCore %2$s\nHome %3$s</string>
 
     <string name="choose_title">Welcome to Temperance</string>
-    <string name="choose_intro">Is this your child\'s device, or are you a parent? A child\'s device installs the family VPN. A parent\'s phone opens the family dashboard from anywhere, with no VPN.</string>
-    <string name="choose_child">This is my child\'s device</string>
-    <string name="choose_parent">I\'m a parent</string>
-    <string name="parent_instead">I\'m a parent instead</string>
-    <string name="child_instead">This is a child\'s device instead</string>
+    <string name="choose_intro">Is this a client\'s device, or are you an admin? A client\'s device installs the family VPN. An admin\'s phone opens the family dashboard from anywhere, with no VPN.</string>
+    <string name="choose_child">This is a client\'s device</string>
+    <string name="choose_parent">I\'m an admin</string>
+    <string name="parent_instead">I\'m an admin instead</string>
+    <string name="child_instead">This is a client\'s device instead</string>
 
     <string name="pair_title">Pair this phone</string>
-    <string name="pair_intro">On the family dashboard at home, open Devices → Parent devices and tap Pair a parent device. Then scan the code, or paste the link.</string>
+    <string name="pair_intro">On the family dashboard at home, open Devices → Admin devices and tap Pair an admin device. Then scan the code, or paste the link.</string>
     <string name="scan">Scan the QR code</string>
     <string name="link_label">Pairing link</string>
     <string name="link_hint">temperance://pair#…</string>
@@ -57,10 +57,10 @@
     <string name="pairing">Pairing…</string>
     <string name="camera_needed">Temperance needs the camera to scan the code. You can paste the link instead.</string>
     <string name="scan_hint">Point the camera at the code on the dashboard</string>
-    <string name="scan_wrong_child">This code sets up a child\'s device. To pair a parent\'s phone, scan the code under Devices → Parent devices.</string>
-    <string name="scan_wrong_parent">This code pairs a parent\'s phone. To set up a child\'s device, scan the code under Devices.</string>
-    <string name="scan_wrong_pair">This is not a Temperance pairing code. Scan the code under Devices → Parent devices.</string>
-    <string name="scan_wrong_setup">This isn\'t a device setup code. Scan the code under Devices → Set up a child\'s device.</string>
+    <string name="scan_wrong_child">This code sets up a client\'s device. To pair an admin\'s phone, scan the code under Devices → Admin devices.</string>
+    <string name="scan_wrong_parent">This code pairs an admin\'s phone. To set up a client\'s device, scan the code under Devices.</string>
+    <string name="scan_wrong_pair">This is not a Temperance pairing code. Scan the code under Devices → Admin devices.</string>
+    <string name="scan_wrong_setup">This isn\'t a device setup code. Scan the code under Devices → Set up a client\'s device.</string>
     <string name="menu_reload">Reload</string>
     <string name="menu_unpair">Unpair this phone</string>
     <string name="unpair_confirm">This phone will stop opening the family dashboard. To use it again, pair it from the dashboard at home.</string>

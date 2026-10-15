@@ -122,7 +122,7 @@ function HomeSetup({ network, ip }: { network: HomeNetwork; ip: string }) {
 }
 const INTROS: Record<string, string> = {
   overview: "Make room for the things that matter.",
-  devices: "Phones, tablets, TVs, consoles and parent phones.",
+  devices: "Phones, tablets, TVs, consoles and admin phones.",
   usage: "How much time each person spent online, and on what.",
   history: "Sites your family’s devices looked up, and why.",
   requests: "Answer requests for more time and hand out rewards.",
@@ -290,7 +290,7 @@ function DeviceSetup({
   }, [link]);
   return (
     <section>
-      <h2>Set up a child&apos;s device</h2>
+      <h2>Set up a client&apos;s device</h2>
       <p>
         Devices find home through the family VPN&apos;s UDP port, so they need
         no web address. This code says where home is; the device still signs in
@@ -307,7 +307,7 @@ function DeviceSetup({
           {qr ? (
             <img
               src={qr}
-              alt="QR code to set up a child's device"
+              alt="QR code to set up a client's device"
               width={240}
               height={240}
             />
@@ -316,11 +316,11 @@ function DeviceSetup({
             <ol>
               <li>Install Temperance on the phone, tablet or computer.</li>
               <li>
-                Choose the child&apos;s device option, then scan this code. On a
+                Choose the client&apos;s device option, then scan this code. On a
                 computer, paste the setup code instead.
               </li>
               <li>
-                Sign in with the child&apos;s client username and password.
+                Sign in with the client&apos;s username and password.
               </li>
             </ol>
             <p className="actions">
@@ -501,9 +501,9 @@ function ParentPhones({
     });
   return (
     <section>
-      <h2>Parent devices</h2>
+      <h2>Admin devices</h2>
       <p>
-        Pair a parent&apos;s phone or computer once, and the Temperance app
+        Pair an admin&apos;s phone or computer once, and the Temperance app
         opens this dashboard from anywhere: at work, on mobile data, on someone
         else&apos;s Wi-Fi. It travels through the same UDP port as the family
         VPN, so there is nothing else to forward and no VPN to turn on.
@@ -511,24 +511,24 @@ function ParentPhones({
       {!access.available ? (
         <p className="notice" role="status">
           {state.gateway_seen
-            ? "Set TEMPERANCE_VPN_ENDPOINT so parent devices know where to find home, then pair."
-            : "Parent devices connect through the home gateway, which hasn’t checked in yet."}
+            ? "Set TEMPERANCE_VPN_ENDPOINT so admin devices know where to find home, then pair."
+            : "Admin devices connect through the home gateway, which hasn’t checked in yet."}
         </p>
       ) : pairing && left > 0 ? (
         <div className="pairing" aria-label="Pairing code">
           <img
             src={pairing.qr}
-            alt="QR code to pair a parent device"
+            alt="QR code to pair an admin device"
             width={240}
             height={240}
           />
           <div>
             <ol>
               <li>
-                Install Temperance on the parent&apos;s phone or computer.
+                Install Temperance on the admin&apos;s phone or computer.
               </li>
               <li>
-                Choose <strong>I&apos;m a parent</strong>, then scan this code.
+                Choose <strong>I&apos;m an admin</strong>, then scan this code.
                 On a computer, paste the link instead.
               </li>
             </ol>
@@ -563,7 +563,7 @@ function ParentPhones({
       ) : (
         <p className="actions">
           <button className="primary" onClick={start}>
-            {pairing ? "Code expired, make a new one" : "Pair a parent device"}
+            {pairing ? "Code expired, make a new one" : "Pair an admin device"}
           </button>
         </p>
       )}
@@ -918,7 +918,7 @@ export function Dashboard() {
         <header>
           <div className="eyebrow">
             {viewer?.role === "parent"
-              ? `PARENT · ${(
+              ? `ADMIN · ${(
                   state.parents.find((p) => p.id === viewer.id)?.name ??
                   viewer.name
                 ).toUpperCase()}`

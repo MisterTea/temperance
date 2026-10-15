@@ -77,7 +77,7 @@ class MainActivity : Activity() {
     var dialog: AlertDialog? = null
         private set
 
-    /** A parent's phone never asks for the VPN; an enrolled child device never leaves child mode. */
+    /** An admin's phone never asks for the VPN; an enrolled client device never leaves client mode. */
     private fun parentMode() = !app.enrolled && (app.paired || app.mode == "parent")
 
     private fun current() = when {

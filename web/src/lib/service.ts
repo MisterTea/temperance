@@ -183,7 +183,7 @@ function base64url(text: string) {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 }
-/** Where a child's device finds home (shown as a QR code). It is not a secret:
+/** Where a client's device finds home (shown as a QR code). It is not a secret:
  * the device still signs in with its client user's password. */
 function deviceSetupLink(state: State) {
   const endpoint = remoteEndpoint(state);
@@ -197,16 +197,16 @@ function deviceSetupLink(state: State) {
   };
   return "temperance://home#" + base64url(JSON.stringify(payload));
 }
-/** A one-use link (shown as a QR code) that pairs a parent's phone for ten minutes. */
+/** A one-use link (shown as a QR code) that pairs an admin's phone for ten minutes. */
 export async function issueParentCode(state: State) {
   const endpoint = remoteEndpoint(state);
   if (!state.remote_pin)
     throw new Error(
-      "Parent devices connect through the home gateway, which hasn’t checked in yet",
+      "Admin devices connect through the home gateway, which hasn’t checked in yet",
     );
   if (!endpoint)
     throw new Error(
-      "Set TEMPERANCE_VPN_ENDPOINT so parent devices know where to find home",
+      "Set TEMPERANCE_VPN_ENDPOINT so admin devices know where to find home",
     );
   const code = randomToken();
   (state.parent_codes ??= []).push({
@@ -266,7 +266,7 @@ export function activeParent(state: State, id: string) {
 }
 export function revokeParent(state: State, id: string) {
   const parent = activeParent(state, id);
-  if (!parent) throw new Error("That parent device is not paired");
+  if (!parent) throw new Error("That admin device is not paired");
   parent.revoked = true;
   changed(
     state,
@@ -277,7 +277,7 @@ export function revokeParent(state: State, id: string) {
 }
 export function renameParent(state: State, id: string, name: string) {
   const parent = (state.parents ?? []).find((p) => p.id === id && !p.revoked);
-  if (!parent) throw new Error("That parent device is not paired");
+  if (!parent) throw new Error("That admin device is not paired");
   parent.name = name;
   changed(state, "account", `${parent.name} renamed`);
   return snapshot(state);
@@ -433,11 +433,11 @@ export function saveDevice(state: State, input: unknown) {
   if (device.admin) {
     if (data.profile_id !== 0)
       throw new Error(
-        "An admin device stays an admin. Remove it and enroll it again to follow a child.",
+        "An admin device stays an admin. Remove it and enroll it again to follow a client.",
       );
   } else if (data.profile_id === 0) {
     throw new Error(
-      "A child's device stays with that child. Remove it and enroll it again to make it an admin device.",
+      "A client's device stays with that client. Remove it and enroll it again to make it an admin device.",
     );
   } else {
     profile(state, data.profile_id);

@@ -609,7 +609,7 @@ describe("devices", () => {
     const view = within(screen.getByLabelText("Device setup code"));
     expect(
       await view.findByRole("img", {
-        name: "QR code to set up a child's device",
+        name: "QR code to set up a client's device",
       }),
     ).toBeTruthy();
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -641,7 +641,7 @@ describe("devices", () => {
     await tab(user, "Devices");
     const view = within(screen.getByLabelText("Device setup code"));
     await view.findByRole("img", {
-      name: "QR code to set up a child's device",
+      name: "QR code to set up a client's device",
     });
     Object.defineProperty(window, "isSecureContext", {
       value: false,
@@ -766,7 +766,7 @@ describe("devices", () => {
     const user = await openDashboard();
     await tab(user, "Devices");
     const parent = screen
-      .getByRole("heading", { name: "Parent devices" })
+      .getByRole("heading", { name: "Admin devices" })
       .closest("section")!;
     expect(within(parent).getByText("Alex phone")).toBeTruthy();
     const name = screen.getByRole("textbox", { name: "Alex phone name" });
@@ -1349,11 +1349,11 @@ describe("settings", () => {
     await tab(user, "Devices");
     const view = within(
       screen
-        .getByRole("heading", { name: "Parent devices" })
+        .getByRole("heading", { name: "Admin devices" })
         .closest("section")!,
     );
     await user.click(
-      view.getByRole("button", { name: "Pair a parent device" }),
+      view.getByRole("button", { name: "Pair an admin device" }),
     );
     const qr = await view.findByRole("img", { name: /QR code/ });
     expect(qr.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
@@ -1431,12 +1431,12 @@ describe("settings", () => {
       },
     );
     const user = await openDashboard();
-    await screen.findByText("PARENT · ROBIN'S PIXEL");
+    await screen.findByText("ADMIN · ROBIN'S PIXEL");
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
     await tab(user, "Devices");
     const view = within(
       screen
-        .getByRole("heading", { name: "Parent devices" })
+        .getByRole("heading", { name: "Admin devices" })
         .closest("section")!,
     );
     expect(view.getByText("This phone")).toBeTruthy();

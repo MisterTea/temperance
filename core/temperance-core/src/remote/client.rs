@@ -229,7 +229,7 @@ fn is_unpaired(error: &quinn::ConnectionError) -> bool {
 }
 
 fn unpaired() -> String {
-    "This device was removed from the family's parent devices. Pair it again from the dashboard."
+    "This device was removed from the family's admin devices. Pair it again from the dashboard."
         .into()
 }
 
