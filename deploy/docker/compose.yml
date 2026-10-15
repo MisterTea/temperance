@@ -4,11 +4,12 @@
 name: temperance
 services:
   temperance:
-    image: ${TEMPERANCE_IMAGE:-ghcr.io/mistertea/temperance:latest}
+    image: ${TEMPERANCE_IMAGE:-mistertea/temperance:latest}
     restart: unless-stopped
     env_file: .env
     labels:
       com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.scope: temperance
     environment:
       TEMPERANCE_DATA_DIR: /data
       TEMPERANCE_GATEWAY_LISTEN: 0.0.0.0:51820
@@ -23,7 +24,7 @@ services:
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     healthcheck:
-      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/readiness', {headers:{Authorization:'Bearer '+(process.env.TEMPERANCE_ADMIN_PASSWORD||process.env.TEMPERANCE_ADMIN_TOKEN)}}).then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 30s
       start_period: 20s
 
@@ -49,8 +50,8 @@ services:
     depends_on: [temperance]
 
   # COMPOSE_PROFILES=updater: Watchtower pulls a new Temperance image and recreates the
-  # container when the dashboard asks (TEMPERANCE_UPDATER_TOKEN must be set), and also
-  # nightly when TEMPERANCE_AUTO_UPDATE=true. It needs the Docker socket, so it is a
+  # container when the dashboard asks (TEMPERANCE_UPDATER_TOKEN must be set).
+  # It needs the Docker socket, so it is a
   # separate container; Temperance itself never gets it. Its API is not published.
   updater:
     image: nickfedor/watchtower:latest
@@ -59,10 +60,12 @@ services:
     volumes: [/var/run/docker.sock:/var/run/docker.sock]
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_SCOPE: temperance
       WATCHTOWER_CLEANUP: "true"
       WATCHTOWER_HTTP_API_ENDPOINTS: update
       WATCHTOWER_HTTP_API_TOKEN: ${TEMPERANCE_UPDATER_TOKEN:-}
-      WATCHTOWER_HTTP_API_PERIODIC_POLLS: ${TEMPERANCE_AUTO_UPDATE:-false}
+      # Updates must go through Temperance's pre-update encrypted recovery snapshot.
+      WATCHTOWER_HTTP_API_PERIODIC_POLLS: "false"
       WATCHTOWER_SCHEDULE: ${TEMPERANCE_AUTO_UPDATE_SCHEDULE:-0 0 3 * * *}
       TZ: ${TEMPERANCE_TIMEZONE:-UTC}
     security_opt: [no-new-privileges:true]

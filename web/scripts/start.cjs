@@ -4,6 +4,8 @@ const { spawn } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const standalone = path.join(root, '.next/standalone');
 fs.cpSync(path.join(root, '.next/static'), path.join(standalone, '.next/static'), { recursive: true });
+fs.mkdirSync(path.join(standalone, 'scripts'), { recursive: true });
+fs.copyFileSync(path.join(root, 'scripts/recovery.cjs'), path.join(standalone, 'scripts/recovery.cjs'));
 if (fs.existsSync(path.join(root, 'public'))) fs.cpSync(path.join(root, 'public'), path.join(standalone, 'public'), { recursive: true });
 const env = { ...process.env };
 // Local builds may use a private .env.local; deploy platforms supply real secrets.

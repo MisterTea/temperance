@@ -325,6 +325,7 @@ function ParentPair({ run, back }: { run: Run; back?: () => void }) {
 
 function ChildStatus({ child, run }: { child: Child; run: Run }) {
   const [asking, setAsking] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
   const [message, setMessage] = useState("");
   // A sent request closes the form; the next one starts from the button again.
   useEffect(() => {
@@ -333,8 +334,16 @@ function ChildStatus({ child, run }: { child: Child; run: Run }) {
   return (
     <>
       <section className={child.connected ? "" : "warning"}>
-        <h1>{child.headline}</h1>
-        <p>{child.detail}</p>
+        <h1>
+          {child.emergency_disabled && !child.connected
+            ? "VPN turned off by an admin"
+            : child.headline}
+        </h1>
+        <p>
+          {child.emergency_disabled && !child.connected
+            ? "Protection is off until you turn the VPN back on."
+            : child.detail}
+        </p>
         {child.remaining ? <p className="big">{child.remaining}</p> : null}
         {child.next_change ? <p className="meta">{child.next_change}</p> : null}
         {child.connected ? null : (
@@ -344,6 +353,44 @@ function ChildStatus({ child, run }: { child: Child; run: Run }) {
               Start protection
             </button>
           </>
+        )}
+      </section>
+      <section aria-label="Emergency VPN access">
+        <h2>Server unavailable?</h2>
+        <p>
+          An admin can enter the household admin password to turn off this
+          device&apos;s VPN, even when the server is offline. Filtering and time
+          limits stop while the VPN is off.
+        </p>
+        {!unlocking ? (
+          <button className="secondary" onClick={() => setUnlocking(true)}>
+            Admin emergency unlock
+          </button>
+        ) : (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = event.currentTarget;
+              const password = String(
+                new FormData(form).get("emergency_password") || "",
+              );
+              form.reset();
+              run({ action: "emergency_unlock", password });
+            }}
+          >
+            <PasswordField
+              label="Household admin password"
+              name="emergency_password"
+            />
+            <button type="submit">Turn off VPN</button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setUnlocking(false)}
+            >
+              Cancel
+            </button>
+          </form>
         )}
       </section>
       {child.health.length ? (

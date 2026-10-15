@@ -1,0 +1,171 @@
+name: Signed candidate apps
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Intended release version (vX.Y.Z or vX.Y.Z-beta.N)
+        required: true
+        type: string
+      source_ref:
+        description: Commit or branch to build and qualify before tagging
+        required: true
+        default: main
+        type: string
+      build_number:
+        description: Monotonically increasing store build number (greater than 7)
+        required: true
+        type: string
+permissions:
+  contents: read
+env:
+  CANDIDATE_TAG: ${{ inputs.tag }}
+  TEMPERANCE_BUILD_NUMBER: ${{ inputs.build_number }}
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    environment: beta-signing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node scripts/candidate-version.mjs >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android, i686-linux-android
+      - run: cargo install cargo-ndk --locked
+      - run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+      - name: Build with release key (never debug fallback)
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          TEMPERANCE_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          TEMPERANCE_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TEMPERANCE_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -eu
+          umask 077
+          export TEMPERANCE_ANDROID_KEYSTORE="$RUNNER_TEMP/temperance-release.jks"
+          trap 'rm -f "$TEMPERANCE_ANDROID_KEYSTORE"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$TEMPERANCE_ANDROID_KEYSTORE"
+          clients/android/gradlew -p clients/android testDebugUnitTest assembleRelease bundleRelease
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          [ -n "$signer" ] || { echo "Android apksigner missing" >&2; exit 1; }
+          "$signer" verify --verbose --print-certs clients/android/app/build/outputs/apk/release/app-release.apk
+          jarsigner -verify clients/android/app/build/outputs/bundle/release/app-release.aab
+      - name: Candidate checksums and source manifest
+        run: |
+          sha256sum clients/android/app/build/outputs/apk/release/*.apk clients/android/app/build/outputs/bundle/release/*.aab > android-SHA256SUMS
+          node scripts/candidate-manifest.mjs android clients/android/app/build/outputs/apk/release/*.apk clients/android/app/build/outputs/bundle/release/*.aab
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-android-${{ inputs.tag }}
+          path: |
+            clients/android/app/build/outputs/apk/release/*.apk
+            clients/android/app/build/outputs/bundle/release/*.aab
+            android-SHA256SUMS
+            android-candidate.json
+          retention-days: 30
+  apple:
+    runs-on: macos-latest
+    environment: beta-signing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node scripts/candidate-version.mjs >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
+      - run: brew install xcodegen
+      - run: clients/apple/bootstrap.sh
+      - name: Archive, export and notarize (no store upload)
+        env:
+          APPLE_CERTIFICATES_BASE64: ${{ secrets.APPLE_CERTIFICATES_BASE64 }}
+          APPLE_CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: bash scripts/signed-apple.sh
+      - run: node scripts/candidate-manifest.mjs apple build/Temperance-macOS.zip build/signed-ios/*.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-apple-${{ inputs.tag }}
+          path: |
+            build/signed-ios/*.ipa
+            build/Temperance-macOS.zip
+            build/apple-SHA256SUMS
+            apple-candidate.json
+          retention-days: 30
+  windows:
+    runs-on: windows-latest
+    environment: beta-signing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - shell: bash
+        run: node scripts/candidate-version.mjs >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - working-directory: clients/desktop
+        run: npm ci
+      - name: Build and verify Authenticode
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!$env:WINDOWS_CERTIFICATE_BASE64 -or !$env:WINDOWS_TIMESTAMP_URL) { throw 'Windows certificate and timestamp service are required' }
+          $pfx = Join-Path $env:RUNNER_TEMP 'temperance.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = $null
+          try {
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            $config = @{version=$env:TEMPERANCE_VERSION; bundle=@{windows=@{certificateThumbprint=$cert.Thumbprint; digestAlgorithm='sha256'; timestampUrl=$env:WINDOWS_TIMESTAMP_URL; tsp=$true}}} | ConvertTo-Json -Depth 5 -Compress
+            Push-Location core/temperance-desktop
+            try {
+              & ../../clients/desktop/node_modules/.bin/tauri build --target x86_64-pc-windows-msvc --bundles nsis --config $config
+              if ($LASTEXITCODE -ne 0) { throw 'Tauri build failed' }
+            } finally { Pop-Location }
+            $files = Get-ChildItem core/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            if (!$files) { throw 'No installer produced' }
+            foreach ($file in $files) {
+              if ((Get-AuthenticodeSignature $file.FullName).Status -ne 'Valid') { throw "Invalid signature: $($file.Name)" }
+            }
+            $files | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-File windows-SHA256SUMS
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+            if ($cert) { Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue }
+          }
+      - name: Candidate source manifest
+        shell: bash
+        run: node scripts/candidate-manifest.mjs windows core/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-windows-${{ inputs.tag }}
+          path: |
+            core/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            windows-SHA256SUMS
+            windows-candidate.json
+          retention-days: 30

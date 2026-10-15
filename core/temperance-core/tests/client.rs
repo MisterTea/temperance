@@ -162,6 +162,8 @@ fn enrollment_flow_builds_requests_and_stores_identity() {
     assert!(identity_from_json("{".into()).is_err());
     // A device set up with a web address before 0.5.4 keeps its keys but must be set up again.
     let old = identity_to_json(Identity {
+        emergency_disabled: false,
+        unlock_retry_at: 0,
         service: "https://family.example".into(),
         ..identity.clone()
     });

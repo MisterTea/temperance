@@ -83,7 +83,7 @@ class MainActivity : Activity() {
     private fun current() = when {
         !app.enrolled && app.mode == null -> Screen.CHOOSE
         !app.enrolled -> Screen.SETUP
-        !app.vpnPermission() -> Screen.VPN
+        !app.vpnPermission() && !app.emergencyDisabled -> Screen.VPN
         else -> Screen.STATUS
     }
 
@@ -91,7 +91,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         vpnDenied = savedInstanceState?.getBoolean("vpnDenied") ?: false
         show()
-        if (app.enrolled && app.vpnPermission()) startVpn()
+        if (app.enrolled && app.vpnPermission() && !app.emergencyDisabled) startVpn()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -168,7 +168,7 @@ class MainActivity : Activity() {
 
     private fun onVpnAllowed() {
         vpnDenied = false
-        startVpn()
+        if (app.emergencyDisabled) run { app.resumeProtection(); startVpn() } else startVpn()
         show()
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             val prefs = getSharedPreferences("ui", Context.MODE_PRIVATE)
@@ -182,6 +182,11 @@ class MainActivity : Activity() {
     private fun startVpn() { startForegroundService(Intent(this, SessionService::class.java)) }
 
     private fun bindStatus() {
+        findViewById<Button>(R.id.emergency_vpn_settings).setOnClickListener { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) }
+        findViewById<Button>(R.id.emergency_unlock).setOnClickListener { emergencyUnlockDialog() }
+        findViewById<Button>(R.id.resume_vpn).setOnClickListener {
+            if (!app.vpnPermission()) requestVpn() else run { app.resumeProtection(); startVpn() }
+        }
         findViewById<Button>(R.id.ask_time).setOnClickListener { askForTime() }
         findViewById<Button>(R.id.wifi_sign_in).setOnClickListener { openWifi() }
     }
@@ -208,7 +213,13 @@ class MainActivity : Activity() {
         findViewById<TextView>(R.id.remaining).text = StatusText.remaining(child)
         findViewById<TextView>(R.id.next_change).apply { text = child.nextChange; visibility = if (child.nextChange.isNullOrBlank()) View.GONE else View.VISIBLE }
         val vpn = findViewById<TextView>(R.id.vpn_state)
-        vpn.text = StatusText.vpn(app.connected, app.vpnPermission())
+        vpn.text = if (app.emergencyDisabled) "VPN turned off by an admin. Protection is off until you turn the VPN back on." else StatusText.vpn(app.connected, app.vpnPermission())
+        findViewById<Button>(R.id.emergency_unlock).isEnabled = !busy
+        findViewById<Button>(R.id.resume_vpn).isEnabled = !busy
+        for (id in listOf(R.id.resume_vpn, R.id.emergency_vpn_settings, R.id.emergency_android_note)) {
+            findViewById<View>(id).visibility = if (app.emergencyDisabled) View.VISIBLE else View.GONE
+        }
+        findViewById<View>(R.id.always_on_note).visibility = if (app.emergencyDisabled) View.GONE else View.VISIBLE
         vpn.compoundDrawableTintList = ColorStateList.valueOf(getColor(if (app.connected) R.color.brand else R.color.error))
         val issues = app.health
         val health = findViewById<TextView>(R.id.health)
@@ -267,6 +278,25 @@ class MainActivity : Activity() {
             else -> return super.onOptionsItemSelected(item)
         }
         return true
+    }
+
+    private fun emergencyUnlockDialog() {
+        val input = EditText(this).apply {
+            id = android.R.id.edit
+            hint = "Household admin password"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+        }
+        dialog = AlertDialog.Builder(this)
+            .setTitle("Admin emergency unlock")
+            .setMessage("Works even when the server is offline. Filtering and time limits stop until you turn the VPN back on. Android's Block connections without VPN setting must also be turned off by an admin if enabled.")
+            .setView(input)
+            .setNegativeButton(android.R.string.cancel) { _, _ -> input.text.clear() }
+            .setPositiveButton("Turn off VPN") { _, _ ->
+                val password = input.text.toString()
+                input.text.clear()
+                run { app.emergencyDisable(password) }
+            }.create().also { it.setOnDismissListener { input.text.clear() }; it.show() }
     }
 
     private fun openWifi() { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }

@@ -35,6 +35,9 @@ mv "$cache/node-$node_version-linux-$arch/LICENSE" "$root/node/LICENSE"
 rm -rf "$cache/node-$node_version-linux-$arch"
 
 cp -R "$web/.next/standalone" "$root/app"
+mkdir -p "$root/app/scripts"
+cp "$web/scripts/recovery.cjs" "$root/app/scripts/recovery.cjs"
+cp "$web/scripts/acceptance.mjs" "$root/app/scripts/acceptance.mjs"
 # sharp (Next's image optimizer, unused) is the only other native code in the bundle.
 rm -rf "$root/app/.env"* "$root/app/node_modules/@temperance/gateway-addon/"*.node \
   "$root/app/node_modules/sharp" "$root/app/node_modules/@img"

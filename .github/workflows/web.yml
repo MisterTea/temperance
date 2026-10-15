@@ -86,3 +86,23 @@ jobs:
             web/playwright-report
             web/test-results
           retention-days: 14
+
+  packaged-acceptance:
+    name: Packaged server and replacement-host recovery (real embedded gateway)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: packaged-acceptance
+      - run: npm ci
+      - run: npm run build:gateway
+      - run: npm run build
+      - run: node scripts/acceptance.mjs .next/standalone/server.js

@@ -20,6 +20,7 @@ class SessionService : Service() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = application as TemperanceApp
+        if (app.emergencyDisabled) { stopSelf(); return START_NOT_STICKY }
         app.executor.execute { try { app.connect() } catch (e: Exception) { app.status = StatusText.error(e) } }
         return START_STICKY
     }

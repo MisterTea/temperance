@@ -27,6 +27,7 @@ const config: NextConfig = {
     "/*": [
       "./node_modules/pg-cloudflare/**",
       "./node_modules/@temperance/gateway-addon/*.{js,node}",
+      "./scripts/recovery.cjs",
     ],
   },
 };

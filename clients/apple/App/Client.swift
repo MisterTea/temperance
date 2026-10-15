@@ -6,6 +6,7 @@ protocol VPNControl {
     /// `nil` when no Temperance configuration is installed.
     func status() async -> (enabled: Bool, connected: Bool)?
     func install(endpoint: String) async throws
+    func disable() async throws
 }
 
 /// Local notifications to the child (`ChildNotifier`).
@@ -39,6 +40,7 @@ func sendHome(_ request: HttpRequest, throughTunnel: Bool) async throws -> (UInt
     @Published var vpnInstalled: Bool?
     /// Notifications or location permission hasn't been asked for yet.
     @Published var canAskPermissions = false
+    @Published var emergencyDisabled = false
     @Published var busy = false
     @Published var health: [Diagnostic] = []
     /// Recent alerts, newest first, also shown in the app: a notification
@@ -58,7 +60,7 @@ func sendHome(_ request: HttpRequest, throughTunnel: Bool) async throws -> (UInt
         self.transport = send
         self.store = store; self.vpn = vpn; self.notifier = notifier; self.clock = clock
         self.location = location ?? LocationResponder()
-        do { if let state = try store.load()?.state { try show(state) } }
+        do { if let identity = try store.load() { emergencyDisabled = identity.emergencyDisabled; if let state = identity.state { try show(state) } } }
         catch { status = error.message }
     }
     private func send(_ request: HttpRequest) async throws -> (UInt16, String) {
@@ -88,10 +90,16 @@ func sendHome(_ request: HttpRequest, throughTunnel: Bool) async throws -> (UInt
     func refresh() async {
         do {
             guard let identity = try store.load(), identity.state != nil else { return }
+            if identity.emergencyDisabled {
+                if let current = await vpn.status(), current.enabled || current.connected { try await vpn.disable() }
+                connected = false
+                emergencyDisabled = true
+                return
+            }
             let (statusCode, body) = try await send(try stateRequest(identity: identity))
             let latest = try parseDeviceState(status: statusCode, body: body)
             let alerts = childAlerts(previous: identity.state, current: latest, now: clock())
-            let next = try refreshedIdentity(identity: identity, latest: latest, connected: connected)
+            let next = try refreshedIdentity(identity: try store.load() ?? identity, latest: latest, connected: connected)
             try store.save(next)
             try show(next.state!)
             status = ""
@@ -147,11 +155,30 @@ func sendHome(_ request: HttpRequest, throughTunnel: Bool) async throws -> (UInt
             return true
         } catch { status = error.message; return false }
     }
+    func emergencyDisable(password: String) async {
+        busy = true; defer { busy = false }
+        do {
+            guard let identity = try store.load() else { throw ClientError.message("Enroll first") }
+            let result = await Task.detached { emergencyUnlock(identity: identity, password: password, now: Int64(Date().timeIntervalSince1970)) }.value
+            try store.save(result.identity)
+            guard result.unlocked else { status = result.message; return }
+            do { try await vpn.disable() }
+            catch { try store.save(identity); throw error }
+            emergencyDisabled = true
+            connected = false
+            status = result.message
+        } catch { status = error.message }
+    }
     func install() async {
         busy = true; defer { busy = false }
         do {
-            guard let state = try store.load()?.state else { throw ClientError.message("Enroll first") }
-            try await vpn.install(endpoint: state.tunnel.endpoint)
+            guard var identity = try store.load(), let state = identity.state else { throw ClientError.message("Enroll first") }
+            let previous = identity
+            identity.emergencyDisabled = false
+            try store.save(identity)
+            do { try await vpn.install(endpoint: state.tunnel.endpoint) }
+            catch { try store.save(previous); throw error }
+            emergencyDisabled = false
             connected = true
             await refresh()
             vpnInstalled = true

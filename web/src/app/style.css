@@ -211,6 +211,13 @@ a:focus-visible {
   gap: 13px;
   align-items: center;
 }
+.profile-head > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.profile-head > .badge {
+  flex-shrink: 0;
+}
 .avatar {
   width: 42px;
   height: 42px;

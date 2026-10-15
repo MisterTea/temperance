@@ -19,11 +19,13 @@ RUN mv gateway-addon/libtemperance_gateway.so \
 
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
-ENV NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000 TEMPERANCE_DATA_DIR=/data
+ENV NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000 TEMPERANCE_DATA_DIR=/data TEMPERANCE_INSTALL=docker
 RUN useradd --uid 10001 --create-home temperance \
   && install -d -o temperance -g temperance -m 700 /data
 COPY --from=build --chown=temperance:temperance /app/web/.next/standalone ./
 COPY --from=build --chown=temperance:temperance /app/web/.next/static ./.next/static
+COPY --from=build --chown=temperance:temperance /app/web/scripts/recovery.cjs ./scripts/recovery.cjs
+COPY --from=build --chown=temperance:temperance /app/web/scripts/acceptance.mjs ./scripts/acceptance.mjs
 USER temperance
 VOLUME /data
 EXPOSE 3000 51820/udp

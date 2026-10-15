@@ -135,12 +135,28 @@
         telemetry to the project.
       </p>
       <p>
+        Optional SMTP email sends generic event notices to the administrator’s
+        configured recipient through their chosen mail provider. Notices omit
+        client names, request text, domains, locations and credentials. Delivery
+        attempts and results are retained locally. Optional category feeds are
+        downloaded from operator-selected HTTPS sources without sending browsing
+        history to those sources.
+      </p>
+      <p>
+        Encrypted recovery archives include the household database, gateway
+        identities and Temperance configuration. Keep the recovery passphrase
+        separately and protect any copies. Configuration exports are plaintext
+        and contain sensitive household data. Support reports contain allowlisted
+        version, health and aggregate information; they are shared only when you
+        choose to download and provide them.
+      </p>
+      <p>
         Self-hosting does not mean that all traffic stays inside your home. Your
         gateway contacts websites and services on behalf of connected devices.
         Allowed DNS queries are forwarded to the configured DNS resolver (by
         default, Cloudflare’s 1.1.1.1). Your internet provider, server or
         database host, DNS provider, and any optional tunnel, dynamic DNS,
-        update, or category-feed providers may process information as part of
+        update, SMTP email, or category-feed providers may process information as part of
         providing their services. Their handling of that information is governed
         by their own policies.
       </p>

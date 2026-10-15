@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../src/components/dashboard";
 import * as accounts from "../src/lib/accounts";
 import * as updates from "../src/lib/updates";
+import * as maintenance from "../src/lib/maintenance";
 import { TestRepository } from "../src/lib/database";
 import { handle } from "../src/lib/http";
 
@@ -206,11 +207,12 @@ describe("sign-in", () => {
     });
     expect((await state()).users ?? []).toHaveLength(0);
     await user.type(within(rules).getByLabelText("Username"), "Avery");
+    await user.type(within(rules).getByLabelText("Client password"), "avery-password");
     await user.click(within(rules).getByLabelText(/^Teen/));
     expect(
       (
         within(rules).getByLabelText(
-          /Daily screen-time limit/,
+          /Daily network-minute limit/,
         ) as HTMLInputElement
       ).value,
     ).toBe("180");
@@ -403,8 +405,6 @@ describe("profile editor", () => {
     await user.click(d.getByRole("checkbox", { name: /SafeSearch/ }));
     await user.click(d.getByRole("checkbox", { name: /YouTube restricted/ }));
     await user.click(d.getByRole("checkbox", { name: /Allow-list only/ }));
-    await user.click(d.getByRole("checkbox", { name: /Unmanaged client/ }));
-    await user.click(d.getByRole("checkbox", { name: /Unmanaged client/ }));
     const bedtime = within(d.getByRole("group", { name: "Bedtime" }));
     fireEvent.change(bedtime.getByLabelText("Starts"), {
       target: { value: "21:30" },
@@ -1119,6 +1119,7 @@ describe("settings", () => {
   });
 
   it("shows new releases and updates Docker installs from the dashboard", async () => {
+    vi.spyOn(maintenance, "backupNow").mockResolvedValue("encrypted-recovery.json");
     Object.assign(process.env, {
       TEMPERANCE_UPDATE_CHECK: "on",
       TEMPERANCE_INSTALL: "docker",
@@ -1171,6 +1172,26 @@ describe("settings", () => {
     );
     expect(section.queryByRole("button", { name: /Update to/ })).toBeNull();
     expect(section.getByText(/newest release is 0\.6\.0/)).toBeTruthy();
+  });
+
+  it("restores update progress after a page remount and displays persisted failure", async () => {
+    await seedHousehold(); await signIn();
+    const now = Math.floor(Date.now() / 1000);
+    let snapshot = await repo.read();
+    snapshot.state.maintenance = { update: { id: "persisted-update", from: "0.5.4", target: "0.6.0", status: "dispatched", requested_at: now, deadline_at: now + 600 } };
+    await repo.commit(snapshot.state, snapshot.revision);
+    let user = await openDashboard(); await tab(user, "Settings");
+    expect(await screen.findByText(/Updating to 0\.6\.0/)).toBeTruthy();
+    cleanup();
+    user = await openDashboard(); await tab(user, "Settings");
+    expect(await screen.findByText(/Updating to 0\.6\.0/)).toBeTruthy();
+    cleanup();
+    snapshot = await repo.read();
+    snapshot.state.maintenance!.update!.status = "failed";
+    snapshot.state.maintenance!.update!.message = "Check the updater connection.";
+    await repo.commit(snapshot.state, snapshot.revision);
+    user = await openDashboard(); await tab(user, "Settings");
+    expect(await screen.findByText(/Update to 0\.6\.0 failed/)).toBeTruthy();
   });
 
   it("tells package installs which command updates them", async () => {
@@ -1464,10 +1485,32 @@ describe("settings", () => {
     expect(client).toBeTruthy();
     expect(stored.users![0].profile_id).toBe(client!.id);
     const card = label.closest("article")!;
-    await user.click(within(card).getByRole("button", { name: "Disable" }));
-    await waitFor(() =>
-      expect(within(card).getByText(/sign-in disabled/)).toBeTruthy(),
+    expect(
+      within(card).getByRole("button", { name: "Rules enabled" }).className,
+    ).toContain("primary");
+    await user.click(
+      within(card).getByRole("button", { name: "Rules enabled" }),
     );
+    await waitFor(() =>
+      expect(card.querySelector(".badge")?.textContent).toBe("Rules disabled"),
+    );
+    expect(
+      within(card).getByRole("button", { name: "Rules disabled" }).className,
+    ).toContain("secondary");
+    expect(
+      (await state()).profiles.find((p) => p.name === "alex-client")!.managed,
+    ).toBe(false);
+    await user.click(
+      within(card).getByRole("button", { name: "Rules disabled" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(card).getByRole("button", { name: "Rules enabled" }),
+      ).toBeTruthy(),
+    );
+    expect(
+      (await state()).profiles.find((p) => p.name === "alex-client")!.managed,
+    ).toBe(true);
     await user.click(
       within(card).getByRole("button", { name: "Delete sign-in" }),
     );

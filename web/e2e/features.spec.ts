@@ -70,10 +70,22 @@ test("parent creates and edits a profile with limits, bedtime, and schedules", a
   await card.getByRole("button", { name: "Resume" }).click();
   await expect(card.locator(".badge")).toHaveText("Rules active");
 
+  const rules = card.getByRole("button", { name: "Rules enabled" });
+  await expect(rules).toHaveClass(/primary/);
+  await rules.click();
+  const disabled = card.getByRole("button", { name: "Rules disabled" });
+  await expect(disabled).toHaveClass(/secondary/);
+  await expect(card.locator(".badge")).toHaveText("Rules disabled");
+  await disabled.click();
+  await expect(card.locator(".badge")).toHaveText("Rules active");
+
   await card.getByRole("button", { name: "Edit rules" }).click();
   await expect(
     editor.getByRole("heading", { name: "Edit client" }),
   ).toBeVisible();
+  await expect(
+    editor.getByRole("checkbox", { name: "Unmanaged client" }),
+  ).toHaveCount(0);
   await expect(editor.getByLabel("Blocked domains")).toHaveValue("example.org");
   await editor.getByRole("button", { name: "Close editor" }).click();
   await expect(editor).toBeHidden();
@@ -398,9 +410,11 @@ test("clients and settings manage client users, retention, and feeds", async ({
   await reset.getByLabel("New password").fill("client-new-password");
   await reset.getByLabel("Confirm password").fill("client-new-password");
   await reset.getByRole("button", { name: "Set password" }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "Password set for " + coParent,
-  );
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Password set for " + coParent }),
+  ).toContainText("Password set for " + coParent);
 
   page.once("dialog", (d) => d.accept());
   await card.getByRole("button", { name: "Delete sign-in" }).click();
@@ -433,7 +447,9 @@ test("clients and settings manage client users, retention, and feeds", async ({
   await remote.getByRole("button", { name: "Save remote access" }).click();
   await expect(remote.getByRole("status")).toHaveCount(0);
 
-  await page.getByLabel("Category").selectOption({ label: "Gaming" });
+  await page
+    .getByLabel("Category", { exact: true })
+    .selectOption({ label: "Gaming" });
   await page.getByLabel("Domains").fill("chess.com\nlichess.org");
   await page.getByRole("button", { name: "Import feed" }).click();
   await expect(page.locator("p.error")).toHaveCount(0);
@@ -491,9 +507,7 @@ test("parents pair a phone and reach the dashboard through the gateway", async (
   });
   const away = await phone.newPage();
   await away.goto("/");
-  await expect(
-    away.getByText(`ADMIN · ${name.toUpperCase()}`),
-  ).toBeVisible();
+  await expect(away.getByText(`ADMIN · ${name.toUpperCase()}`)).toBeVisible();
   await expect(away.getByRole("button", { name: "Sign out" })).toHaveCount(0);
 
   page.once("dialog", (d) => d.accept());

@@ -298,14 +298,6 @@ export function ProfileEditor({
             />
             Allow-list only
           </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={!value.managed}
-              onChange={(e) => field("managed", !e.target.checked)}
-            />
-            Unmanaged client (no controls or history)
-          </label>
         </div>
         <fieldset>
           <legend>Bedtime</legend>

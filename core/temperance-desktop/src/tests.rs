@@ -1103,3 +1103,45 @@ mod commands {
         assert!(app.get_webview_window(DASHBOARD).is_none());
     }
 }
+
+#[test]
+fn emergency_unlock_is_offline_persistent_and_does_not_reconnect_in_background() {
+    let (mut app, fake, tunnel, _dir) = enrolled();
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../temperance-core/tests/fixtures/emergency.json"
+    ))
+    .unwrap();
+    app.identity
+        .as_mut()
+        .unwrap()
+        .state
+        .as_mut()
+        .unwrap()
+        .emergency_unlock = Some(fixture["verifier"].as_str().unwrap().into());
+    let calls = fake.sent().len();
+    app.emergency_unlock("wrong password".into()).unwrap_err();
+    assert!(tunnel.is());
+    assert!(!app.identity.as_ref().unwrap().emergency_disabled);
+    // The cooldown survives constructing another app against the same files.
+    let mut reloaded = App::new(app.dir.clone(), fake.clone(), tunnel.clone()).unwrap();
+    assert!(reloaded
+        .emergency_unlock(fixture["password"].as_str().unwrap().into())
+        .unwrap_err()
+        .contains("Wait"));
+    reloaded.identity.as_mut().unwrap().unlock_retry_at = 0;
+    reloaded
+        .emergency_unlock(fixture["password"].as_str().unwrap().into())
+        .unwrap();
+    assert!(!tunnel.is());
+    *tunnel.up.lock().unwrap() = true; // Interrupted shutdown: service is still running.
+    let mut reloaded = App::new(app.dir.clone(), fake.clone(), tunnel.clone()).unwrap();
+    assert!(!tunnel.is());
+    assert!(child(&reloaded).emergency_disabled);
+    crate::shell::tick(&mut reloaded, 6);
+    assert!(!tunnel.is());
+    assert_eq!(fake.sent().len(), calls);
+    fake.ok(2);
+    reloaded.connect().unwrap();
+    assert!(tunnel.is());
+    assert!(!child(&reloaded).emergency_disabled);
+}

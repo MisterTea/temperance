@@ -131,4 +131,28 @@ class TemperanceAppTest {
         assertEquals("Request sent to your admins.", app.status)
         assertTrue(app.child!!.pendingRequest)
     }
+    @Test fun `emergency unlock works offline persists and prevents automatic reconnect`() {
+        signIn()
+        app.connect()
+        val identity = app.vault.load()!!
+        app.vault.save(identity.copy(state = identity.state!!.copy(emergencyUnlock = "pbkdf2-sha256\$600000\$000102030405060708090a0b0c0d0e0f\$76595347f001d68b135b86925f49a246ba2ee25a27c7224987563215c34509b5")))
+        server.unreachable = true
+        val calls = server.requests.size
+        assertThrows(IllegalStateException::class.java) { app.emergencyDisable("incorrect") }
+        assertTrue(app.connected)
+        assertThrows(IllegalStateException::class.java) { app.emergencyDisable("household-admin-test") }
+        app.vault.save(app.vault.load()!!.copy(unlockRetryAt = 0))
+        app.emergencyDisable("household-admin-test")
+        assertFalse(app.connected)
+        assertTrue(app.emergencyDisabled)
+        app.onCreate()
+        app.connect()
+        app.refresh()
+        assertFalse(app.connected)
+        assertEquals(calls, server.requests.size)
+        app.resumeProtection()
+        assertTrue(app.connected)
+        assertFalse(app.emergencyDisabled)
+    }
+
 }

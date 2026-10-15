@@ -93,17 +93,18 @@ export function Onboarding({
       {step === 0 ? (
         <section aria-labelledby="welcome">
           <h1 id="welcome">Let’s set up your home.</h1>
-          <p>
-            This Temperance server is freshly installed. In about two minutes
-            you will:
-          </p>
+          <p>This Temperance server is freshly installed. You will:</p>
           <ol className="plan">
             <li>sign in with your server’s admin password,</li>
             <li>choose starting rules for your first client, and</li>
             <li>connect their first device.</li>
           </ol>
           <p className="hint">
-            Everything can be changed later from the dashboard.
+            Beta setup: Linux with Docker, plus the Android, iOS, macOS or
+            Windows app. VPN controls require the home server to stay online.
+            Unmanaged devices can remove the VPN, and encrypted DNS can bypass
+            domain filtering. Everything can be changed later from the
+            dashboard.
           </p>
           <button className="primary" onClick={() => setStep(1)}>
             Get started
@@ -156,7 +157,7 @@ export function Onboarding({
             const entered = String(new FormData(e.currentTarget).get("name"));
             run(async () => {
               const name = clientUsername(entered);
-              await api("/api/profiles", {
+              const profile = {
                 name,
                 filter_level: age,
                 limit: Number(limit),
@@ -180,6 +181,10 @@ export function Onboarding({
                         },
                       ]
                     : [],
+              };
+              await api("/api/setup/client", {
+                profile,
+                password: new FormData(e.currentTarget).get("password"),
               });
               setSaved(name);
               setStep(3);
@@ -198,6 +203,22 @@ export function Onboarding({
               placeholder="avery"
             />
           </label>
+          <label htmlFor="setup-client-password">
+            Client password
+            <input
+              id="setup-client-password"
+              name="password"
+              type="password"
+              required
+              minLength={8}
+              maxLength={200}
+              autoComplete="new-password"
+              aria-describedby="setup-password-help"
+            />
+          </label>
+          <small id="setup-password-help">
+            Use this username and password to sign in on the client’s devices.
+          </small>
           <fieldset>
             <legend>Age group</legend>
             <div className="choices">
@@ -229,7 +250,7 @@ export function Onboarding({
           </fieldset>
           <div className="two">
             <label>
-              Daily screen-time limit (minutes)
+              Daily network-minute limit (minutes)
               <input
                 type="number"
                 min={0}
@@ -238,7 +259,10 @@ export function Onboarding({
                 value={limit}
                 onChange={(e) => setLimit(minutes(e.target.value))}
               />
-              <small>0 means no daily limit.</small>
+              <small>
+                Estimated allowed network activity, not foreground screen time.
+                0 means no daily limit.
+              </small>
             </label>
             <fieldset className="inline">
               <legend>Bedtime</legend>
@@ -357,9 +381,11 @@ export function Onboarding({
         <section aria-labelledby="done">
           <h1 id="done">{saved}’s rules are ready.</h1>
           <p>
-            {saved} has the rules and the time budget. Add a sign-in on their
-            card so a phone can use the app, then scan the setup code under
-            Devices. A TV or console is added there and assigned to this client.
+            {saved}’s sign-in and rules are ready. Install the device app, then
+            scan or paste the setup code under Devices and sign in. Allow the
+            VPN, test browsing and pause, then repeat over mobile data to verify
+            remote access. Review Server readiness in Settings if the device
+            cannot connect.
           </p>
           <div className="actions">
             <button

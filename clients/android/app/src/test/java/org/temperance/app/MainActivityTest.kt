@@ -218,4 +218,31 @@ class MainActivityTest {
         assertEquals(expected, column.paddingStart)
         assertEquals(expected, column.paddingEnd)
     }
+    @Test fun `emergency mode explains Android lockdown and offers VPN settings and resume`() {
+        app.signIn(FakeServer.HOME, "alex", "correct horse")
+        app.connect()
+        val identity = app.vault.load()!!
+        app.vault.save(identity.copy(state = identity.state!!.copy(emergencyUnlock = "pbkdf2-sha256\$600000\$000102030405060708090a0b0c0d0e0f\$76595347f001d68b135b86925f49a246ba2ee25a27c7224987563215c34509b5")))
+        server.unreachable = true
+        launch()
+        view<Button>(R.id.emergency_unlock).performClick()
+        val dialog = activity.dialog!!
+        val password = dialog.findViewById<EditText>(android.R.id.edit)
+        assertTrue(password.transformationMethod is PasswordTransformationMethod)
+        password.setText("household-admin-test")
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+        app.settle()
+        assertEquals("", password.text.toString())
+        assertTrue(text(R.id.vpn_state).contains("turned off by an admin"))
+        assertTrue(visible(R.id.resume_vpn))
+        assertTrue(visible(R.id.emergency_android_note))
+        assertFalse(visible(R.id.always_on_note))
+        view<Button>(R.id.emergency_vpn_settings).performClick()
+        assertEquals(Settings.ACTION_VPN_SETTINGS, nextActivity())
+        view<Button>(R.id.resume_vpn).performClick()
+        app.settle()
+        assertFalse(app.emergencyDisabled)
+        assertTrue(app.connected)
+    }
+
 }

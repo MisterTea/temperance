@@ -1,3 +1,5 @@
+> Beta reference setup: Linux with Docker and SQLite. Other deployment modes below remain experimental until their acceptance records pass. See [beta operations and recovery](beta-operations.md).
+
 # Run Temperance at home
 
 Temperance is one program: the Next.js dashboard and policy API with the WireGuard gateway embedded as a native add-on (`core/temperance-gateway`). Run it on an always-on machine at home — a mini PC, a Raspberry Pi 4/5, a Mac mini, or a Windows PC — and phones and laptops tunnel back to it from anywhere. The gateway is a userspace WireGuard and TCP/UDP relay: it needs no root, no kernel module and no firewall changes, on Linux, macOS and Windows alike.
@@ -18,7 +20,7 @@ All of them run the same service. The packages and the tarball install to `/opt/
 
 ### Docker (any OS, NAS boxes)
 
-`sh -c "$(curl -fsSL https://raw.githubusercontent.com/MisterTea/temperance/main/deploy/docker/install.sh)"` installs the `ghcr.io/mistertea/temperance` image (amd64 and arm64) with Docker Compose in `~/temperance`. It can also run Caddy or a Cloudflare Tunnel for HTTPS. See [Run with Docker](../README.md#run-with-docker) in the README for the manual setup and for port forwarding through Docker. Data, including the gateway key, lives in the `temperance-data` volume (`/data` in the container). To build the image from a checkout instead, run `docker compose -f deploy/docker/compose.yml -f deploy/docker/compose.build.yml up -d --build`.
+`sh -c "$(curl -fsSL https://raw.githubusercontent.com/MisterTea/temperance/main/deploy/docker/install.sh)"` installs the `mistertea/temperance` image (amd64 and arm64) with Docker Compose in `~/temperance`. It can also run Caddy or a Cloudflare Tunnel for HTTPS. See [Run with Docker](../README.md#run-with-docker) in the README for the manual setup and for port forwarding through Docker. Data, including the gateway key, lives in the `temperance-data` volume (`/data` in the container). To build the image from a checkout instead, run `docker compose -f deploy/docker/compose.yml -f deploy/docker/compose.build.yml up -d --build`.
 
 ### Any OS: from a checkout
 
@@ -43,18 +45,18 @@ Restart the service after changes (`sudo systemctl restart temperance`; on macOS
 
 Data lives in SQLite at `<data dir>/temperance.sqlite3` unless `TEMPERANCE_DATABASE_URL` points to PostgreSQL (`postgres://user:pass@host:5432/temperance`). The gateway's private key is created on first start at `<data dir>/gateway.key` (mode 600), and its public key is handed to clients automatically; set `TEMPERANCE_GATEWAY_PRIVATE_KEY` to supply one instead. Next to it, `<data dir>/parent.key` is the gateway's key for [admin devices](remote-parents.md), which reach the dashboard over the same UDP port. The file keeps the name `parent.key`. The embedded gateway forwards their requests to the dashboard with a secret generated at each start (`TEMPERANCE_FORWARD_SECRET`; set it yourself only if something else needs it). Client devices use the same key: they sign in and fetch their rules over that port too (step 4). Set `TEMPERANCE_HOUSEHOLD_NAME` to the name admins see after pairing, or `TEMPERANCE_REMOTE_PARENTS=off` to turn admin-device access off (client devices are not affected).
 
-To cut a release, push a `v<version>` tag. `.github/workflows/release.yml` then cross-builds the add-ons against glibc 2.28 with `cargo zigbuild` and fails if either needs a newer symbol. It packages them with `deploy/linux/package.sh`, boots the result on Debian 10 and Rocky Linux 8, publishes the multi-arch image, and attaches the files to the release. Running `deploy/linux/package.sh` locally (after `npm run build` in `web/`) produces the same files in `dist/`; it needs `nfpm` for the `.deb` and `.rpm`.
+Before tagging a release, complete the [release qualification](beta-readiness.md), including signed candidate artifacts and evidence for the exact source. Then push a `v<version>` tag. `.github/workflows/release.yml` then cross-builds the add-ons against glibc 2.28 with `cargo zigbuild` and fails if either needs a newer symbol. It packages them with `deploy/linux/package.sh`, boots the result on Debian 10 and Rocky Linux 8, publishes the multi-arch image, and attaches the files to the release. Running `deploy/linux/package.sh` locally (after `npm run build` in `web/`) produces the same files in `dist/`; it needs `nfpm` for the `.deb` and `.rpm`.
 
 ### Updating
 
 The dashboard footer shows the running version, and **Settings → Software updates** says when a newer release exists. To find out, the server asks the GitHub releases API every six hours, sending nothing but its version; set `TEMPERANCE_UPDATE_CHECK=off` to stop that. Development builds (from a checkout between tags) never report themselves as outdated.
 
-- **Docker with the updater:** choose **Update to …**. The dashboard asks the `updater` container (Watchtower, enabled with `COMPOSE_PROFILES=updater` and a `TEMPERANCE_UPDATER_TOKEN` in `.env`) to pull the new image and recreate the Temperance container. Data in the volume is kept, and the page reconnects when the new version is up. The updater only touches the Temperance container, and only it can reach the Docker socket; its API is not published outside the Compose network. With `TEMPERANCE_AUTO_UPDATE=true` it also updates on `TEMPERANCE_AUTO_UPDATE_SCHEDULE` (default `0 0 3 * * *`, 3:00 every night in `TEMPERANCE_TIMEZONE`).
+- **Docker with the updater:** choose **Update to …**. The dashboard asks the `updater` container (Watchtower, enabled with `COMPOSE_PROFILES=updater` and a `TEMPERANCE_UPDATER_TOKEN` in `.env`) to pull the new image and recreate the Temperance container. Data in the volume is kept, and the page reconnects when the new version is up. The updater only touches the Temperance container, and only it can reach the Docker socket; its API is not published outside the Compose network. Unattended Watchtower polling is disabled so updates cannot bypass the required pre-update recovery snapshot. Configure `TEMPERANCE_BACKUP_PASSPHRASE` first.
 - **Docker without the updater:** `docker compose pull && docker compose up -d` in the install folder, or rerun the installer.
 - **Linux packages and tarball:** download the new release and install it over the old one (the commands are in the table above, and the dashboard shows them for this machine's architecture). The service unit cannot write its own program files, so it does not update itself.
 - **From a checkout:** `git pull`, then rerun the installer you used.
 
-Devices keep enforcing the rules they already have while Temperance restarts.
+Internet access through the embedded gateway stops while Temperance restarts. Devices keep their VPN configuration and reconnect when the gateway is available.
 
 ## 2. Forward UDP 51820
 

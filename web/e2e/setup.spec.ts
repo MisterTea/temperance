@@ -42,8 +42,11 @@ test("a fresh install walks the parent through the admin account and first rules
     "Client",
   );
   await rules.getByLabel("Username").fill("Jordan");
+  await rules.getByLabel("Client password").fill("jordan-password");
   await rules.getByLabel(/^Teen/).check();
-  await expect(rules.getByLabel(/Daily screen-time limit/)).toHaveValue("180");
+  await expect(rules.getByLabel(/Daily network-minute limit/)).toHaveValue(
+    "180",
+  );
   await rules.getByLabel("Social media").check();
   await rules.getByLabel("Minutes per day for all games together").fill("60");
   await rules
@@ -79,7 +82,9 @@ test("a fresh install walks the parent through the admin account and first rules
   });
 
   await page.getByRole("button", { name: "Add a device" }).click();
-  await expect(page.getByRole("heading", { name: "Devices", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Devices", exact: true }),
+  ).toBeVisible();
   const jordan = page.locator("article.profile", { hasText: "jordan" });
   await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(

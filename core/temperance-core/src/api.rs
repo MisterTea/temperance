@@ -59,6 +59,9 @@ pub struct TimeRequest {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct DeviceState {
+    /// Domain-separated offline admin password verifier, delivered over pinned transport.
+    #[serde(default)]
+    pub emergency_unlock: Option<String>,
     pub device_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
@@ -76,6 +79,10 @@ pub struct DeviceState {
 /// Everything a device persists in its platform keychain/keystore.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct Identity {
+    #[serde(default)]
+    pub emergency_disabled: bool,
+    #[serde(default)]
+    pub unlock_retry_at: i64,
     pub service: String,
     pub private_key: String,
     #[serde(default)]
@@ -371,6 +378,8 @@ pub fn enrolled_identity(
     }
     crate::tunnel::tunnel_config(keys.private_key.clone(), state.tunnel.clone())?;
     Ok(Identity {
+        emergency_disabled: false,
+        unlock_retry_at: 0,
         service: validate_service(service)?,
         private_key: keys.private_key,
         state: Some(state),

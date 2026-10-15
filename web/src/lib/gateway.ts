@@ -5,6 +5,7 @@ import { randomToken } from "./auth";
 import { dataDir, mutate, repository, type Repository } from "./database";
 import { account, gatewaySeen, gatewayState, vpnEndpoint } from "./service";
 import { accessPoint } from "./home-lan";
+import { gatewayHealth } from "./gateway-health";
 
 // The embedded WireGuard gateway (Rust, Node-API). State, config and activity are JSON strings.
 export interface GatewayHandle {
@@ -51,7 +52,9 @@ function hostname(value: string) {
 }
 
 export function gatewayConfig(env: Env, privateKey: string) {
-  const router = env.TEMPERANCE_GATEWAY_ROUTER?.split(",").map((s) => s.trim());
+  const router = env.TEMPERANCE_GATEWAY_ROUTER?.trim()
+    ? env.TEMPERANCE_GATEWAY_ROUTER.split(",").map((s) => s.trim())
+    : undefined;
   if (router && router.length !== 3)
     throw new Error(
       "TEMPERANCE_GATEWAY_ROUTER is lan_interface,lan_address,uplink",
@@ -73,7 +76,9 @@ export function gatewayConfig(env: Env, privateKey: string) {
   const ap = accessPoint(env.TEMPERANCE_GATEWAY_AP);
   const dnsSetting = env.TEMPERANCE_GATEWAY_HOME_DNS?.trim();
   const homeDns =
-    dnsSetting === "off" ? null : dnsSetting || (ap ? `${ap.address}:53` : null);
+    dnsSetting === "off"
+      ? null
+      : dnsSetting || (ap ? `${ap.address}:53` : null);
   const lan = (env.TEMPERANCE_GATEWAY_LAN_NETWORKS ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -132,6 +137,9 @@ export async function syncGateway(handle: GatewayHandle, repo: Repository) {
     return gatewayState(s);
   });
   handle.applyState(JSON.stringify(state));
+  const health = gatewayHealth();
+  health.applied_at = Date.now();
+  health.syncs++;
 }
 
 export async function startGateway({
@@ -165,7 +173,12 @@ export async function startGateway({
   let running: Promise<void> | undefined;
   const tick = () =>
     (running ??= syncGateway(handle, repo)
-      .catch((error) => console.error("Gateway sync failed", error))
+      .catch(() => {
+        gatewayHealth().sync_failures++;
+        console.error(
+          "Gateway policy sync failed; check database and gateway readiness.",
+        );
+      })
       .finally(() => (running = undefined)));
   await tick();
   const timer = setInterval(tick, intervalMs);

@@ -152,4 +152,37 @@ import XCTest
         do { try await vpn.install(endpoint: "192.0.2.1:51820"); XCTFail("installed") }
         catch { XCTAssertEqual(error.localizedDescription, "This build has no VPN extension") }
     }
+    func testEmergencyUnlockIsOfflinePersistsAndRequiresTheAdminPassword() async throws {
+        let client = await enrolled()
+        try await vpn.install(endpoint: "192.0.2.1:51820")
+        var identity = try XCTUnwrap(store.identity)
+        var state = try XCTUnwrap(identity.state)
+        state.emergencyUnlock = "pbkdf2-sha256$600000$000102030405060708090a0b0c0d0e0f$76595347f001d68b135b86925f49a246ba2ee25a27c7224987563215c34509b5"
+        identity.state = state
+        try store.save(identity)
+        service.unreachable = true
+        let calls = service.requests.count
+        await client.emergencyDisable(password: "incorrect")
+        XCTAssertEqual(vpn.current?.connected, true)
+        XCTAssertEqual(store.identity?.emergencyDisabled, false)
+        await client.emergencyDisable(password: "household-admin-test")
+        XCTAssertTrue(client.status.contains("Wait"))
+        identity = try XCTUnwrap(store.identity)
+        identity.unlockRetryAt = 0
+        try store.save(identity)
+        await client.emergencyDisable(password: "household-admin-test")
+        XCTAssertEqual(vpn.current?.enabled, false)
+        XCTAssertEqual(vpn.current?.connected, false)
+        XCTAssertEqual(store.identity?.emergencyDisabled, true)
+        let restarted = self.client()
+        XCTAssertTrue(restarted.emergencyDisabled)
+        await restarted.refresh()
+        XCTAssertEqual(service.requests.count, calls)
+        service.unreachable = false
+        await restarted.install()
+        XCTAssertFalse(restarted.emergencyDisabled)
+        XCTAssertEqual(vpn.current?.connected, true)
+        XCTAssertEqual(store.identity?.emergencyDisabled, false)
+    }
+
 }

@@ -91,6 +91,9 @@ pub enum Action {
         password: String,
         name: String,
     },
+    EmergencyUnlock {
+        password: String,
+    },
     Connect,
     Refresh,
     SignIn,
@@ -124,6 +127,7 @@ pub struct Child {
     pub next_change: String,
     pub version: u64,
     pub connected: bool,
+    pub emergency_disabled: bool,
     pub alerts: Vec<String>,
     pub health: Vec<Issue>,
     /// The Wi-Fi network's sign-in page, while one blocks the internet.
@@ -209,11 +213,19 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             Ok(text) => Some(core::identity_from_json(text).map_err(|e| e.to_string())?),
             Err(_) => None,
         };
+        // Complete an authorized shutdown if the app stopped after persisting
+        // the local flag but before uninstalling the Windows service.
+        let emergency_error =
+            if identity.as_ref().is_some_and(|i| i.emergency_disabled) && tunnel.is_up() {
+                tunnel.down(&dir.join("temperance.conf")).err()
+            } else {
+                None
+            };
         // The tunnel service outlives the app; a running one is ours.
         let connected = identity.is_some() && tunnel.is_up();
         Ok(App {
             dir,
-            status: String::new(),
+            status: emergency_error.unwrap_or_default(),
             child_allowed: cfg!(windows),
             browser: Box::new(open_browser),
             identity,
@@ -436,6 +448,20 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
     /// The periodic refresh. Losing the service leaves a plain note that clears
     /// once it answers again, and "Request sent" clears once an admin answers.
     pub fn background_refresh(&mut self) {
+        if self.identity.as_ref().is_some_and(|i| i.emergency_disabled) {
+            if self.tunnel.is_up() {
+                if let Err(error) = self.tunnel.down(&self.dir.join("temperance.conf")) {
+                    self.connected = true;
+                    self.status = error;
+                    return;
+                }
+            }
+            self.connected = false;
+            self.status =
+                "VPN turned off by an admin. Protection is off until you turn the VPN back on."
+                    .into();
+            return;
+        }
         match self.refresh() {
             Err(_) if !self.policy_reachable => self.status = UNREACHABLE.into(),
             Err(e) => self.status = e,
@@ -467,6 +493,28 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         core::parse_ok(status, body).map_err(|e| e.to_string())
     }
 
+    pub fn emergency_unlock(&mut self, password: String) -> Result<(), String> {
+        let identity = self.identity.clone().ok_or("Enroll first")?;
+        let result = core::emergency_unlock(identity.clone(), password, now());
+        self.identity = Some(result.identity);
+        self.save()?;
+        if !result.unlocked {
+            return Err(result.message);
+        }
+        self.portal_until = None;
+        self.portal_ended = None;
+        if self.tunnel.is_up() {
+            if let Err(error) = self.tunnel.down(&self.dir.join("temperance.conf")) {
+                self.identity = Some(identity);
+                self.save()?;
+                return Err(error);
+            }
+        }
+        self.connected = false;
+        self.status = result.message;
+        Ok(())
+    }
+
     pub fn connect(&mut self) -> Result<(), String> {
         self.refresh()?;
         self.protect()?;
@@ -479,6 +527,10 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         if !self.tunnel.is_up() {
             self.tunnel.up(&self.dir.join("temperance.conf"))?;
         }
+        if let Some(identity) = self.identity.as_mut() {
+            identity.emergency_disabled = false;
+        }
+        self.save()?;
         self.connected = true;
         self.update_diagnostics();
         Ok(())
@@ -510,6 +562,7 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             } => self
                 .enroll(&service, &username, &password, &name)
                 .and_then(|()| self.protect()),
+            Action::EmergencyUnlock { password } => self.emergency_unlock(password),
             Action::Connect => self.connect(),
             Action::Refresh => self.refresh(),
             Action::SignIn => self.sign_in_to_network(),
@@ -520,6 +573,10 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             Action::UnpairParent => self.unpair_parent(),
         };
         self.status = match result {
+            Ok(()) if self.identity.as_ref().is_some_and(|i| i.emergency_disabled) => {
+                "VPN turned off by an admin. Protection is off until you turn the VPN back on."
+                    .into()
+            }
             Ok(()) => done.map_or_else(|| self.settled_status(), str::to_string),
             Err(_) if refreshing && !self.policy_reachable => UNREACHABLE.into(),
             Err(e) => e,
@@ -600,6 +657,7 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
             next_change,
             version,
             connected: self.connected,
+            emergency_disabled: self.identity.as_ref().is_some_and(|i| i.emergency_disabled),
             alerts: self.alerts.clone(),
             health: self.health(),
             portal_url,

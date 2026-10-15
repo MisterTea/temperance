@@ -26,7 +26,7 @@ kernel since 5.6). On macOS or Windows, run it inside a Linux VM.
 ```sh
 sh systest/run.sh                       # build from source and run everything
 sh systest/run.sh pause_and_bedtime     # one test, by name filter
-TEMPERANCE_SYSTEST_SERVER_IMAGE=ghcr.io/mistertea/temperance:latest sh systest/run.sh
+TEMPERANCE_SYSTEST_SERVER_IMAGE=mistertea/temperance:latest sh systest/run.sh
 ```
 
 `run.sh` exits with the client's status. When a test fails, it prints the server and DNS

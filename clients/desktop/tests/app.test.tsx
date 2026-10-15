@@ -13,6 +13,7 @@ const child: Child = {
   next_change: "Bedtime starts at 21:00",
   version: 3,
   connected: true,
+  emergency_disabled: false,
   alerts: [],
   health: [],
   portal_url: null,
@@ -319,7 +320,9 @@ test("Linux and macOS go straight to parent pairing, and errors show in the stat
   expect(
     await screen.findByRole("heading", { name: /from anywhere/ }),
   ).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /client's computer/ })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /client's computer/ }),
+  ).toBeNull();
   expect(screen.getByText(/protected through your home network/)).toBeTruthy();
   await user.type(screen.getByLabelText(/Pairing link/), "x");
   await user.type(screen.getByLabelText("Name for this computer"), "PC");
@@ -365,4 +368,35 @@ test("a failing first read shows the error", async () => {
   expect((await screen.findByRole("status")).textContent).toBe(
     "backend unavailable",
   );
+});
+
+test("an admin can submit an offline emergency password and the field is cleared", async () => {
+  const actions = backend({ status: "", screen: "child", ...child }, () => ({
+    status: "VPN turned off by an admin.",
+    screen: "child",
+    ...child,
+    connected: false,
+    emergency_disabled: true,
+  }));
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(
+    await screen.findByRole("button", { name: "Admin emergency unlock" }),
+  );
+  const password = screen.getByLabelText(
+    "Household admin password",
+  ) as HTMLInputElement;
+  await user.type(password, "household-admin-test");
+  await user.click(screen.getByRole("button", { name: "Turn off VPN" }));
+  await waitFor(() =>
+    expect(actions).toEqual([
+      { action: "emergency_unlock", password: "household-admin-test" },
+    ]),
+  );
+  expect(password.value).toBe("");
+  expect(
+    await screen.findByRole("heading", { name: "VPN turned off by an admin" }),
+  ).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Start protection" }));
+  expect(actions.at(-1)).toEqual({ action: "connect" });
 });

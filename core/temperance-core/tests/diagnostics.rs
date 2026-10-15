@@ -212,6 +212,8 @@ fn captive_portals_and_stale_tunnels_explain_the_sign_in_path() {
 fn diagnostics_are_reported_with_the_device_token() {
     let pin = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
     let identity = Identity {
+        emergency_disabled: false,
+        unlock_retry_at: 0,
         service: format_home_link(&HomeLink {
             v: 1,
             host: "family.example".into(),

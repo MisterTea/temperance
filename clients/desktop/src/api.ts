@@ -11,6 +11,7 @@ export type Child = {
   next_change: string;
   version: number;
   connected: boolean;
+  emergency_disabled: boolean;
   alerts: string[];
   health: Issue[];
   portal_url: string | null;
@@ -35,6 +36,7 @@ export type Action =
       password: string;
       name: string;
     }
+  | { action: "emergency_unlock"; password: string }
   | { action: "connect" }
   | { action: "refresh" }
   | { action: "sign_in" }

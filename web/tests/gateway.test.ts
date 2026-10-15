@@ -105,6 +105,18 @@ async function enrolled(repo: TestRepository, publicKey: string) {
 }
 
 describe("embedded gateway loop", () => {
+  it("treats blank optional router settings as disabled", () => {
+    expect(
+      gatewayConfig({ ...env, TEMPERANCE_GATEWAY_ROUTER: "   " }, "private-key")
+        .router,
+    ).toBeNull();
+    expect(() =>
+      gatewayConfig(
+        { ...env, TEMPERANCE_GATEWAY_ROUTER: "eth0" },
+        "private-key",
+      ),
+    ).toThrow(/lan_interface/);
+  });
   it("persists its key, publishes the public key and applies policy", async () => {
     const fake = fakeAddon();
     const repo = new TestRepository();
@@ -270,8 +282,7 @@ describe("gateway configuration", () => {
   it("makes an access point answer DNS on its own address", () => {
     const config = gatewayConfig(
       {
-        TEMPERANCE_GATEWAY_AP:
-          "wlan0;192.168.50.1/24;Temperance;correct horse",
+        TEMPERANCE_GATEWAY_AP: "wlan0;192.168.50.1/24;Temperance;correct horse",
         TEMPERANCE_GATEWAY_LAN_NETWORKS: "192.168.4.0/22",
       },
       "k",
@@ -285,14 +296,10 @@ describe("gateway configuration", () => {
       dns: true,
     });
     expect(config.home_dns).toBe("192.168.50.1:53");
-    expect(config.lan_networks).toEqual([
-      "192.168.4.0/22",
-      "192.168.50.1/24",
-    ]);
+    expect(config.lan_networks).toEqual(["192.168.4.0/22", "192.168.50.1/24"]);
     const off = gatewayConfig(
       {
-        TEMPERANCE_GATEWAY_AP:
-          "wlan0;192.168.50.1/24;Temperance;correct;horse",
+        TEMPERANCE_GATEWAY_AP: "wlan0;192.168.50.1/24;Temperance;correct;horse",
         TEMPERANCE_GATEWAY_HOME_DNS: "off",
       },
       "k",
