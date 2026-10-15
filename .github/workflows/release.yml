@@ -147,7 +147,7 @@ jobs:
             mkdir -p dist/image/${pair#*:}
             tar -xzf dist/temperance-*-linux-${pair%%:*}.tar.gz -C dist/image/${pair#*:} --strip-components=1
           done
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v3
       - name: Check Docker Hub publishing credential
         if: startsWith(github.ref, 'refs/tags/')
