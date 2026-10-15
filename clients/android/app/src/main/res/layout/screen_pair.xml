@@ -12,7 +12,7 @@
 
         <Button android:id="@+id/scan" style="@style/Primary" android:text="@string/scan" />
 
-        <TextView style="@style/Label" android:text="@string/link_label" android:labelFor="@+id/link" />
+        <TextView android:id="@+id/link_label" style="@style/Label" android:text="@string/link_label" android:labelFor="@+id/link" />
         <EditText
             android:id="@+id/link"
             style="@style/Field"

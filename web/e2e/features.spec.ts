@@ -128,16 +128,6 @@ test("devices enroll, are reassigned, paused, and revoked", async ({
   await ensureProfile(request, "Teen " + info.project.name);
   await page.goto("/");
   await openTab(page, "Devices");
-  await page
-    .locator("section", {
-      has: page.getByRole("heading", { name: "Enroll a VPN device" }),
-    })
-    .getByLabel("Client")
-    .selectOption({ label: "Kid " + info.project.name });
-  await page.getByRole("button", { name: "Create enrollment code" }).click();
-  await expect(
-    page.getByLabel("Enter this code in the Temperance app"),
-  ).toHaveValue(/^[a-f0-9]{64}$/);
 
   const phone = `Phone ${info.project.name}`;
   const device = await enrollDevice(request, kid, phone, seed);
@@ -463,7 +453,7 @@ test("parents pair a phone and reach the dashboard through the gateway", async (
     gateway,
   );
   await page.goto("/");
-  await openTab(page, "Settings");
+  await openTab(page, "Devices");
   const section = page.locator("section", {
     has: page.getByRole("heading", { name: "Parent devices" }),
   });
@@ -478,7 +468,7 @@ test("parents pair a phone and reach the dashboard through the gateway", async (
   await section.getByRole("button", { name: "Pair a parent device" }).click();
   await expect(section.getByRole("img", { name: /QR code/ })).toBeVisible();
   await expect(section.getByRole("timer")).toContainText("Works once");
-  await expectCleanLayout(page, "settings-parent-pairing");
+  await expectCleanLayout(page, "devices-parent-pairing");
   await section.getByRole("button", { name: "Copy pairing link" }).click();
   const link = await page.evaluate(
     () => (window as unknown as { copied: string }).copied,
@@ -502,7 +492,7 @@ test("parents pair a phone and reach the dashboard through the gateway", async (
   const away = await phone.newPage();
   await away.goto("/");
   await expect(
-    away.getByText(`AWAY FROM HOME · ${name.toUpperCase()}`),
+    away.getByText(`PARENT · ${name.toUpperCase()}`),
   ).toBeVisible();
   await expect(away.getByRole("button", { name: "Sign out" })).toHaveCount(0);
 

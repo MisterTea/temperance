@@ -48,7 +48,7 @@
     <string name="child_instead">This is a child\'s device instead</string>
 
     <string name="pair_title">Pair this phone</string>
-    <string name="pair_intro">On the family dashboard at home, open Settings → Parent devices and tap Pair a parent device. Then scan the code, or paste the link.</string>
+    <string name="pair_intro">On the family dashboard at home, open Devices → Parent devices and tap Pair a parent device. Then scan the code, or paste the link.</string>
     <string name="scan">Scan the QR code</string>
     <string name="link_label">Pairing link</string>
     <string name="link_hint">temperance://pair#…</string>
@@ -57,6 +57,10 @@
     <string name="pairing">Pairing…</string>
     <string name="camera_needed">Temperance needs the camera to scan the code. You can paste the link instead.</string>
     <string name="scan_hint">Point the camera at the code on the dashboard</string>
+    <string name="scan_wrong_child">This code sets up a child\'s device. To pair a parent\'s phone, scan the code under Devices → Parent devices.</string>
+    <string name="scan_wrong_parent">This code pairs a parent\'s phone. To set up a child\'s device, scan the code under Devices.</string>
+    <string name="scan_wrong_pair">This is not a Temperance pairing code. Scan the code under Devices → Parent devices.</string>
+    <string name="scan_wrong_setup">This isn\'t a device setup code. Scan the code under Devices → Set up a child\'s device.</string>
     <string name="menu_reload">Reload</string>
     <string name="menu_unpair">Unpair this phone</string>
     <string name="unpair_confirm">This phone will stop opening the family dashboard. To use it again, pair it from the dashboard at home.</string>

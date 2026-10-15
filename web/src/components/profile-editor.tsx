@@ -2,6 +2,12 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { clientUsername } from "@/lib/accounts";
 import { CATALOG, DAYS, type AppLimit, type Profile } from "@/lib/policy";
+/** `crypto.randomUUID` exists only on HTTPS. A LAN dashboard is usually plain HTTP, where `getRandomValues` still works. */
+function browserId(bytes = 16) {
+  return [...crypto.getRandomValues(new Uint8Array(bytes))]
+    .map((n) => n.toString(16).padStart(2, "0"))
+    .join("");
+}
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 type Span = { name: string; start: string; end: string; days: number[] };
 const WEEK = 7 * 1440;
@@ -539,7 +545,7 @@ export function ProfileEditor({
               field("schedules", [
                 ...value.schedules,
                 {
-                  id: crypto.randomUUID(),
+                  id: browserId(),
                   name: "Homework",
                   mode: "focus",
                   start: "16:00",
@@ -708,7 +714,7 @@ export function ProfileEditor({
               field("app_limits", [
                 ...value.app_limits,
                 {
-                  id: crypto.randomUUID().slice(0, 8),
+                  id: browserId(4),
                   name: "",
                   domains: [],
                   minutes: 60,

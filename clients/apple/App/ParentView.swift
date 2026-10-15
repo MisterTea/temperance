@@ -1,8 +1,26 @@
 import SwiftUI
 import WebKit
 #if os(iOS)
+import UIKit
 import VisionKit
 #endif
+
+let pairPrefix = "temperance://pair#"
+let homePrefix = "temperance://home#"
+
+/// What to say when a scan isn't the code this screen asked for.
+func scanMismatch(expected prefix: String, code: String) -> String {
+    if prefix == pairPrefix && code.hasPrefix(homePrefix) {
+        return "This code sets up a child's device. To pair a parent's phone, scan the code under Devices → Parent devices."
+    }
+    if prefix == homePrefix && code.hasPrefix(pairPrefix) {
+        return "This code pairs a parent's phone. To set up a child's device, scan the code under Devices."
+    }
+    if prefix == homePrefix {
+        return "This isn't a device setup code. Scan the code under Devices → Set up a child's device."
+    }
+    return "This is not a Temperance pairing code. Scan the code under Devices → Parent devices."
+}
 
 /// The first screen of a fresh install, then whichever mode it chose. An
 /// enrolled child device always stays in child mode.
@@ -47,6 +65,7 @@ struct ParentView: View {
     var back: () -> Void
     @State private var link = ""
     @State private var name = defaultDeviceName()
+    @State private var scanned = false
     @State private var scanning = false
     @State private var unpairing = false
     @State private var loading = true
@@ -79,7 +98,7 @@ struct ParentView: View {
                             }
                     } else {
                         Text("Pair this \(deviceNoun)").font(.title2).bold()
-                        Text("On the family dashboard at home, open Settings → Parent devices and choose Pair a parent device.")
+                        Text("On the family dashboard at home, open Devices → Parent devices and choose Pair a parent device.")
                         #if os(iOS)
                         if DataScannerViewController.isSupported {
                             Button { scanning = true } label: {
@@ -87,9 +106,11 @@ struct ParentView: View {
                             }.buttonStyle(.borderedProminent).controlSize(.large)
                         }
                         #endif
-                        Field(pasteLinkLabel) {
-                            TextField(pasteLinkLabel, text: $link, prompt: Text(verbatim: "temperance://pair#…"), axis: .vertical)
-                                .lineLimit(1...3).plainEntry(.URL)
+                        if !scanned {
+                            Field(pasteLinkLabel) {
+                                TextField(pasteLinkLabel, text: $link, prompt: Text(verbatim: "temperance://pair#…"), axis: .vertical)
+                                    .lineLimit(1...3).plainEntry(.URL)
+                            }
                         }
                         Field("Name for this \(deviceNoun)") { TextField("Name for this \(deviceNoun)", text: $name) }
                         Button { Task { await parent.pair(link: link, name: name) } } label: {
@@ -106,7 +127,7 @@ struct ParentView: View {
                 QRScanner { code in
                     scanning = false
                     link = code
-                    Task { await parent.pair(link: code, name: name) }
+                    scanned = true
                 }.ignoresSafeArea()
             }
             #endif
@@ -122,8 +143,8 @@ let setupCodeLabel = "Or paste the setup code"
 func defaultDeviceName() -> String { UIDevice.current.name }
 
 struct QRScanner: UIViewControllerRepresentable {
-    /// Other QR codes are ignored.
-    var prefix = "temperance://pair#"
+    /// A code of another kind is explained; scanning continues.
+    var prefix = pairPrefix
     var found: (String) -> Void
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let scanner = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])], isHighlightingEnabled: true)
@@ -138,13 +159,22 @@ struct QRScanner: UIViewControllerRepresentable {
         let prefix: String
         let found: (String) -> Void
         private var done = false
+        private var announced: String?
         init(prefix: String, found: @escaping (String) -> Void) { self.prefix = prefix; self.found = found }
         func dataScanner(_ scanner: DataScannerViewController, didAdd items: [RecognizedItem], allItems: [RecognizedItem]) {
             for case .barcode(let code) in items {
-                guard !done, let text = code.payloadStringValue, text.hasPrefix(prefix) else { continue }
-                done = true
-                scanner.stopScanning()
-                found(text)
+                guard !done, let text = code.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { continue }
+                if text.hasPrefix(prefix) {
+                    done = true
+                    scanner.stopScanning()
+                    found(text)
+                    return
+                }
+                guard text != announced, scanner.presentedViewController == nil else { continue }
+                announced = text
+                let alert = UIAlertController(title: nil, message: scanMismatch(expected: prefix, code: text), preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                scanner.present(alert, animated: true)
             }
         }
     }

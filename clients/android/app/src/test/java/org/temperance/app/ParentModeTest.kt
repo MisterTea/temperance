@@ -23,6 +23,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.fakes.RoboMenu
+import org.robolectric.shadows.ShadowAlertDialog
+import org.robolectric.shadows.ShadowDialog
 import org.robolectric.shadows.ShadowToast
 import uniffi.temperance_core.CoreException
 import uniffi.temperance_core.RemoteSessionInterface
@@ -128,14 +130,21 @@ class ParentModeTest {
         assertFalse(app.paired)
     }
 
-    @Test fun `a scanned code pairs at once`() {
+    @Test fun `a scanned code waits for a name before pairing`() {
         val activity = launchParent()
         activity.view<Button>(R.id.scan).performClick()
         val scan = shadowOf(activity).nextStartedActivityForResult
         assertEquals(ScanActivity::class.java.name, scan.intent.component?.className)
         shadowOf(activity).receiveResult(scan.intent, Activity.RESULT_OK, Intent().putExtra(ScanActivity.EXTRA_LINK, LINK))
         app.settle()
-        assertEquals(LINK, paired.single().first)
+        assertTrue(paired.isEmpty())
+        assertNull(activity.web)
+        assertEquals(View.GONE, activity.view<EditText>(R.id.link).visibility)
+        assertEquals(View.GONE, activity.view<TextView>(R.id.link_label).visibility)
+        activity.view<EditText>(R.id.phone_name).setText("Robin's Pixel")
+        activity.view<Button>(R.id.pair).performClick()
+        app.settle()
+        assertEquals(listOf(LINK to "Robin's Pixel"), paired)
         assertNotNull(activity.web)
     }
 
@@ -180,15 +189,35 @@ class ParentModeTest {
     }
 
     @Test fun `the scanner asks for the camera and returns only pairing links`() {
+        ShadowAlertDialog.reset()
         val controller = Robolectric.buildActivity(ScanActivity::class.java).setup()
         val scanner = controller.get()
         assertEquals(listOf(Manifest.permission.CAMERA), shadowOf(scanner).lastRequestedPermission.requestedPermissions.toList())
         scanner.found("https://example.com")
+        scanner.found("https://example.com")
         assertFalse(scanner.isFinishing)
+        assertEquals(1, ShadowDialog.getShownDialogs().size)
+        assertEquals(app.getString(R.string.scan_wrong_pair), shadowOf(ShadowAlertDialog.getLatestAlertDialog()).message.toString())
+        ShadowAlertDialog.getLatestAlertDialog().dismiss()
+        scanner.found("temperance://home#child")
+        assertFalse(scanner.isFinishing)
+        assertEquals(app.getString(R.string.scan_wrong_child), shadowOf(ShadowAlertDialog.getLatestAlertDialog()).message.toString())
         scanner.found(LINK)
         assertTrue(scanner.isFinishing)
         assertEquals(LINK, shadowOf(scanner).resultIntent.getStringExtra(ScanActivity.EXTRA_LINK))
         controller.pause().stop().destroy()
+
+        val child = Robolectric.buildActivity(ScanActivity::class.java, Intent().putExtra(ScanActivity.EXTRA_PREFIX, ScanActivity.HOME_PREFIX)).setup()
+        child.get().found(LINK)
+        assertFalse(child.get().isFinishing)
+        assertEquals(app.getString(R.string.scan_wrong_parent), shadowOf(ShadowAlertDialog.getLatestAlertDialog()).message.toString())
+        ShadowAlertDialog.getLatestAlertDialog().dismiss()
+        child.get().found("https://example.com")
+        assertEquals(app.getString(R.string.scan_wrong_setup), shadowOf(ShadowAlertDialog.getLatestAlertDialog()).message.toString())
+        child.get().found("temperance://home#child")
+        assertTrue(child.get().isFinishing)
+        assertEquals("temperance://home#child", shadowOf(child.get()).resultIntent.getStringExtra(ScanActivity.EXTRA_LINK))
+        child.pause().stop().destroy()
 
         val denied = Robolectric.buildActivity(ScanActivity::class.java).setup()
         denied.get().onRequestPermissionsResult(ScanActivity.REQUEST_CAMERA, arrayOf(Manifest.permission.CAMERA), intArrayOf(-1))

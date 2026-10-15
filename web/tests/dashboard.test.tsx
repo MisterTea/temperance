@@ -526,6 +526,10 @@ describe("profile editor", () => {
       within(card).getByRole("list", { name: "riley shared app limits" })
         .textContent,
     ).toBe("Games 0 / 40 min");
+    expect(
+      within(card).getByRole("list", { name: "riley site budgets" })
+        .textContent,
+    ).toBe("roblox.com 0 / 20 min");
     expect(saved.bedtime).toEqual({
       enabled: true,
       start: "21:30",
@@ -595,7 +599,9 @@ describe("devices", () => {
     await signIn();
     let user = await openDashboard();
     await tab(user, "Devices");
-    expect(screen.getByText(/hasn’t checked in yet/)).toBeTruthy();
+    expect(
+      screen.getByText(/Devices connect through the home gateway/),
+    ).toBeTruthy();
     cleanup();
     await api("v1/gateway/activity", { remote: { pin: "PIN" } }, GATEWAY);
     user = await openDashboard();
@@ -607,6 +613,10 @@ describe("devices", () => {
       }),
     ).toBeTruthy();
     const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "isSecureContext", {
+      value: true,
+      configurable: true,
+    });
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
       configurable: true,
@@ -623,6 +633,42 @@ describe("devices", () => {
     expect(view.getByRole("button", { name: "Copied" })).toBeTruthy();
   });
 
+  it("copies the setup code when the clipboard API is missing", async () => {
+    await seedHousehold();
+    await signIn();
+    await api("v1/gateway/activity", { remote: { pin: "PIN" } }, GATEWAY);
+    const user = await openDashboard();
+    await tab(user, "Devices");
+    const view = within(screen.getByLabelText("Device setup code"));
+    await view.findByRole("img", {
+      name: "QR code to set up a child's device",
+    });
+    Object.defineProperty(window, "isSecureContext", {
+      value: false,
+      configurable: true,
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      configurable: true,
+    });
+    let copied = "";
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: (command: string) => {
+        if (command === "copy" && document.activeElement instanceof HTMLTextAreaElement) {
+          copied = document.activeElement.value;
+        }
+        return true;
+      },
+    });
+    await user.click(view.getByRole("button", { name: "Copy setup code" }));
+    expect(
+      JSON.parse(Buffer.from(copied.split("#")[1], "base64url").toString()),
+    ).toMatchObject({ v: 1, port: 51820, pin: "PIN" });
+    expect(view.getByRole("button", { name: "Copied" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("enrolls, renames, reassigns, pauses, locates and revokes", async () => {
     const phone = await seedHousehold();
     await api(
@@ -633,13 +679,6 @@ describe("devices", () => {
     await signIn();
     const user = await openDashboard();
     await tab(user, "Devices");
-    await user.selectOptions(screen.getByLabelText("Client"), "2");
-    await user.click(
-      screen.getByRole("button", { name: "Create enrollment code" }),
-    );
-    const code = await screen.findByLabelText(/Enter this code/);
-    expect((code as HTMLInputElement).value.length).toBeGreaterThan(20);
-    expect((await state()).codes[0].profile_id).toBe(2);
 
     const row = screen
       .getByRole("textbox", { name: "Alex phone name" })
@@ -696,6 +735,113 @@ describe("devices", () => {
       ).toBeNull(),
     );
     expect((await state()).devices[0].location?.accuracy).toBe(18.4);
+  });
+
+  it("renaming a device updates that name at the top of the devices page", async () => {
+    process.env.TEMPERANCE_FORWARD_SECRET = "f".repeat(64);
+    await seedHousehold();
+    await api("v1/gateway/activity", { remote: { pin: "PIN" } }, GATEWAY);
+    const { link } = await api("api/parents/pairing", {}, ADMIN);
+    const { code } = JSON.parse(
+      Buffer.from(link.split("#")[1], "base64url").toString(),
+    );
+    expect(
+      (
+        await handle(
+          new Request(`${ORIGIN}/v1/gateway/parents/pair`, {
+            method: "POST",
+            headers: { "x-temperance-forwarded": "f".repeat(64) },
+            body: JSON.stringify({
+              code,
+              name: "Alex phone",
+              key: "k".repeat(43),
+            }),
+          }),
+          "v1/gateway/parents/pair",
+          repo,
+        )
+      ).status,
+    ).toBe(200);
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Devices");
+    const parent = screen
+      .getByRole("heading", { name: "Parent devices" })
+      .closest("section")!;
+    expect(within(parent).getByText("Alex phone")).toBeTruthy();
+    const name = screen.getByRole("textbox", { name: "Alex phone name" });
+    await user.clear(name);
+    await user.type(name, "Kitchen tablet{enter}");
+    await waitFor(() =>
+      expect(within(parent).getByText("Kitchen tablet")).toBeTruthy(),
+    );
+    expect(within(parent).queryByText("Alex phone")).toBeNull();
+  });
+
+  it("shows admin for a parent device and will not turn it into a child", async () => {
+    await seedHousehold();
+    const { code } = await api("api/enrollment", { admin: true }, ADMIN);
+    const enrolled = await api("v1/enroll", {
+      code,
+      name: "Parent phone",
+      public_key: key(9),
+    });
+    expect(enrolled.policy).toMatchObject({ id: 0, name: "admin" });
+    const ip = String(enrolled.tunnel.address).split("/")[0];
+    const changed = await handle(
+      new Request(`${ORIGIN}/api/devices`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: ORIGIN,
+          Authorization: "Bearer " + ADMIN,
+        },
+        body: JSON.stringify({ ip, name: "Parent phone", profile_id: 1 }),
+      }),
+      "api/devices",
+      repo,
+    );
+    expect(changed.status).toBe(400);
+    expect((await changed.json()).error).toMatch(/stays an admin/);
+    const child = (await state()).devices.find((d) => d.name === "Alex phone")!;
+    const reversed = await handle(
+      new Request(`${ORIGIN}/api/devices`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: ORIGIN,
+          Authorization: "Bearer " + ADMIN,
+        },
+        body: JSON.stringify({
+          ip: child.ip,
+          name: child.name,
+          profile_id: 0,
+        }),
+      }),
+      "api/devices",
+      repo,
+    );
+    expect(reversed.status).toBe(400);
+    const gateway = await api("v1/gateway/state", undefined, GATEWAY);
+    expect(gateway.profiles).toContainEqual(
+      expect.objectContaining({ id: 0, name: "admin" }),
+    );
+    expect(gateway.peers).toContainEqual(
+      expect.objectContaining({ ip, profile_id: 0 }),
+    );
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Devices");
+    const client = screen.getByLabelText(
+      "Parent phone client",
+    ) as HTMLSelectElement;
+    expect(client.disabled).toBe(true);
+    expect(client.value).toBe("admin");
+    expect(client.textContent).toBe("admin");
+    const row = client.closest("tr")!;
+    const cells = [...row.querySelectorAll("td")].map((cell) => cell.textContent);
+    expect(cells.slice(3)).toEqual(["", "", ""]);
+    expect(within(row).queryByRole("button")).toBeNull();
   });
 
   it("explains that a home device needs the access point", async () => {
@@ -816,6 +962,13 @@ describe("usage and history", () => {
     expect(screen.getByRole("table").textContent).toContain(
       "Video & streaming 30 min",
     );
+    expect(
+      screen.getByRole("img", { name: /Overall usage, 30 minutes/ }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("img", { name: /youtube\.com 30 minutes/ }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/left off/)).toBeNull();
 
     await user.selectOptions(screen.getByLabelText("Usage period"), "1");
     await waitFor(() =>
@@ -940,16 +1093,11 @@ describe("settings", () => {
     await user.type(screen.getByLabelText("History retention (days)"), "14");
     await user.clear(screen.getByLabelText(/offline grace/));
     await user.type(screen.getByLabelText(/offline grace/), "2");
-    await user.selectOptions(
-      screen.getByLabelText("Home/default client"),
-      "2",
-    );
     await user.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(async () =>
       expect(await state()).toMatchObject({
         retention_days: 14,
         offline_grace_seconds: 7200,
-        home_profile_id: 2,
       }),
     );
 
@@ -1119,9 +1267,6 @@ describe("settings", () => {
     await signIn();
     const user = await openDashboard();
     await tab(user, "Settings");
-    expect(
-      screen.getByText(/Parent devices connect through the home gateway/),
-    ).toBeTruthy();
     const section = screen
       .getByRole("heading", { name: "Remote access" })
       .closest("section")!;
@@ -1201,7 +1346,7 @@ describe("settings", () => {
     await api("v1/gateway/activity", { remote: { pin: "PIN" } }, GATEWAY);
     await signIn();
     const user = await openDashboard();
-    await tab(user, "Settings");
+    await tab(user, "Devices");
     const view = within(
       screen
         .getByRole("heading", { name: "Parent devices" })
@@ -1214,6 +1359,10 @@ describe("settings", () => {
     expect(qr.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
     expect(view.getByRole("timer").textContent).toMatch(/10:00 more/);
     const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "isSecureContext", {
+      value: true,
+      configurable: true,
+    });
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
       configurable: true,
@@ -1282,9 +1431,9 @@ describe("settings", () => {
       },
     );
     const user = await openDashboard();
-    await screen.findByText("AWAY FROM HOME · ROBIN'S PIXEL");
+    await screen.findByText("PARENT · ROBIN'S PIXEL");
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
-    await tab(user, "Settings");
+    await tab(user, "Devices");
     const view = within(
       screen
         .getByRole("heading", { name: "Parent devices" })

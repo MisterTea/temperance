@@ -6,6 +6,7 @@ import { CATALOG, dailyLimit, type Profile } from "@/lib/policy";
 import type { History } from "@/lib/model";
 import type { UpdateStatus } from "@/lib/updates";
 import { ProfileEditor } from "./profile-editor";
+import { UsageCharts } from "./usage-charts";
 import { Onboarding } from "./onboarding";
 import { api } from "./api";
 import { nextHomeAddress, type HomeNetwork } from "@/lib/home-lan";
@@ -26,6 +27,42 @@ const ago = (at: number) => {
 };
 const capitalize = (text: string) => text[0].toUpperCase() + text.slice(1);
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+/** The dashboard is often opened over plain HTTP on the home network, where `navigator.clipboard` cannot write. The copy has to happen in the click itself. */
+function copyWithCommand(text: string) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.top = "0";
+  area.style.left = "0";
+  area.style.fontSize = "16px";
+  area.style.width = "2em";
+  area.style.height = "2em";
+  area.style.padding = "0";
+  area.style.border = "none";
+  area.style.outline = "none";
+  area.style.boxShadow = "none";
+  area.style.background = "transparent";
+  document.body.appendChild(area);
+  area.focus();
+  area.select();
+  area.setSelectionRange(0, area.value.length);
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  area.remove();
+  return copied;
+}
+function copyText(text: string): Promise<void> {
+  if (window.isSecureContext && navigator.clipboard?.writeText)
+    return navigator.clipboard.writeText(text);
+  return copyWithCommand(text)
+    ? Promise.resolve()
+    : Promise.reject(new Error("Could not copy"));
+}
 const categoryName = (key: string) =>
   (CATALOG as Record<string, { name: string } | undefined>)[key]?.name;
 const bucketLabel = (bucket: string, profile?: Profile) =>
@@ -84,11 +121,11 @@ function HomeSetup({ network, ip }: { network: HomeNetwork; ip: string }) {
 }
 const INTROS: Record<string, string> = {
   overview: "Make room for the things that matter.",
-  devices: "Phones, tablets, TVs and consoles that follow your family’s rules.",
+  devices: "Phones, tablets, TVs, consoles and parent phones.",
   usage: "How much time each person spent online, and on what.",
   history: "Sites your family’s devices looked up, and why.",
   requests: "Answer requests for more time and hand out rewards.",
-  settings: "Remote access, parent devices, backups and data retention.",
+  settings: "Remote access, backups and data retention.",
 };
 const ROUTER_GUIDE =
   "https://github.com/MisterTea/temperance/blob/main/docs/routers.md";
@@ -287,13 +324,15 @@ function DeviceSetup({
             </ol>
             <p className="actions">
               <button
+                type="button"
                 className="button secondary"
-                onClick={() =>
-                  act(async () => {
-                    await navigator.clipboard.writeText(link);
+                onClick={() => {
+                  const pending = copyText(link);
+                  void act(async () => {
+                    await pending;
                     setCopied(true);
-                  })
-                }
+                  });
+                }}
               >
                 {copied ? "Copied" : "Copy setup code"}
               </button>
@@ -494,17 +533,20 @@ function ParentPhones({
             </ol>
             <p className="actions">
               <button
+                type="button"
                 className="button secondary"
-                onClick={() =>
-                  act(async () => {
-                    await navigator.clipboard.writeText(pairing.link);
+                onClick={() => {
+                  const pending = copyText(pairing.link);
+                  void act(async () => {
+                    await pending;
                     setCopied(true);
-                  })
-                }
+                  });
+                }}
               >
                 {copied ? "Copied" : "Copy pairing link"}
               </button>
               <button
+                type="button"
                 className="button secondary"
                 onClick={() => setPairing(undefined)}
               >
@@ -589,7 +631,6 @@ export function Dashboard() {
   const [editing, setEditing] = useState<Profile | true>();
   const [renaming, setRenaming] = useState<number>();
   const [tab, setTab] = useState("overview");
-  const [code, setCode] = useState("");
   const [homeSetup, setHomeSetup] = useState<{ name: string; ip: string }>();
   const homeDialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -876,7 +917,10 @@ export function Dashboard() {
         <header>
           <div className="eyebrow">
             {viewer?.role === "parent"
-              ? `AWAY FROM HOME · ${viewer.name.toUpperCase()}`
+              ? `PARENT · ${(
+                  state.parents.find((p) => p.id === viewer.id)?.name ??
+                  viewer.name
+                ).toUpperCase()}`
               : "A LITTLE MORE BALANCE"}
           </div>
           <div className="heading">
@@ -1122,6 +1166,31 @@ export function Dashboard() {
                         ))}
                       </ul>
                     ) : null}
+                    {Object.keys(p.site_limits).length ? (
+                      <ul
+                        className="app-groups"
+                        aria-label={`${label} site budgets`}
+                      >
+                        {Object.entries(p.site_limits)
+                          .sort(([a], [b]) => a.localeCompare(b))
+                          .map(([site]) => (
+                            <li key={site}>
+                              {site}{" "}
+                              <span>
+                                {p.bucket_usage["site:" + site] ?? 0} /{" "}
+                                {dailyLimit(
+                                  p,
+                                  Date.now() / 1000,
+                                  state.timezone,
+                                  p.rewards,
+                                  "site:" + site,
+                                )}{" "}
+                                min
+                              </span>
+                            </li>
+                          ))}
+                      </ul>
+                    ) : null}
                     <div className="actions">
                       <button
                         className="secondary"
@@ -1276,46 +1345,12 @@ export function Dashboard() {
         {tab === "devices" ? (
           <>
             <DeviceSetup state={state} act={act} />
-            <section>
-              <h2>Enroll a VPN device</h2>
-              <p>Create a one-use code valid for ten minutes.</p>
-              <form
-                className="enrollment"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  act(async () => {
-                    const pid = Number(
-                      new FormData(e.currentTarget).get("profile_id"),
-                    );
-                    setCode(
-                      (
-                        await api<{ code: string }>("/api/enrollment", {
-                          profile_id: pid,
-                        })
-                      ).code,
-                    );
-                  });
-                }}
-              >
-                <label>
-                  Client
-                  <select name="profile_id" required>
-                    {state.profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {clientName(p)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button className="primary">Create enrollment code</button>
-              </form>
-              {code ? (
-                <label>
-                  Enter this code in the Temperance app
-                  <input value={code} readOnly />
-                </label>
-              ) : null}
-            </section>
+            <ParentPhones
+              state={state}
+              viewer={viewer}
+              refresh={refresh}
+              act={act}
+            />
             <section>
               <h2>Add a home-network device</h2>
               {state.home_network ? (
@@ -1402,32 +1437,55 @@ export function Dashboard() {
                           }}
                           onBlur={(e) => {
                             const name = e.target.value.trim();
-                            if (name && name !== d.name)
-                              act(() => save("/api/devices", { ...d, name }));
-                            else e.target.value = d.name;
+                            if (!name || name === d.name) {
+                              e.target.value = d.name;
+                              return;
+                            }
+                            const previous = d.name;
+                            act(async () => {
+                              await save("/api/devices", { ...d, name });
+                              const match = (state.parents ?? []).filter(
+                                (p) => p.name === previous,
+                              );
+                              if (match.length === 1)
+                                await save("/api/parents/rename", {
+                                  id: match[0].id,
+                                  name,
+                                });
+                            });
                           }}
                         />
                       </td>
                       <td>
-                        <select
-                          aria-label={`${d.name} client`}
-                          disabled={!!d.user_id}
-                          value={d.profile_id}
-                          onChange={(e) =>
-                            act(() =>
-                              save("/api/devices", {
-                                ...d,
-                                profile_id: Number(e.target.value),
-                              }),
-                            )
-                          }
-                        >
-                          {state.profiles.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {clientName(p)}
-                            </option>
-                          ))}
-                        </select>
+                        {d.admin ? (
+                          <select
+                            aria-label={`${d.name} client`}
+                            value="admin"
+                            disabled
+                          >
+                            <option value="admin">admin</option>
+                          </select>
+                        ) : (
+                          <select
+                            aria-label={`${d.name} client`}
+                            disabled={!!d.user_id}
+                            value={String(d.profile_id)}
+                            onChange={(e) =>
+                              act(() =>
+                                save("/api/devices", {
+                                  ...d,
+                                  profile_id: Number(e.target.value),
+                                }),
+                              )
+                            }
+                          >
+                            {state.profiles.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {clientName(p)}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </td>
                       <td>
                         {d.ip}
@@ -1442,8 +1500,8 @@ export function Dashboard() {
                         ) : null}
                       </td>
                       <td>
-                        {d.last_seen ? ago(d.last_seen) : "Never"}
-                        {d.diagnostics?.issues.length ? (
+                        {d.admin ? null : d.last_seen ? ago(d.last_seen) : "Never"}
+                        {!d.admin && d.diagnostics?.issues.length ? (
                           <ul
                             className="issues"
                             aria-label={`${d.name} health`}
@@ -1458,7 +1516,7 @@ export function Dashboard() {
                         ) : null}
                       </td>
                       <td>
-                        {d.kind === "home" ? (
+                        {d.admin ? null : d.kind === "home" ? (
                           <small>Not available</small>
                         ) : d.location ? (
                           <a
@@ -1472,60 +1530,68 @@ export function Dashboard() {
                         ) : (
                           <small>None shared</small>
                         )}
-                        {d.location_requested &&
+                        {!d.admin &&
+                        d.location_requested &&
                         Date.now() / 1000 - d.location_requested < 3600 ? (
                           <small> · waiting for device…</small>
                         ) : null}
                       </td>
                       <td className="controls">
-                        {d.kind === "home" ? null : (
-                          <button
-                            onClick={() =>
-                              act(() =>
-                                save("/api/devices/locate", { ip: d.ip }),
-                              )
-                            }
-                          >
-                            Locate
-                          </button>
+                        {d.admin ? null : (
+                          <>
+                            {d.kind === "home" ? null : (
+                              <button
+                                onClick={() =>
+                                  act(() =>
+                                    save("/api/devices/locate", { ip: d.ip }),
+                                  )
+                                }
+                              >
+                                Locate
+                              </button>
+                            )}
+                            <button
+                              onClick={() =>
+                                act(() =>
+                                  save("/api/devices", {
+                                    ...d,
+                                    paused: !d.paused,
+                                  }),
+                                )
+                              }
+                            >
+                              {d.paused ? "Resume" : "Pause"}
+                            </button>
+                            <button
+                              onClick={() =>
+                                act(() =>
+                                  save("/api/devices", {
+                                    ...d,
+                                    managed: !d.managed,
+                                  }),
+                                )
+                              }
+                            >
+                              {d.managed ? "Set unmanaged" : "Manage"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (
+                                  confirm(
+                                    d.kind === "home"
+                                      ? `Stop managing ${d.name}?`
+                                      : `Revoke ${d.name}'s VPN and device token?`,
+                                  )
+                                )
+                                  act(() =>
+                                    save("/api/devices/delete", { ip: d.ip }),
+                                  );
+                              }}
+                            >
+                              {d.kind === "home" ? "Remove" : "Revoke"}
+                            </button>
+                          </>
                         )}
-                        <button
-                          onClick={() =>
-                            act(() =>
-                              save("/api/devices", { ...d, paused: !d.paused }),
-                            )
-                          }
-                        >
-                          {d.paused ? "Resume" : "Pause"}
-                        </button>
-                        <button
-                          onClick={() =>
-                            act(() =>
-                              save("/api/devices", {
-                                ...d,
-                                managed: !d.managed,
-                              }),
-                            )
-                          }
-                        >
-                          {d.managed ? "Set unmanaged" : "Manage"}
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (
-                              confirm(
-                                d.kind === "home"
-                                  ? `Stop managing ${d.name}?`
-                                  : `Revoke ${d.name}'s VPN and device token?`,
-                              )
-                            )
-                              act(() =>
-                                save("/api/devices/delete", { ip: d.ip }),
-                              );
-                          }}
-                        >
-                          {d.kind === "home" ? "Remove" : "Revoke"}
-                        </button>
                       </td>
                     </tr>
                   ))}
@@ -1554,6 +1620,11 @@ export function Dashboard() {
                 <option value={30}>Last 30 days</option>
               </select>
             </div>
+            <UsageCharts
+              days={currentUsage}
+              start={usageStart.toISOString().slice(0, 10)}
+              end={state.day}
+            />
             <section className="comparison">
               {state.profiles.map((p) => {
                 const cutoff = new Date(state.day + "T12:00:00Z");
@@ -1997,9 +2068,6 @@ export function Dashboard() {
                     save("/api/settings", {
                       retention_days: Number(f.get("retention")),
                       offline_grace_seconds: Number(f.get("grace")) * 3600,
-                      home_profile_id: f.get("home")
-                        ? Number(f.get("home"))
-                        : null,
                     }),
                   );
                 }}
@@ -2029,20 +2097,6 @@ export function Dashboard() {
                       crashes still expire firewall leases.
                     </small>
                   </label>
-                  <label>
-                    Home/default client
-                    <select
-                      name="home"
-                      defaultValue={state.home_profile_id ?? ""}
-                    >
-                      <option value="">No default</option>
-                      {state.profiles.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {clientName(p)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
                 </div>
                 <button className="primary">Save settings</button>
               </form>
@@ -2052,12 +2106,6 @@ export function Dashboard() {
               onSave={(network) =>
                 act(() => save("/api/settings", { network }))
               }
-            />
-            <ParentPhones
-              state={state}
-              viewer={viewer}
-              refresh={refresh}
-              act={act}
             />
             <section>
               <h2>Portable backup</h2>

@@ -103,6 +103,19 @@ private let identity = #"{"v":1,"host":"parkers.ddnsfree.com","port":51820,"pin"
         XCTAssertEqual(loads, 3)
     }
 
+    func testAMismatchedCodeSaysWhichOneToScan() {
+        XCTAssertEqual(
+            scanMismatch(expected: pairPrefix, code: "temperance://home#abc"),
+            "This code sets up a child's device. To pair a parent's phone, scan the code under Devices → Parent devices."
+        )
+        XCTAssertEqual(
+            scanMismatch(expected: homePrefix, code: "temperance://pair#abc"),
+            "This code pairs a parent's phone. To set up a child's device, scan the code under Devices."
+        )
+        XCTAssertTrue(scanMismatch(expected: pairPrefix, code: "https://example.com").contains("not a Temperance pairing code"))
+        XCTAssertTrue(scanMismatch(expected: homePrefix, code: "https://example.com").contains("device setup code"))
+    }
+
     func testRendersTheModeChoiceAndBothModes() async throws {
         UserDefaults.standard.removeObject(forKey: "mode")
         defer { UserDefaults.standard.removeObject(forKey: "mode") }

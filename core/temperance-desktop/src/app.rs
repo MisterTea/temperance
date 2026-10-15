@@ -234,7 +234,7 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         })
     }
 
-    /// Pairs this computer as a parent's, using the link under Settings → Parent devices.
+    /// Pairs this computer as a parent's, using the link under Devices → Parent devices.
     pub fn pair_parent(&mut self, link: &str, name: &str) -> Result<(), String> {
         if self.identity.as_ref().is_some_and(|i| i.state.is_some()) {
             return Err("This computer is enrolled as a child's device.".into());

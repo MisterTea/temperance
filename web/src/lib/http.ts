@@ -266,12 +266,29 @@ export async function handle(
                 );
               return service.revokeParent(state, id);
             }
-            case "api/enrollment":
+            case "api/parents/rename": {
+              const body = z
+                .object({
+                  id: z.string(),
+                  name: z.string().trim().min(1).max(80),
+                })
+                .parse(data);
+              if (actor.role === "parent" && actor.parent.id !== body.id)
+                throw new HTTPError(400, "You can only rename this phone");
+              return service.renameParent(state, body.id, body.name);
+            }
+            case "api/enrollment": {
+              const body = z
+                .union([
+                  z.object({ admin: z.literal(true) }),
+                  z.object({ profile_id: z.number().int().positive() }),
+                ])
+                .parse(data);
               return service.issueCode(
                 state,
-                z.object({ profile_id: z.number().int() }).parse(data)
-                  .profile_id,
+                "admin" in body ? "admin" : body.profile_id,
               );
+            }
             case "api/rewards":
               return service.reward(state, data);
             case "api/rewards/delete":
@@ -579,7 +596,8 @@ function validateBackup(value: unknown): State {
   const common = {
     id: z.string().uuid(),
     name: z.string().min(1).max(80),
-    profile_id: id,
+    profile_id: z.number().int().nonnegative(),
+    admin: z.boolean().optional(),
     user_id: z.string().uuid().optional(),
     revoked: z.boolean(),
     paused: z.boolean(),
@@ -652,7 +670,8 @@ function validateBackup(value: unknown): State {
       .array(
         z.object({
           hash: z.string().regex(/^[a-f0-9]{64}$/),
-          profile_id: id,
+          profile_id: z.number().int().nonnegative(),
+          admin: z.boolean().optional(),
           expires: stamp,
         }),
       )
@@ -791,10 +810,15 @@ function validateBackup(value: unknown): State {
     throw new HTTPError(400, "Duplicate backup devices");
   for (const d of s.devices) {
     const n = Number(d.ip.split(".").at(-1));
-    if (!ids.has(d.profile_id) || (d.kind !== "home" && (n < 2 || n > 254)))
+    const badAddress = d.kind !== "home" && (n < 2 || n > 254);
+    const badProfile = d.admin ? d.profile_id !== 0 : !ids.has(d.profile_id);
+    if (badAddress || badProfile)
       throw new HTTPError(400, "Invalid backup device");
   }
-  for (const r of [...s.codes, ...s.rewards, ...s.requests])
+  for (const code of s.codes)
+    if (!(code.admin && code.profile_id === 0) && !ids.has(code.profile_id))
+      throw new HTTPError(400, "Invalid backup profile reference");
+  for (const r of [...s.rewards, ...s.requests])
     if (!ids.has(r.profile_id))
       throw new HTTPError(400, "Invalid backup profile reference");
   if (s.home_profile_id && !ids.has(s.home_profile_id))

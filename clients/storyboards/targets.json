@@ -138,10 +138,10 @@
     "windows": "Pair and open the dashboard"
   },
   "dashboard.away": {
-    "android": "/away from home/i",
-    "ios": "/away from home/i",
-    "macos": "/away from home/i",
-    "windows": { "regex": "/away from home/i", "window": "dashboard" }
+    "android": "/parent ·/i",
+    "ios": "/parent ·/i",
+    "macos": "/parent ·/i",
+    "windows": { "regex": "/parent ·/i", "window": "dashboard" }
   },
   "dashboard.approve": {
     "android": "Approve",

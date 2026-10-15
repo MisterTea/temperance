@@ -82,21 +82,6 @@
         "role": "button",
         "name": "Locate"
       }
-    },
-    {
-      "say": "Prefer not to make a sign-in? A one-time enrollment code works too."
-    },
-    {
-      "click": {
-        "role": "button",
-        "name": "Create enrollment code"
-      }
-    },
-    {
-      "show": {
-        "label": "Enter this code in the Temperance app"
-      },
-      "hold": 2500
     }
   ]
 }

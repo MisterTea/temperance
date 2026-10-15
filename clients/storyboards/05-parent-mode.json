@@ -7,7 +7,7 @@
     { "childRequest": { "name": "Riley's tablet", "profile": "Riley", "minutes": 15, "message": "One more episode please" } },
     { "say": "This time the {{device}} belongs to Jordan, a parent." },
     { "tap": "choose.parent" },
-    { "say": "On the dashboard at home, Jordan opened Settings → Parent devices and chose Pair a parent device." },
+    { "say": "On the dashboard at home, Jordan opened Devices → Parent devices and chose Pair a parent device." },
     { "show": "pair.scan" },
     { "say": { "default": "A phone can scan the QR code. Here, Jordan pastes the pairing link instead.", "macos": "On a Mac, Jordan copies the pairing link from the dashboard and pastes it here.", "windows": "On a PC, Jordan copies the pairing link from the dashboard and pastes it here." } },
     { "type": "pair.link", "text": "{{link}}", "secret": true },
@@ -21,7 +21,7 @@
     { "tap": "dashboard.close" },
     { "show": "paired.open" },
     { "say": { "default": "Next time, Jordan opens it straight from here.", "android": "Next time, Jordan just opens the app and lands on the dashboard." } },
-    { "say": "To stop using the {{device}}, Jordan unpairs it here. If it's ever lost, Jordan removes it from Settings → Parent devices at home, and it stops working at once.", "hold": 4500 },
+    { "say": "To stop using the {{device}}, Jordan unpairs it here. If it's ever lost, Jordan removes it from Devices → Parent devices at home, and it stops working at once.", "hold": 4500 },
     { "show": "paired.unpair", "hold": 4500 }
   ]
 }

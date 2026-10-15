@@ -31,6 +31,7 @@ const publicDevice = (d: Device) => ({
   ip: d.ip,
   name: d.name,
   profile_id: d.profile_id,
+  admin: d.admin || undefined,
   user_id: d.user_id,
   paused: d.paused,
   managed: d.managed,
@@ -240,7 +241,7 @@ export async function pairParent(state: State, input: unknown) {
   );
   if (!code)
     throw new Error(
-      "That pairing code has expired or was already used. Create a new one in Settings.",
+      "That pairing code has expired or was already used. Create a new one under Devices.",
     );
   state.parent_codes = state.parent_codes!.filter((c) => c !== code);
   const parents = (state.parents ??= []);
@@ -272,6 +273,13 @@ export function revokeParent(state: State, id: string) {
     "account",
     `${parent.name} can no longer open the dashboard away from home`,
   );
+  return snapshot(state);
+}
+export function renameParent(state: State, id: string, name: string) {
+  const parent = (state.parents ?? []).find((p) => p.id === id && !p.revoked);
+  if (!parent) throw new Error("That parent device is not paired");
+  parent.name = name;
+  changed(state, "account", `${parent.name} renamed`);
   return snapshot(state);
 }
 function profile(state: State, id: number) {
@@ -337,12 +345,20 @@ export function deleteProfile(state: State, id: number) {
   changed(state, "policy", "Client removed");
   return snapshot(state);
 }
-export async function issueCode(state: State, id: number) {
-  profile(state, id);
+/** A parent's device has no child client. `0` is that sentinel, never a profile id. */
+export function adminClient(): Profile {
+  return {
+    ...profileSchema.parse({ name: "admin", filter_level: "none", avatar: "" }),
+    id: 0,
+  };
+}
+export async function issueCode(state: State, id: number | "admin") {
+  if (id !== "admin") profile(state, id);
   const code = randomToken();
   state.codes.push({
     hash: await hash(code),
-    profile_id: id,
+    profile_id: id === "admin" ? 0 : id,
+    ...(id === "admin" ? { admin: true } : {}),
     expires: now() + 600,
   });
   prune(state);
@@ -406,20 +422,32 @@ export function addHomeDevice(state: State, input: unknown) {
 const deviceInput = z.object({
   ip: z.string().regex(/^(?:\d{1,3}\.){3}\d{1,3}$/),
   name: z.string().trim().min(1).max(80),
-  profile_id: z.number().int().positive(),
+  profile_id: z.number().int().nonnegative(),
   paused: z.boolean().optional(),
   managed: z.boolean().optional(),
 });
 export function saveDevice(state: State, input: unknown) {
   const data = deviceInput.parse(input);
-  profile(state, data.profile_id);
   const device = state.devices.find((d) => d.ip === data.ip && !d.revoked);
   if (!device) throw new Error("Enroll a VPN device first");
-  const owner =
-    device.user_id && (state.users ?? []).find((u) => u.id === device.user_id);
-  if (owner && owner.profile_id !== data.profile_id)
-    throw new Error("This device follows the client who signed in");
+  if (device.admin) {
+    if (data.profile_id !== 0)
+      throw new Error(
+        "An admin device stays an admin. Remove it and enroll it again to follow a child.",
+      );
+  } else if (data.profile_id === 0) {
+    throw new Error(
+      "A child's device stays with that child. Remove it and enroll it again to make it an admin device.",
+    );
+  } else {
+    profile(state, data.profile_id);
+    const owner =
+      device.user_id && (state.users ?? []).find((u) => u.id === device.user_id);
+    if (owner && owner.profile_id !== data.profile_id)
+      throw new Error("This device follows the client who signed in");
+  }
   Object.assign(device, data);
+  if (device.admin) device.profile_id = 0;
   if (device.kind === "home") delete device.location_requested;
   changed(state, "device", `Device ${device.name} updated`);
   return snapshot(state);
@@ -470,7 +498,7 @@ export function provisioning(device: Device) {
   };
 }
 export function clientState(state: State, device: Device, at = now()) {
-  const p = profile(state, device.profile_id),
+  const p = device.admin ? adminClient() : profile(state, device.profile_id),
     policy = effectiveProfile(state, p, at);
   const bedtime =
     p.bedtime.enabled === false
@@ -602,7 +630,8 @@ export async function enroll(state: State, input: unknown) {
       id: crypto.randomUUID(),
       ip,
       name: data.name,
-      profile_id: code.profile_id,
+      profile_id: code.admin ? 0 : code.profile_id,
+      ...(code.admin ? { admin: true } : {}),
       public_key: publicKey,
       token_hash: await hash(token),
       revoked: false,
@@ -618,8 +647,12 @@ export async function enroll(state: State, input: unknown) {
 }
 export function gatewayState(state: State, at = now()) {
   const { home_network: _network, ...view } = snapshot(state, at);
+  const profiles = state.devices.some((d) => !d.revoked && d.admin)
+    ? [...view.profiles, effectiveProfile(state, adminClient(), at)]
+    : view.profiles;
   return {
     ...view,
+    profiles,
     issued_at: at,
     policy_schema: 2,
     offline_grace_seconds: state.offline_grace_seconds,
@@ -723,6 +756,10 @@ export function account(state: State, input: unknown) {
       (d) => d.id === entry.device_id && !d.revoked,
     );
     if (!device) continue;
+    if (device.admin) {
+      device.last_seen = at;
+      continue;
+    }
     const p = profile(state, device.profile_id);
     if (!device.managed || !p.managed || p.filter_level === "none") continue;
     const minute = entry.minute ?? Math.floor(at / 60);
@@ -750,7 +787,7 @@ export function account(state: State, input: unknown) {
     const device = state.devices.find(
       (d) => d.id === h.device_id && !d.revoked,
     );
-    if (!device || known.has(h.id)) continue;
+    if (!device || device.admin || known.has(h.id)) continue;
     const p = profile(state, device.profile_id);
     if (!device.managed || !p.managed || p.filter_level === "none") continue;
     if (h.at > at + 60 || h.at < at - state.retention_days * 86400) continue;
@@ -865,7 +902,6 @@ export function settings(state: State, input: unknown) {
   const data = z
     .object({
       paused: z.boolean().optional(),
-      home_profile_id: z.number().int().positive().nullable().optional(),
       retention_days: z.number().int().min(1).max(90).optional(),
       offline_grace_seconds: z
         .number()
@@ -877,10 +913,8 @@ export function settings(state: State, input: unknown) {
     })
     .parse(input);
   const { network: reach, ...household } = data;
-  if (data.home_profile_id) profile(state, data.home_profile_id);
   if (reach) state.network = networkSettings(state, reach);
   Object.assign(state, household);
-  if (data.home_profile_id === null) delete state.home_profile_id;
   changed(
     state,
     "settings",

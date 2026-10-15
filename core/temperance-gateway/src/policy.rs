@@ -130,18 +130,11 @@ impl Policy {
         self.lan_networks.iter().any(|n| n.contains(ip))
     }
 
-    /// Unregistered home-network addresses follow the Home profile, if any.
+    /// Unregistered addresses on the home network are not filtered. Only devices
+    /// added on the dashboard follow a client.
     fn subject(&self, ip: Ipv4Addr) -> (Option<&Client>, Option<&Profile>) {
         if let Some(c) = self.clients.get(&ip) {
             return (Some(c), self.profiles.get(&c.profile_id));
-        }
-        if self.on_lan(ip) {
-            return (
-                None,
-                self.state
-                    .home_profile_id
-                    .and_then(|id| self.profiles.get(&id)),
-            );
         }
         (None, None)
     }
@@ -175,7 +168,7 @@ impl Policy {
         let (client, profile) = self.subject(ip);
         let Some(p) = profile else {
             if client.is_none() && self.on_lan(ip) {
-                return (true, "unmanaged".into(), None);
+                return (false, "unmanaged".into(), None);
             }
             return (false, "unassigned VPN device".into(), None);
         };
@@ -341,7 +334,6 @@ mod tests {
             "profiles": [p],
             "peers": [{"id": "d1", "ip": "10.77.0.2", "public_key": "k", "profile_id": 1, "paused": false, "managed": true}],
             "lan_devices": [{"id": "tv", "ip": "192.168.1.50", "profile_id": 1}],
-            "home_profile_id": 1,
         }))
         .unwrap();
         Policy::new(
@@ -372,8 +364,9 @@ mod tests {
             ("d1", "adult")
         );
         assert!(!p.evaluate(ip("10.77.0.2"), "example.com", NOON).0);
-        // Unregistered LAN addresses follow the Home profile; unknown VPN addresses are not filtered.
-        assert!(p.evaluate(ip("192.168.1.99"), "pornhub.com", NOON).0);
+        // A registered home device follows its client. An address that was never added does not.
+        assert!(p.evaluate(ip("192.168.1.50"), "pornhub.com", NOON).0);
+        assert!(!p.evaluate(ip("192.168.1.99"), "pornhub.com", NOON).0);
         assert!(!p.evaluate(ip("10.77.0.9"), "pornhub.com", NOON).0);
     }
 

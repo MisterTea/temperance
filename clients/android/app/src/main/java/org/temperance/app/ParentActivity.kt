@@ -137,8 +137,15 @@ class ParentActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         val link = data?.getStringExtra(ScanActivity.EXTRA_LINK)
         if (requestCode != REQUEST_SCAN || resultCode != RESULT_OK || link == null) return
-        findViewById<EditText?>(R.id.link)?.setText(link)
-        pair(link, findViewById<EditText?>(R.id.phone_name)?.text?.toString() ?: defaultDeviceName())
+        findViewById<EditText?>(R.id.link)?.apply {
+            setText(link)
+            visibility = View.GONE
+        }
+        findViewById<View>(R.id.link_label).visibility = View.GONE
+        findViewById<EditText>(R.id.phone_name).apply {
+            requestFocus()
+            selectAll()
+        }
     }
 
     override fun onDestroy() {

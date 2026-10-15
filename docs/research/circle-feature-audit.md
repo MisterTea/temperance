@@ -30,7 +30,7 @@ Sources: [2018 FCC Circle manual](https://fcc.report/FCC-ID/2AF7ECIRCLE3/4104775
 | ID | Capability | Status | Evidence |
 | --- | --- | --- | --- |
 | F01 | Family profiles; rename, avatar, delete, assign devices | Done | Profile editor name/avatar; "Delete profile" (refuses while devices are assigned); `dashboard.test.tsx` "profile editor", `features.spec.ts` profile test |
-| F02 | Home/default profile; unmanaged devices | Done | Settings "Home/default profile" (also applied by the gateway's DNS to unregistered home-network devices); device "Set unmanaged"; service and gateway tests |
+| F02 | Home devices; unmanaged devices | Done | Each TV or console is added on Devices and follows that client's rules; device "Set unmanaged"; unregistered LAN addresses are not filtered |
 | F03 | Whole-family / profile / device pause | Done | Overview "Pause family", per-profile and per-device Pause; packet enforcement in the Linux integration test; e2e "household pause" |
 | F04 | Kid/Teen/Adult/None presets, editable categories | Done | Presets + 11 categories (incl. ads, proxy, malware feeds); golden cases `specs/policy-cases.json` in TS and Rust |
 | F05 | Custom allow/block/unmanaged rules; one-click history actions | Done | Editor domain lists; History allow/deny/unmanaged buttons; component + e2e history tests |

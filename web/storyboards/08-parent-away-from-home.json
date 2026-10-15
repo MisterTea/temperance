@@ -12,7 +12,7 @@
     {
       "click": {
         "role": "button",
-        "name": "Settings",
+        "name": "Devices",
         "exact": true
       }
     },
@@ -83,11 +83,11 @@
       "parentView": "robin"
     },
     {
-      "say": "The app opens the same dashboard. It knows it's a parent's phone away from home."
+      "say": "The app opens the same dashboard, signed in as this parent's phone."
     },
     {
       "show": {
-        "text": "/away from home/i",
+        "text": "/parent · robin's phone/i",
         "within": {
           "css": "header"
         }
@@ -127,7 +127,7 @@
     {
       "click": {
         "role": "button",
-        "name": "Settings",
+        "name": "Devices",
         "exact": true
       }
     },

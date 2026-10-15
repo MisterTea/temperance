@@ -6,7 +6,7 @@ There is nothing to configure and nothing extra to forward. Parent connections a
 
 ## Pair a parent's phone
 
-1. At home, open the dashboard and go to **Settings → Parent devices**, then choose **Pair a parent device**. A QR code appears. It works once, for ten minutes.
+1. At home, open the dashboard and go to **Devices → Parent devices**, then choose **Pair a parent device**. A QR code appears. It works once, for ten minutes.
 2. Install Temperance on the parent's phone or computer and choose **I'm a parent** on the first screen. Parent mode never asks for VPN permission.
 3. Pair it:
    - **iPhone and iPad:** tap **Scan the QR code**, or paste the link.
@@ -19,7 +19,7 @@ From then on, open the app and the dashboard is there. A paired phone is signed 
 
 ## Revoke a phone
 
-In **Settings → Parent devices**, choose **Revoke** next to the phone. Its connection closes within a few seconds and it cannot reconnect; the app says the phone was removed and asks to pair again. A phone cannot revoke itself, so a lost phone is removed from another paired phone or from the dashboard at home. On the phone itself, **Unpair this phone** deletes the pairing.
+In **Devices → Parent devices**, choose **Revoke** next to the phone. Its connection closes within a few seconds and it cannot reconnect; the app says the phone was removed and asks to pair again. A phone cannot revoke itself, so a lost phone is removed from another paired phone or from the dashboard at home. On the phone itself, **Unpair this phone** deletes the pairing.
 
 ## How it works
 

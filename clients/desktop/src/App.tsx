@@ -278,7 +278,7 @@ function ParentPair({ run, back }: { run: Run; back?: () => void }) {
       <h1>Open the family dashboard from anywhere</h1>
       <p>
         At home, open the dashboard&apos;s{" "}
-        <strong>Settings → Parent devices</strong>, choose{" "}
+        <strong>Devices → Parent devices</strong>, choose{" "}
         <strong>Pair a parent device</strong>, then{" "}
         <strong>Copy pairing link</strong>.
       </p>

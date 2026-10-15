@@ -68,7 +68,7 @@ fn invalid(message: impl Into<String>) -> CoreError {
 pub fn parse_pairing_link(link: String) -> Result<PairingLink, CoreError> {
     let bad = || {
         invalid(
-            "This is not a Temperance pairing code. Scan the code under Settings → Parent devices.",
+            "This is not a Temperance pairing code. Scan the code under Devices → Parent devices.",
         )
     };
     let encoded = link.trim().strip_prefix(LINK_PREFIX).ok_or_else(bad)?;

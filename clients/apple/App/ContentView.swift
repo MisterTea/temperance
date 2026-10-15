@@ -28,7 +28,7 @@ struct ContentView: View {
         }
         #if os(iOS)
         .sheet(isPresented: $scanning) {
-            QRScanner(prefix: "temperance://home#") { code in scanning = false; home = code }.ignoresSafeArea()
+            QRScanner(prefix: homePrefix) { code in scanning = false; home = code }.ignoresSafeArea()
         }
         #endif
         .refreshable { await client.refresh() }

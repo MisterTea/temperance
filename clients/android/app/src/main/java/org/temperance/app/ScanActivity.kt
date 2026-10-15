@@ -2,6 +2,7 @@ package org.temperance.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -34,6 +35,8 @@ class ScanActivity : Activity(), LifecycleOwner {
     private val analysis = Executors.newSingleThreadExecutor()
     private lateinit var preview: PreviewView
     private var done = false
+    private var announced: String? = null
+    private var dialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,7 +61,12 @@ class ScanActivity : Activity(), LifecycleOwner {
     override fun onResume() { super.onResume(); registry.currentState = Lifecycle.State.RESUMED }
     override fun onPause() { registry.currentState = Lifecycle.State.STARTED; super.onPause() }
     override fun onStop() { registry.currentState = Lifecycle.State.CREATED; super.onStop() }
-    override fun onDestroy() { registry.currentState = Lifecycle.State.DESTROYED; analysis.shutdown(); super.onDestroy() }
+    override fun onDestroy() {
+        dialog?.dismiss()
+        registry.currentState = Lifecycle.State.DESTROYED
+        analysis.shutdown()
+        super.onDestroy()
+    }
 
     private fun startCamera() {
         val future = ProcessCameraProvider.getInstance(this)
@@ -77,17 +85,42 @@ class ScanActivity : Activity(), LifecycleOwner {
     private fun scan(scanner: com.google.mlkit.vision.barcode.BarcodeScanner, image: ImageProxy) {
         val media = image.image ?: return image.close()
         scanner.process(InputImage.fromMediaImage(media, image.imageInfo.rotationDegrees))
-            .addOnSuccessListener(ContextCompat.getMainExecutor(this)) { codes -> codes.firstNotNullOfOrNull { it.rawValue }?.let(::found) }
+            .addOnSuccessListener(ContextCompat.getMainExecutor(this)) { codes ->
+                val prefix = intent.getStringExtra(EXTRA_PREFIX) ?: PAIR_PREFIX
+                val values = codes.mapNotNull { it.rawValue?.trim() }.filter { it.isNotEmpty() }
+                val text = values.firstOrNull { it.startsWith(prefix) } ?: values.firstOrNull() ?: return@addOnSuccessListener
+                found(text)
+            }
             .addOnCompleteListener { image.close() }
     }
 
-    /** Takes the first Temperance link of the requested kind; other QR codes are ignored. */
+    /** Accepts a link of the requested kind. Any other code stays on screen, with an explanation. */
     fun found(text: String) {
-        if (done || !text.startsWith(intent.getStringExtra(EXTRA_PREFIX) ?: PAIR_PREFIX)) return
-        done = true
-        setResult(RESULT_OK, Intent().putExtra(EXTRA_LINK, text))
-        finish()
+        if (done) return
+        val value = text.trim()
+        if (value.isEmpty()) return
+        val prefix = intent.getStringExtra(EXTRA_PREFIX) ?: PAIR_PREFIX
+        if (value.startsWith(prefix)) {
+            dialog?.dismiss()
+            done = true
+            setResult(RESULT_OK, Intent().putExtra(EXTRA_LINK, value))
+            finish()
+            return
+        }
+        if (value == announced || dialog?.isShowing == true) return
+        announced = value
+        dialog = AlertDialog.Builder(this)
+            .setMessage(rejectMessage(prefix, value))
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
+
+    private fun rejectMessage(expected: String, text: String) = getString(when {
+        expected == PAIR_PREFIX && text.startsWith(HOME_PREFIX) -> R.string.scan_wrong_child
+        expected == HOME_PREFIX && text.startsWith(PAIR_PREFIX) -> R.string.scan_wrong_parent
+        expected == HOME_PREFIX -> R.string.scan_wrong_setup
+        else -> R.string.scan_wrong_pair
+    })
 
     private fun refuse() {
         Toast.makeText(this, R.string.camera_needed, Toast.LENGTH_LONG).show()

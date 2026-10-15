@@ -6,6 +6,8 @@ export interface Device {
   ip: string;
   name: string;
   profile_id: number;
+  /** A parent's device. It is not a child client and cannot be turned into one. */
+  admin?: boolean;
   public_key: string;
   token_hash: string;
   /** IAM user who registered this VPN client. */
@@ -115,7 +117,7 @@ export interface State {
   nextProfileId: number;
   profiles: Profile[];
   devices: Device[];
-  codes: { hash: string; profile_id: number; expires: number }[];
+  codes: { hash: string; profile_id: number; admin?: boolean; expires: number }[];
   rewards: Reward[];
   usage: Usage;
   history: History[];
