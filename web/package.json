@@ -19,7 +19,7 @@
   "dependencies": {
     "@temperance/gateway-addon": "file:./gateway-addon",
     "kysely": "^0.29.6",
-    "next": "16.3.8",
+    "next": "16.4.0",
     "nodemailer": "^10.1.1",
     "pg": "^8.23.1",
     "pg-cloudflare": "^1.4.1",
