@@ -1,4 +1,5 @@
 "use client";
+import { BrandMark } from "./brand-mark";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { snapshot } from "@/lib/service";
 import { clientUsername } from "@/lib/accounts";
@@ -816,7 +817,7 @@ export function Dashboard() {
     return (
       <main className="sign-in">
         <span className="eyebrow">YOUR HOME. YOUR RULES.</span>
-        <h1>Temperance</h1>
+        <h1 className="sign-in-brand"><BrandMark />Temperance</h1>
         <p>Open source family balance, wherever you connect.</p>
         {loading ? (
           <p>Loading…</p>
@@ -868,7 +869,7 @@ export function Dashboard() {
     <>
       <aside>
         <a href="#" className="brand">
-          ◒{" "}
+          <BrandMark />
           <span>
             temperance<small>FAMILY BALANCE</small>
           </span>
@@ -1045,7 +1046,7 @@ export function Dashboard() {
                   return (
                   <article className="profile" key={p.id}>
                     <div className="profile-head">
-                      <span className="avatar">{p.avatar}</span>
+                      <span className="avatar">{p.avatar === "◒" ? <BrandMark /> : p.avatar}</span>
                       <div>
                         {renaming === p.id ? (
                           <input
@@ -1651,7 +1652,7 @@ export function Dashboard() {
                 return (
                   <article key={p.id} aria-label={`${clientName(p)} usage summary`}>
                     <h3>
-                      {p.avatar} {clientName(p)}
+                      {p.avatar === "◒" ? <BrandMark /> : p.avatar} {clientName(p)}
                     </h3>
                     <strong>{total} min</strong>
                     <small>

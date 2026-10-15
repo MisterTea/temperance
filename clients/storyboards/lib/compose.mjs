@@ -4,7 +4,7 @@
 // each control as it's used. Overlays are rendered by Chromium, so they match
 // the web storyboards.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -44,10 +44,12 @@ function layout(src, frame = {}) {
   return { crop, portrait: false, bezel: false, box: { x: even((W - w) / 2), y: even(30 + (800 - h) / 2), width: w, height: h }, radius: 14 };
 }
 
+const brandMark = readFileSync(resolve(web, "public/temperance-mark.svg"), "utf8").replaceAll("#2B3675", "#FFFFFF");
+
 const STYLE = `
   *{box-sizing:border-box;margin:0}
   html,body{width:${W}px;height:${H}px;background:transparent;font-family:-apple-system,"SF Pro Display","Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
-  .bg{position:absolute;inset:0;background:radial-gradient(1200px 800px at 15% 10%,#3b7d5a 0%,transparent 60%),linear-gradient(135deg,#17301f,#2a5c42)}
+  .bg{position:absolute;inset:0;background:radial-gradient(1200px 800px at 15% 10%,#5364a8 0%,transparent 60%),linear-gradient(135deg,#1b214b,#2B3675)}
   .title{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;color:#fff;text-align:center}
   .title small{font-size:24px;letter-spacing:.28em;text-transform:uppercase;opacity:.65}
   .title b{font-size:76px;letter-spacing:-.02em;font-weight:700;max-width:80%}
@@ -55,10 +57,11 @@ const STYLE = `
   .side{position:absolute;left:1040px;width:780px;top:0;bottom:0;display:flex;align-items:center}
   .side p{color:#fff;font-size:44px;line-height:1.32;font-weight:600;letter-spacing:-.01em;text-shadow:0 2px 12px rgba(0,0,0,.25)}
   .below{position:absolute;left:120px;right:120px;top:850px;bottom:20px;display:flex;align-items:center;justify-content:center}
-  .below p{background:rgba(12,26,18,.72);color:#fff;font-size:38px;line-height:1.3;font-weight:600;padding:20px 34px;border-radius:20px;text-align:center;max-width:1500px}
+  .below p{background:rgba(23,27,52,.72);color:#fff;font-size:38px;line-height:1.3;font-weight:600;padding:20px 34px;border-radius:20px;text-align:center;max-width:1500px}
+  .brand svg{width:34px;height:34px;vertical-align:middle;margin-right:8px}
   .brand{position:absolute;left:1040px;top:64px;color:#fff;opacity:.7;font-size:26px;letter-spacing:.04em}
   .ring{position:absolute;border:5px solid #ffc400;border-radius:16px;box-shadow:0 0 0 9px rgba(255,196,0,.28),0 0 24px rgba(255,196,0,.5)}
-  .chip{position:absolute;transform:translateX(-50%);background:rgba(12,26,18,.82);color:#fff;font-size:28px;font-weight:600;padding:10px 24px;border-radius:999px}
+  .chip{position:absolute;transform:translateX(-50%);background:rgba(23,27,52,.82);color:#fff;font-size:28px;font-weight:600;padding:10px 24px;border-radius:999px}
 `;
 
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -110,20 +113,20 @@ export async function compose({ raw, mp4, timeline, end, title, subtitle, platfo
     ({ b, r, phone }) => {
       const c = document.getElementById("c").getContext("2d");
       const g = c.createLinearGradient(0, 0, 1920, 1080);
-      g.addColorStop(0, "#17301f");
-      g.addColorStop(1, "#2a5c42");
+      g.addColorStop(0, "#1b214b");
+      g.addColorStop(1, "#2B3675");
       c.fillStyle = g;
       c.fillRect(0, 0, 1920, 1080);
       const glow = c.createRadialGradient(290, 110, 0, 290, 110, 1100);
-      glow.addColorStop(0, "rgba(59,125,90,.85)");
-      glow.addColorStop(1, "rgba(59,125,90,0)");
+      glow.addColorStop(0, "rgba(83,100,168,.85)");
+      glow.addColorStop(1, "rgba(83,100,168,0)");
       c.fillStyle = glow;
       c.fillRect(0, 0, 1920, 1080);
       const bezel = phone ? 14 : 0;
       c.shadowColor = "rgba(0,0,0,.45)";
       c.shadowBlur = 50;
       c.shadowOffsetY = 18;
-      c.fillStyle = phone ? "#0b0f0d" : "rgba(0,0,0,.35)";
+      c.fillStyle = phone ? "#111423" : "rgba(0,0,0,.35)";
       c.beginPath();
       c.roundRect(b.x - bezel, b.y - bezel, b.width + 2 * bezel, b.height + 2 * bezel, r + bezel);
       c.fill();
@@ -137,7 +140,7 @@ export async function compose({ raw, mp4, timeline, end, title, subtitle, platfo
     { b, r: L.radius, phone: L.bezel },
   );
   await page.screenshot({ path: frameFile, omitBackground: true });
-  const brand = L.portrait ? `<div class=brand>◒ temperance · ${NAMES[platform]}</div>` : "";
+  const brand = L.portrait ? `<div class=brand>${brandMark} temperance · ${NAMES[platform]}</div>` : "";
   if (brand) overlays.push({ file: await png(brand), from: TITLE, until: total, fade: 0.3 });
   overlays.push({
     file: await png(`<div class=bg></div><div class=title><small>Temperance · ${NAMES[platform]}</small><b>${esc(title)}</b><span>${esc(subtitle ?? "")}</span></div>`),

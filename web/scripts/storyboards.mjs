@@ -218,9 +218,9 @@ function paint(view) {
     root.popover = "manual";
     root.innerHTML = `<style>
       #sb-root{position:fixed;inset:0;width:auto;height:auto;margin:0;padding:0;border:0;background:transparent;overflow:visible;color:inherit;z-index:2147483647;pointer-events:none;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
-      #sb-caption{position:absolute;left:50%;bottom:28px;transform:translateX(-50%);max-width:78%;padding:14px 22px;border-radius:14px;background:rgba(18,32,25,.88);color:#fff;font-size:22px;line-height:1.35;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.25);transition:opacity .3s}
+      #sb-caption{position:absolute;left:50%;bottom:28px;transform:translateX(-50%);max-width:78%;padding:14px 22px;border-radius:14px;background:rgba(23,27,52,.88);color:#fff;font-size:22px;line-height:1.35;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.25);transition:opacity .3s}
       #sb-caption.top{top:28px;bottom:auto}
-      #sb-title{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:linear-gradient(135deg,#1d3b2c,#2f6a4c);color:#fff;text-align:center;transition:opacity .5s}
+      #sb-title{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:linear-gradient(135deg,#1b214b,#2B3675);color:#fff;text-align:center;transition:opacity .5s}
       #sb-title b{font-size:52px;letter-spacing:-.02em}
       #sb-title span{font-size:26px;opacity:.85;max-width:70%}
       #sb-title small{font-size:18px;opacity:.6;text-transform:uppercase;letter-spacing:.2em}

@@ -219,7 +219,7 @@ open class TemperanceApp : Application() {
     private fun notifyChild(message: String) {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("alerts", "Time and rules", NotificationManager.IMPORTANCE_DEFAULT))
-        manager.notify(message.hashCode(), Notification.Builder(this, "alerts").setContentText(message).setSmallIcon(android.R.drawable.ic_dialog_info).setAutoCancel(true).build())
+        manager.notify(message.hashCode(), Notification.Builder(this, "alerts").setContentText(message).setSmallIcon(R.drawable.ic_notification).setAutoCancel(true).build())
     }
 
     /** Answers a parent's one-time request with the freshest fix the OS already has. */

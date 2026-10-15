@@ -5,13 +5,13 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  color: #203c36;
-  background: #f6f8f5;
+  color: #242a43;
+  background: #f6f7fc;
   font-synthesis: none;
-  accent-color: #26715d;
-  --green: #26715d;
-  --muted: #71847b;
-  --line: #e2e9e2;
+  accent-color: #2b3675;
+  --brand: #2b3675;
+  --muted: #626b85;
+  --line: #dde1ef;
 }
 * {
   box-sizing: border-box;
@@ -23,7 +23,7 @@ aside {
   position: fixed;
   inset: 0 auto 0 0;
   width: 240px;
-  background: #eef3ed;
+  background: #eef0f9;
   border-right: 1px solid var(--line);
   padding: 36px 24px;
   display: flex;
@@ -32,7 +32,7 @@ aside {
 .brand {
   display: flex;
   gap: 10px;
-  color: #244d3f;
+  color: #2b3675;
   text-decoration: none;
   font-size: 30px;
   align-items: center;
@@ -56,7 +56,7 @@ aside {
 }
 .nav {
   padding: 14px;
-  color: #587064;
+  color: #555f7d;
   text-decoration: none;
   border-radius: 8px;
   font-size: 14px;
@@ -64,13 +64,13 @@ aside {
 }
 .nav:hover,
 .active {
-  background: #dde9dd;
-  color: #285943;
+  background: #e0e4f5;
+  color: #2b3675;
 }
 .aside-footer {
   margin-top: auto;
   font-size: 12px;
-  color: #426451;
+  color: #4c5779;
 }
 .aside-footer small {
   display: block;
@@ -95,7 +95,7 @@ main {
   font-size: 10px;
   letter-spacing: 2px;
   font-weight: 650;
-  color: #5c8a73;
+  color: #596697;
 }
 .heading {
   display: flex;
@@ -134,7 +134,7 @@ h1 {
 }
 .stats span {
   font-size: 12px;
-  color: #677e70;
+  color: #626b85;
 }
 .stats strong {
   display: block;
@@ -183,17 +183,17 @@ button:hover {
 }
 button:focus-visible,
 a:focus-visible {
-  outline: 3px solid #a0c8b8;
+  outline: 3px solid #9da8dc;
   outline-offset: 3px;
 }
 .primary {
-  background: var(--green);
+  background: var(--brand);
   color: white;
 }
 .secondary {
   background: white;
-  color: #395f4e;
-  border-color: #d6e1d6;
+  color: #2b3675;
+  border-color: #d6dcef;
 }
 .profiles {
   display: grid;
@@ -214,14 +214,15 @@ a:focus-visible {
 .avatar {
   width: 42px;
   height: 42px;
-  background: #e9f0da;
+  background: #e8ebfa;
+  flex: none;
   border-radius: 50%;
   display: grid;
   place-items: center;
   font:
     22px Georgia,
     serif;
-  color: #688149;
+  color: #4f5e9b;
 }
 .profile-head h3 {
   margin: 0;
@@ -259,10 +260,10 @@ a:focus-visible {
 }
 .badge {
   border-radius: 20px;
-  background: #edf3ed;
+  background: #eef0f9;
   padding: 6px 9px;
   font-size: 10px;
-  color: #5c7b69;
+  color: #596697;
   white-space: nowrap;
 }
 .paused {
@@ -299,18 +300,18 @@ progress {
   height: 6px;
   border: 0;
   border-radius: 6px;
-  background: #edf2ed;
+  background: #edf0f8;
 }
 progress::-webkit-progress-bar {
-  background: #edf2ed;
+  background: #edf0f8;
   border-radius: 6px;
 }
 progress::-webkit-progress-value {
-  background: #85a681;
+  background: #6979bb;
   border-radius: 6px;
 }
 progress::-moz-progress-bar {
-  background: #85a681;
+  background: #6979bb;
   border-radius: 6px;
 }
 .profile-actions {
@@ -324,8 +325,8 @@ progress::-moz-progress-bar {
   display: flex;
   gap: 14px;
   padding: 18px 21px;
-  background: #edf2e8;
-  border: 1px solid #dee8d5;
+  background: #edf0fa;
+  border: 1px solid #d9dff4;
   border-radius: 9px;
   margin-bottom: 36px;
 }
@@ -335,7 +336,7 @@ progress::-moz-progress-bar {
 }
 .notice p {
   font-size: 11px;
-  color: #6a7c65;
+  color: #626b85;
   line-height: 1.7;
   margin: 4px 0 0;
 }
@@ -352,30 +353,30 @@ table {
   font-size: 12px;
 }
 th {
-  background: #fafcf9;
-  color: #7c8b7e;
+  background: #fafbfe;
+  color: #626b85;
   font-size: 10px;
   font-weight: 500;
   padding: 13px 19px;
 }
 td {
   padding: 14px 19px;
-  border-top: 1px solid #eff2ed;
+  border-top: 1px solid #eef0f7;
 }
 td button,
 .row-card button {
   padding: 5px 9px;
   margin: 2px 6px 2px 0;
   background: white;
-  color: #395f4e;
-  border-color: #d6e1d6;
+  color: #2b3675;
+  border-color: #d6dcef;
 }
 .row-card button {
   padding: 8px 12px;
 }
 td button.on {
-  background: var(--green);
-  border-color: var(--green);
+  background: var(--brand);
+  border-color: var(--brand);
   color: white;
 }
 .devices th,
@@ -392,7 +393,7 @@ td button.on {
 }
 .domain {
   font-family: ui-monospace, monospace;
-  color: #536d5d;
+  color: #555f7d;
   overflow-wrap: anywhere;
 }
 .empty {
@@ -400,7 +401,7 @@ td button.on {
   color: var(--muted);
   text-align: center;
   font-size: 13px;
-  border: 1px dashed #cbd9cc;
+  border: 1px dashed #cbd2e8;
   border-radius: 10px;
   grid-column: 1/-1;
 }
@@ -419,7 +420,7 @@ td button.on {
 footer {
   border-top: 1px solid var(--line);
   padding-top: 20px;
-  color: #8a988c;
+  color: #626b85;
   font-size: 10px;
   display: flex;
   justify-content: space-between;
@@ -430,11 +431,11 @@ dialog {
   padding: 26px;
   width: 480px;
   max-width: calc(100% - 24px);
-  color: #203c36;
+  color: #242a43;
   max-height: 90vh;
 }
 dialog::backdrop {
-  background: #16372c66;
+  background: #1b214b66;
   backdrop-filter: blur(3px);
 }
 .dialog-heading {
@@ -447,7 +448,7 @@ dialog::backdrop {
   background: transparent;
   font-size: 22px;
   padding: 0 8px;
-  color: #6a7e70;
+  color: #626b85;
 }
 label {
   font-size: 12px;
@@ -460,22 +461,22 @@ select {
   font: inherit;
   width: 100%;
   padding: 10px;
-  border: 1px solid #d3dfd3;
+  border: 1px solid #d2d8eb;
   border-radius: 6px;
   margin-top: 7px;
-  color: #254436;
+  color: #242a43;
   background: white;
 }
 input:focus,
 textarea:focus,
 select:focus {
-  outline: 2px solid #9ec7b5;
+  outline: 2px solid #9da8dc;
 }
 label small,
 form > small,
 fieldset small {
   font-size: 10px;
-  color: #7a8c7a;
+  color: #626b85;
   display: block;
   line-height: 1.6;
   margin-top: 6px;
@@ -545,7 +546,7 @@ section > .notice[role="status"] {
   margin-bottom: 20px;
 }
 .pairing img {
-  border: 1px solid var(--line, #e3e6df);
+  border: 1px solid var(--line, #dde1ef);
   border-radius: 9px;
   background: #fff;
 }
@@ -789,7 +790,7 @@ td select {
   cursor: pointer;
 }
 .nav.active {
-  background: #dde9dd;
+  background: #e0e4f5;
 }
 .section-title {
   display: flex;
@@ -859,7 +860,7 @@ input[type="radio"] {
   margin-top: 22px;
 }
 .schedule {
-  background: #f6f8f4;
+  background: #f6f7fc;
   padding: 15px;
   border-radius: 8px;
 }
@@ -882,7 +883,7 @@ input[type="radio"] {
 }
 .quiet {
   background: transparent;
-  color: #52765e;
+  color: #4f5e9b;
 }
 .button {
   display: inline-block;
@@ -977,7 +978,7 @@ button:disabled {
 button.link {
   background: none;
   padding: 0;
-  color: var(--green);
+  color: var(--brand);
   text-decoration: underline;
 }
 pre.commands {
@@ -990,7 +991,7 @@ pre.commands {
   overflow-x: auto;
 }
 dialog::backdrop {
-  background: #16372c66;
+  background: #1b214b66;
 }
 select {
   max-width: 100%;
@@ -1114,13 +1115,13 @@ select {
   background: white;
 }
 .steps li.current {
-  color: #203c36;
+  color: #242a43;
   font-weight: 600;
 }
 .steps li.current span,
 .steps li.done span {
-  background: var(--green);
-  border-color: var(--green);
+  background: var(--brand);
+  border-color: var(--brand);
   color: white;
 }
 .plan {
@@ -1159,5 +1160,42 @@ fieldset.inline label {
 @media (max-width: 700px) {
   .onboarding {
     margin: 24px auto;
+  }
+}
+
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  flex: none;
+}
+.sign-in-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sign-in-brand .brand-mark {
+  width: 42px;
+  height: 42px;
+}
+.onboarding > .brand {
+  margin-bottom: 24px;
+}
+
+.avatar .brand-mark {
+  width: 28px;
+  height: 28px;
+}
+.comparison h3 .brand-mark {
+  width: 22px;
+  height: 22px;
+  vertical-align: middle;
+}
+@media (min-width: 701px) and (max-width: 1050px) {
+  aside .brand {
+    gap: 8px;
+  }
+  aside .brand-mark {
+    width: 28px;
+    height: 28px;
   }
 }

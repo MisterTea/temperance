@@ -1,18 +1,14 @@
-import {
-  dailyTotals,
-  domainShares,
-  type UsageDay,
-} from "@/lib/usage-charts";
+import { dailyTotals, domainShares, type UsageDay } from "@/lib/usage-charts";
 
 const COLORS = [
-  "#26715d",
-  "#3d8f78",
-  "#6a9a5b",
+  "#2B3675",
+  "#6474b8",
+  "#9983bd",
   "#c4a35a",
-  "#4d7c8a",
+  "#4f899a",
   "#8f6b4a",
   "#a04934",
-  "#71847b",
+  "#626b85",
 ];
 
 const dayLabel = (day: string) =>
@@ -39,7 +35,9 @@ function UsageTrend({
   const y = (minutes: number) =>
     pad.top + (1 - minutes / max) * (height - pad.top - pad.bottom);
   const line = series
-    .map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.minutes)}`)
+    .map(
+      (point, index) => `${index ? "L" : "M"}${x(index)},${y(point.minutes)}`,
+    )
     .join(" ");
   const area = `${line} L${x(series.length - 1)},${y(0)} L${x(0)},${y(0)} Z`;
   const labelEvery = Math.max(1, Math.ceil(series.length / 6));
@@ -57,23 +55,29 @@ function UsageTrend({
             x2={width - pad.right}
             y1={y(max * step)}
             y2={y(max * step)}
-            stroke="#e2e9e2"
+            stroke="#dde1ef"
           />
           <text
             x={pad.left - 8}
             y={y(max * step) + 4}
             textAnchor="end"
-            fill="#71847b"
+            fill="#626b85"
             fontSize="11"
           >
             {Math.round(max * step)}
           </text>
         </g>
       ))}
-      <path d={area} fill="#26715d" opacity="0.15" />
-      <path d={line} fill="none" stroke="#26715d" strokeWidth="2.5" />
+      <path d={area} fill="#2B3675" opacity="0.15" />
+      <path d={line} fill="none" stroke="#2B3675" strokeWidth="2.5" />
       {series.map((point, index) => (
-        <circle key={point.day} cx={x(index)} cy={y(point.minutes)} r="3.5" fill="#26715d">
+        <circle
+          key={point.day}
+          cx={x(index)}
+          cy={y(point.minutes)}
+          r="3.5"
+          fill="#2B3675"
+        >
           <title>
             {dayLabel(point.day)}: {point.minutes} min
           </title>
@@ -86,7 +90,7 @@ function UsageTrend({
             x={x(index)}
             y={height - 8}
             textAnchor="middle"
-            fill="#71847b"
+            fill="#626b85"
             fontSize="11"
           >
             {dayLabel(point.day)}
@@ -111,8 +115,14 @@ function DomainPie({
     const start = angle;
     angle += sweep;
     const large = sweep > Math.PI ? 1 : 0;
-    const from = [center + radius * Math.cos(start), center + radius * Math.sin(start)];
-    const to = [center + radius * Math.cos(angle), center + radius * Math.sin(angle)];
+    const from = [
+      center + radius * Math.cos(start),
+      center + radius * Math.sin(start),
+    ];
+    const to = [
+      center + radius * Math.cos(angle),
+      center + radius * Math.sin(angle),
+    ];
     return { slice, index, sweep, large, from, to };
   });
   return (

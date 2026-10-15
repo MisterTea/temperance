@@ -43,7 +43,13 @@ export function App() {
   return (
     <main aria-busy={!!busy}>
       <header className="brand">
-        <span aria-hidden="true">◒</span>
+        <img
+          className="brand-mark"
+          src="/temperance-mark.svg"
+          alt=""
+          width="36"
+          height="36"
+        />
         <span>
           temperance<small>FAMILY BALANCE</small>
         </span>

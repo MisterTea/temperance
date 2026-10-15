@@ -22,6 +22,8 @@ targetTemplates:
         embed: false
     settings:
       base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Temperance
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: Your parents can ask where this device is. Temperance shares one location only when they ask, and tells you when it does.

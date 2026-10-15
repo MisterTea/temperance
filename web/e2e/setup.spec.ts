@@ -79,7 +79,7 @@ test("a fresh install walks the parent through the admin account and first rules
   });
 
   await page.getByRole("button", { name: "Add a device" }).click();
-  await expect(page.getByRole("heading", { name: "Devices" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Devices", exact: true })).toBeVisible();
   const jordan = page.locator("article.profile", { hasText: "jordan" });
   await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(

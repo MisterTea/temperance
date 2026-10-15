@@ -34,11 +34,17 @@ struct RootView: View {
         return Mode(rawValue: mode)
     }
     var body: some View {
-        switch resolved {
-        case .child: ContentView(client: client, back: client.child == nil ? { mode = "" } : nil)
-        case .parent: ParentView(parent: parent, back: { mode = "" })
-        case nil: ModeChoice { mode = $0.rawValue }
+        Group {
+            switch resolved {
+            case .child: ContentView(client: client, back: client.child == nil ? { mode = "" } : nil)
+            case .parent: ParentView(parent: parent, back: { mode = "" })
+            case nil: ModeChoice { mode = $0.rawValue }
+            }
         }
+        .tint(Color.accentColor)
+        .foregroundStyle(Color("Ink"))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color("Paper").ignoresSafeArea())
     }
 }
 
@@ -46,7 +52,7 @@ struct ModeChoice: View {
     var choose: (Mode) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Temperance").font(.largeTitle).bold()
+            BrandHeader()
             Text("Is this your child's device, or are you a parent?").font(.title3).fixedSize(horizontal: false, vertical: true)
             Button { choose(.child) } label: {
                 Label("This is my child's device", systemImage: deviceSymbol).frame(maxWidth: .infinity)
@@ -85,7 +91,7 @@ struct ParentView: View {
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Temperance").font(.largeTitle).bold()
+                    BrandHeader()
                     if let paired = parent.paired {
                         Text(paired.household.isEmpty ? "Paired with your home" : "Paired with \(paired.household)").font(.title2).bold()
                         Text("This \(deviceNoun) opens the family dashboard through your home's Temperance gateway, wherever you are.")

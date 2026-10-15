@@ -6,6 +6,7 @@
     android:fillViewport="true">
 
     <LinearLayout style="@style/Screen" android:id="@+id/column">
+        <ImageView android:layout_width="48dp" android:layout_height="48dp" android:layout_marginBottom="16dp" android:src="@drawable/brand_mark" android:importantForAccessibility="no" />
 
         <TextView style="@style/Title" android:text="@string/vpn_title" android:accessibilityHeading="true" />
         <TextView style="@style/Body" android:text="@string/vpn_intro" />

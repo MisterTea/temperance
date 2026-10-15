@@ -1,9 +1,9 @@
 <resources>
-    <color name="brand">#2F5D50</color>
-    <color name="brand_dark">#24483E</color>
-    <color name="ink">#1F2A27</color>
-    <color name="muted">#5B6763</color>
-    <color name="paper">#F7F6F2</color>
+    <color name="brand">#2B3675</color>
+    <color name="brand_dark">#202958</color>
+    <color name="ink">#242A43</color>
+    <color name="muted">#626B85</color>
+    <color name="paper">#F6F7FC</color>
     <color name="card">#FFFFFF</color>
     <color name="warning_bg">#FFF4E0</color>
     <color name="warning_ink">#6B4500</color>

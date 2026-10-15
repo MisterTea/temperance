@@ -15,7 +15,7 @@ struct ContentView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Temperance").font(.largeTitle).bold()
+                BrandHeader()
                 if !client.status.isEmpty {
                     Text(client.status).foregroundStyle(.secondary).accessibilityIdentifier("status")
                 }

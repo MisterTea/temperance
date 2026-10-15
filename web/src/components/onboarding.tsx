@@ -1,4 +1,5 @@
 "use client";
+import { BrandMark } from "./brand-mark";
 import { useState } from "react";
 import { clientUsername } from "@/lib/accounts";
 import { CATALOG, DAYS, PRESETS, type Category } from "@/lib/policy";
@@ -70,6 +71,12 @@ export function Onboarding({
 
   return (
     <main className="onboarding">
+      <div className="brand">
+        <BrandMark />
+        <span>
+          temperance<small>FAMILY BALANCE</small>
+        </span>
+      </div>
       <span className="eyebrow">WELCOME TO TEMPERANCE</span>
       <ol className="steps" aria-label="Setup progress">
         {STEPS.map((name, i) => (
