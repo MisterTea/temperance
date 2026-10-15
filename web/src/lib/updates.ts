@@ -10,7 +10,7 @@ const RETRY_AFTER = 15 * 60_000;
 export type Install = "docker" | "linux" | "other";
 export type UpdateStatus = {
   attempt?: UpdateAttempt;
-  channel: "stable" | "beta";
+  channel: "latest" | "stable" | "beta";
   current: string;
   install: Install;
   arch: string;
@@ -46,18 +46,22 @@ const parse = (version: string) => {
       ]
     : undefined;
 };
-export function channel(): "stable" | "beta" {
-  return process.env.TEMPERANCE_UPDATE_CHANNEL === "beta" ? "beta" : "stable";
-}
-function followsChannel() {
+function imageTag() {
   const image = process.env.TEMPERANCE_IMAGE || "mistertea/temperance:latest";
-  const tag = channel() === "beta" ? "beta" : "latest";
-  return [
+  const repository = [
     "mistertea/temperance",
     "docker.io/mistertea/temperance",
     "ghcr.io/mistertea/temperance",
-  ].some((repository) => image === `${repository}:${tag}`);
+  ].find((r) => image.startsWith(r + ":"));
+  return repository && image.slice(repository.length + 1);
 }
+/** Docker's `:latest` follows every release; other installs and the `:stable`
+ * and `:beta` images follow TEMPERANCE_UPDATE_CHANNEL. */
+export function channel(): "latest" | "stable" | "beta" {
+  if (install() === "docker" && imageTag() === "latest") return "latest";
+  return process.env.TEMPERANCE_UPDATE_CHANNEL === "beta" ? "beta" : "stable";
+}
+const followsChannel = () => imageTag() === channel();
 /** Development builds (`dev`, `0.0.0~dev.abc123`, `0.5.4-3-gabc123`) never claim to be outdated. */
 export function newer(latest: string, current: string) {
   const [a, b] = [parse(latest), parse(current)];
@@ -84,10 +88,9 @@ let pending: Promise<void> | undefined;
 
 async function check() {
   try {
+    const list = channel() !== "stable";
     const response = await fetch(
-      channel() === "beta"
-        ? LATEST.replace(/\/latest$/, "?per_page=30")
-        : LATEST,
+      list ? LATEST.replace(/\/latest$/, "?per_page=30") : LATEST,
       {
         headers: {
           Accept: "application/vnd.github+json",
@@ -110,17 +113,19 @@ async function check() {
       prerelease?: boolean;
     };
     const payload = await response.json();
-    const candidates = (
-      channel() === "beta" ? payload : [payload]
-    ) as Release[];
+    const candidates = (list ? payload : [payload]) as Release[];
+    const stable = (r: Release) => !r.prerelease && !r.tag_name.includes("-");
+    const beta = (r: Release) => !!r.prerelease && r.tag_name.includes("-beta.");
     const release = candidates
       .filter(
         (r) =>
           !r.draft &&
           parse(r.tag_name) &&
-          (channel() === "beta"
-            ? r.prerelease && r.tag_name.includes("-beta.")
-            : !r.prerelease && !r.tag_name.includes("-")),
+          (channel() === "latest"
+            ? stable(r) || beta(r)
+            : channel() === "beta"
+              ? beta(r)
+              : stable(r)),
       )
       .sort((a, b) =>
         newer(a.tag_name, b.tag_name)

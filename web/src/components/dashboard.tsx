@@ -380,7 +380,11 @@ function SoftwareUpdates({
       <h2>Software updates</h2>
       <p>
         This server runs Temperance <strong>{update.current}</strong>.{" "}
-        Update channel: {update.channel || "stable"}.{" "}
+        Update channel:{" "}
+        {update.channel === "latest"
+          ? "latest (stable and beta releases)"
+          : update.channel || "stable"}
+        .{" "}
         {!update.checks
           ? "Update checks are off (TEMPERANCE_UPDATE_CHECK)."
           : update.available

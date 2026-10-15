@@ -1167,12 +1167,14 @@ describe("settings", () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.startsWith("https://api.github.com/"))
-          return Response.json({
-            tag_name: "v0.6.0",
-            html_url:
-              "https://github.com/MisterTea/temperance/releases/tag/v0.6.0",
-            published_at: "2026-10-12T00:00:00Z",
-          });
+          return Response.json([
+            {
+              tag_name: "v0.6.0",
+              html_url:
+                "https://github.com/MisterTea/temperance/releases/tag/v0.6.0",
+              published_at: "2026-10-12T00:00:00Z",
+            },
+          ]);
         if (url.startsWith("http://updater:8080/")) {
           updater(url, init);
           process.env.TEMPERANCE_BUILD_VERSION = "0.6.0";

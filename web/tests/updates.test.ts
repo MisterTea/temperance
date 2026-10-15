@@ -33,7 +33,10 @@ function stubFetch(answer: (url: string) => Response) {
     return answer(url);
   });
 }
-const github = () => stubFetch(() => Response.json(RELEASE));
+const github = () =>
+  stubFetch((url) =>
+    Response.json(url.includes("per_page") ? [RELEASE] : RELEASE),
+  );
 
 beforeEach(() => {
   for (const name of ENV) delete process.env[name];
@@ -168,12 +171,42 @@ describe("updater container", () => {
     process.env.TEMPERANCE_INSTALL = "docker";
     process.env.TEMPERANCE_UPDATER_TOKEN = "updater-secret";
     process.env.TEMPERANCE_IMAGE = registry + ":latest";
-    expect((await updates.status()).can_update).toBe(true);
+    expect(await updates.status()).toMatchObject({
+      channel: "latest",
+      can_update: true,
+    });
+    process.env.TEMPERANCE_IMAGE = registry + ":stable";
+    expect(await updates.status()).toMatchObject({
+      channel: "stable",
+      can_update: true,
+    });
     process.env.TEMPERANCE_IMAGE = registry + ":beta";
     expect((await updates.status()).can_update).toBe(false);
     process.env.TEMPERANCE_UPDATE_CHANNEL = "beta";
     stubFetch(() => Response.json([]));
     expect((await updates.status()).can_update).toBe(true);
+    process.env.TEMPERANCE_IMAGE = registry + ":stable";
+    expect((await updates.status()).can_update).toBe(false);
+  });
+  it("offers every release to the :latest image and only stable ones to :stable", async () => {
+    process.env.TEMPERANCE_INSTALL = "docker";
+    stubFetch(() =>
+      Response.json([
+        { ...RELEASE, tag_name: "v0.6.0" },
+        { ...RELEASE, tag_name: "v0.7.0-beta.1", prerelease: true },
+      ]),
+    );
+    expect((await updates.status()).latest?.version).toBe("0.7.0-beta.1");
+    expect(calls[0].url).toContain("per_page=30");
+    process.env.TEMPERANCE_IMAGE = "mistertea/temperance:stable";
+    github();
+    expect((await updates.status()).latest?.version).toBe("0.6.0");
+    expect(calls[0].url).toMatch(/releases\/latest$/);
+  });
+  it("keeps installs outside Docker on their configured channel", async () => {
+    process.env.TEMPERANCE_INSTALL = "linux";
+    github();
+    expect((await updates.status()).channel).toBe("stable");
   });
   it("only Docker installs with a token can update themselves", async () => {
     github();
@@ -237,6 +270,7 @@ describe("api/update", () => {
     const refused = await request("POST", ADMIN);
     expect(refused.status).toBe(409);
     expect((await refused.json()).error).toMatch(/cannot update itself/);
+    process.env.TEMPERANCE_IMAGE = "mistertea/temperance:stable";
     process.env.TEMPERANCE_INSTALL = "docker";
     process.env.TEMPERANCE_UPDATER_TOKEN = "updater-secret";
     stubFetch(() => new Response(null, { status: 200 }));
