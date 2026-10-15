@@ -74,3 +74,10 @@ The release workflow publishes the same amd64/arm64 build to Docker Hub (`mister
 Release qualification still runs before publication. A missing Hub credential stops publishing with an explicit error. Stable releases update `latest`; `-beta.N` releases update `beta` without moving `latest`. Explicit version tags are also published. Docker Hub repository creation alone does not publish an image or satisfy the qualification gates.
 
 Emergency-access acceptance: after one online sync, disconnect the server and use the household admin password on each supported client to disable the VPN. Confirm incorrect passwords and repeated attempts fail, the app restarts without reconnecting, normal internet returns, and an explicit resume restores protection. Include Android always-on/lockdown settings, Apple on-demand reconnect, Windows service removal, storage failures and password rotation while a device is offline. Automated shared-core and app tests support this work; actual OS traffic/reboot qualification remains required.
+
+
+## Container candidates before customer qualification
+
+The **Container candidate qualification** workflow builds both Linux architectures and exercises fresh persistent volumes, non-root/read-only operation, client enrollment, container replacement, encrypted recovery, damaged/wrong-password rejection and replacement-server startup. Its reports record the exact image ID and candidate version. Same-image replacement is not previous-version migration or physical-device traffic evidence.
+
+A manual run may publish only `mistertea/temperance:candidate-<source-commit>` after both architectures pass. This provides a reproducible image for assisted qualification while signing is deferred. It does not move `beta` or `latest`, create a customer release, or satisfy the remaining release gates. App signing is currently deferred at the operator's request.
