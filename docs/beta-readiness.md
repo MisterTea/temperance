@@ -1,6 +1,6 @@
 # Release readiness
 
-**Current status: beta preparation, not customer-qualified.** An implementation or CI build is not physical-device evidence. `release-evidence.json` deliberately starts with pending gates. The release workflow refuses publication until evidence for the exact version and source fingerprint passes `scripts/check-release.mjs`.
+**Current status: beta preparation, not customer-qualified.** An implementation or CI build is not physical-device evidence. `release-evidence.json` deliberately starts with pending gates. The release workflow refuses a stable tag until evidence for the exact version and source fingerprint passes `scripts/check-release.mjs`. A beta tag without that evidence is published only as a prerelease labeled an unqualified preview, with unsigned test clients; it is not a qualified beta.
 
 ## Work ledger
 

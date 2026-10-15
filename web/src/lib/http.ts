@@ -845,6 +845,7 @@ function validateBackup(value: unknown): State {
       z.string(),
       z.array(z.string().max(253)).max(20000),
     ),
+    free_domains: z.array(z.string().max(253)).max(1000).optional(),
     retention_days: z.number().int().min(1).max(90),
     offline_grace_seconds: z
       .number()

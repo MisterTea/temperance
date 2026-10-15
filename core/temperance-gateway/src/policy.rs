@@ -45,6 +45,9 @@ pub struct State {
     pub lan_devices: Vec<Client>,
     #[serde(default)]
     pub extra_domains: HashMap<String, Vec<String>>,
+    /// Device upkeep (updates, push, connectivity checks) that never counts as time.
+    #[serde(default)]
+    pub free_domains: Vec<String>,
     #[serde(default)]
     pub home_profile_id: Option<u32>,
     /// UPnP and dynamic DNS settings; absent means UPnP on, no dynamic DNS.
@@ -84,6 +87,7 @@ pub struct Policy {
     profiles: HashMap<u32, Profile>,
     lan_networks: Vec<Net>,
     management: HashSet<String>,
+    free: HashSet<String>,
 }
 
 impl Policy {
@@ -112,7 +116,13 @@ impl Policy {
             .map(|c| (c.ip, c.clone()))
             .collect();
         let profiles = state.profiles.iter().map(|p| (p.id, p.clone())).collect();
+        let free = state
+            .free_domains
+            .iter()
+            .map(|d| d.to_ascii_lowercase())
+            .collect();
         Ok(Policy {
+            free,
             state,
             tz,
             clients,
@@ -143,15 +153,38 @@ impl Policy {
         self.management.contains(host)
     }
 
+    /// `host` or one of its parent domains is on the free list.
+    pub fn free(&self, host: &str) -> bool {
+        let mut rest = host;
+        loop {
+            if self.free.contains(rest) {
+                return true;
+            }
+            match rest.split_once('.') {
+                Some((_, parent)) => rest = parent,
+                None => return false,
+            }
+        }
+    }
+
+    /// Free domains outlast budgets, focus time and allow-lists, but not pauses,
+    /// bedtime, Off Time or a site the admin blocked for this client.
     fn domain_reason(&self, p: &Profile, host: &str, at: f64) -> String {
-        domain_reason_at(
+        let reason = domain_reason_at(
             p,
             host,
             at as i64,
             self.tz,
             self.state.paused,
             &self.state.extra_domains,
-        )
+        );
+        if !self.free(host) || p.deny.iter().any(|d| matches(host, d)) {
+            return reason;
+        }
+        match reason.as_str() {
+            "unmanaged" | "household pause" | "paused" | "bedtime" | "off time" => reason,
+            _ => "allowed".into(),
+        }
     }
 
     pub fn category(&self, host: &str) -> String {
@@ -182,7 +215,7 @@ impl Policy {
         }
         let blocked = reason != "allowed" && reason != "unmanaged";
         let entry = client
-            .filter(|_| reason != "unmanaged" && p.filter_level != "none")
+            .filter(|_| reason != "unmanaged" && p.filter_level != "none" && !self.free(host))
             .map(|c| HistoryEntry {
                 id: crate::uuid(),
                 device_id: c.id.clone(),
@@ -283,11 +316,13 @@ impl Policy {
             if c.paused || reasons.iter().any(|r| r != "allowed") {
                 return Verdict::Drop;
             }
-            if p.filter_level == "none" {
+            // An address shared with any other name the device resolved still counts.
+            let counted: Vec<&String> = hosts.iter().filter(|h| !self.free(h)).collect();
+            if p.filter_level == "none" || counted.is_empty() {
                 return allow(BTreeSet::new());
             }
             let mut buckets = BTreeSet::from(["total".to_string()]);
-            for host in hosts {
+            for host in counted {
                 buckets.insert(format!("category:{}", self.category(host)));
                 buckets.insert(format!("site:{host}"));
                 buckets.extend(
@@ -324,6 +359,10 @@ mod tests {
     const NOON: f64 = 1_767_268_800.0; // 2026-01-01T12:00:00Z, a Thursday
 
     fn policy(profile: serde_json::Value) -> Policy {
+        with_free(profile, &[])
+    }
+
+    fn with_free(profile: serde_json::Value, free: &[&str]) -> Policy {
         let mut p = json!({"id": 1, "name": "Riley", "filter_level": "teen"});
         p.as_object_mut()
             .unwrap()
@@ -334,6 +373,7 @@ mod tests {
             "profiles": [p],
             "peers": [{"id": "d1", "ip": "10.77.0.2", "public_key": "k", "profile_id": 1, "paused": false, "managed": true}],
             "lan_devices": [{"id": "tv", "ip": "192.168.1.50", "profile_id": 1}],
+            "free_domains": free,
         }))
         .unwrap();
         Policy::new(
@@ -479,6 +519,84 @@ mod tests {
                 device: "d1".into(),
                 buckets: BTreeSet::new()
             }
+        );
+    }
+
+    #[test]
+    fn free_domains_are_not_counted_and_outlast_budgets() {
+        const FREE: &[&str] = &["play.googleapis.com", "mesu.apple.com"];
+        let peer = ip("10.77.0.2");
+        let uncounted = Verdict::Allow {
+            device: "d1".into(),
+            buckets: BTreeSet::new(),
+        };
+        let open = with_free(json!({"limit": 60}), FREE);
+        assert!(open.free("play.googleapis.com"));
+        assert!(open.free("cdn.play.googleapis.com"));
+        assert!(!open.free("evilplay.googleapis.com"));
+        assert!(!open.free("googleapis.com"));
+        assert_eq!(
+            open.flow(peer, &hosts(&["play.googleapis.com"]), NOON),
+            uncounted
+        );
+        // A shared address counts the other names the device resolved for it.
+        let Verdict::Allow { buckets, .. } = open.flow(
+            peer,
+            &hosts(&["play.googleapis.com", "youtubei.googleapis.com"]),
+            NOON,
+        ) else {
+            panic!("allowed")
+        };
+        assert_eq!(
+            buckets.into_iter().collect::<Vec<_>>(),
+            ["category:other", "site:youtubei.googleapis.com", "total"]
+        );
+        let (blocked, _, entry) = open.evaluate(peer, "mesu.apple.com", NOON);
+        assert!(!blocked);
+        assert!(entry.is_none(), "device upkeep stays out of history");
+
+        let spent = with_free(json!({"limit": 60, "used": 60}), FREE);
+        assert_eq!(
+            spent.flow(peer, &hosts(&["play.googleapis.com"]), NOON),
+            uncounted
+        );
+        assert!(!spent.evaluate(peer, "mesu.apple.com", NOON).0);
+        assert_eq!(
+            spent.flow(peer, &hosts(&["example.com"]), NOON),
+            Verdict::Drop
+        );
+        assert_eq!(
+            spent.flow(
+                peer,
+                &hosts(&["play.googleapis.com", "youtubei.googleapis.com"]),
+                NOON
+            ),
+            Verdict::Drop
+        );
+        let strict = with_free(json!({"allow_only": true}), FREE);
+        assert_eq!(
+            strict.flow(peer, &hosts(&["mesu.apple.com"]), NOON),
+            uncounted
+        );
+    }
+
+    #[test]
+    fn free_domains_still_follow_bedtime_and_blocked_sites() {
+        const FREE: &[&str] = &["play.googleapis.com"];
+        let peer = ip("10.77.0.2");
+        let night = with_free(json!({"bedtime": {"start": "11:00", "end": "13:00"}}), FREE);
+        assert_eq!(
+            night.evaluate(peer, "play.googleapis.com", NOON).1,
+            "bedtime"
+        );
+        assert_eq!(
+            night.flow(peer, &hosts(&["play.googleapis.com"]), NOON),
+            Verdict::Drop
+        );
+        let denied = with_free(json!({"deny": ["play.googleapis.com"]}), FREE);
+        assert_eq!(
+            denied.evaluate(peer, "play.googleapis.com", NOON).1,
+            "custom rule"
         );
     }
 

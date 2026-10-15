@@ -1,4 +1,7 @@
 name: Release
+# Push a vX.Y.Z or vX.Y.Z-beta.N tag. Stable tags need passing release evidence
+# and signed candidate apps. A beta tag without them becomes an unqualified
+# preview: clients are built here without signing and the release says so.
 on:
   push:
     tags: ['v*']
@@ -6,13 +9,20 @@ on:
 permissions:
   contents: read
   actions: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 env:
   # Node.js 24's own Linux binaries need glibc 2.28, so the add-on targets the same floor.
   GLIBC: '2.28'
 jobs:
   qualify:
     outputs:
-      signed_run: ${{ steps.evidence.outputs.signed_run }}
+      version: ${{ steps.version.outputs.version }}
+      newest: ${{ steps.newest.outputs.newest }}
+      newest_of_kind: ${{ steps.newest.outputs.of_kind }}
+      qualified: ${{ steps.evidence.outputs.qualified }}
+      desktop: ${{ steps.evidence.outputs.desktop }}
     name: Release qualification evidence
     runs-on: ubuntu-24.04
     steps:
@@ -20,35 +30,74 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Require evidence for tag publication
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Version
+        id: version
         shell: bash
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then stage=beta
-          elif [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then stage=stable
-          else echo "Unsupported release tag" >&2; exit 1; fi
-          node scripts/check-release.mjs "$stage" "$RELEASE_TAG"
-      - id: evidence
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then v="0.0.0-dev.$GITHUB_RUN_NUMBER"
+          elif [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then v="${RELEASE_TAG#v}"
+          else echo "::error::Use a vX.Y.Z or vX.Y.Z-beta.N tag" >&2; exit 1; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Is this the newest release, and the newest of its kind?
+        id: newest
         if: startsWith(github.ref, 'refs/tags/')
-        run: node -e 'const e=require("./docs/release-evidence.json"); console.log("signed_run="+e.checks.signed_distribution.run_id)' >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module >> "$GITHUB_OUTPUT" <<'EOF'
+          import { execFileSync } from 'node:child_process';
+          const parse = (t) => {
+            const m = /^v(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/.exec(t);
+            return m && [+m[1], +m[2], +m[3], m[4] === undefined ? Infinity : +m[4]];
+          };
+          const notAbove = (a, b) => { for (let i = 0; i < 4; i++) if (a[i] !== b[i]) return a[i] < b[i]; return true; };
+          const tag = process.env.RELEASE_TAG, me = parse(tag), beta = tag.includes('-');
+          const tags = execFileSync('git', ['ls-remote', '--tags', '--refs', 'origin', 'v*']).toString()
+            .split('\n').map((l) => l.split('refs/tags/')[1]).filter((t) => t && parse(t));
+          console.log(`newest=${tags.every((t) => notAbove(parse(t), me))}`);
+          console.log(`of_kind=${tags.filter((t) => t.includes('-') === beta).every((t) => notAbove(parse(t), me))}`);
+          EOF
+          cat "$GITHUB_OUTPUT"
+      - name: Check evidence for this exact source
+        id: evidence
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          qualified=false
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            stage=$([[ "$RELEASE_TAG" == *-beta.* ]] && echo beta || echo stable)
+            if node scripts/check-release.mjs "$stage" "$RELEASE_TAG"; then qualified=true
+            elif [ "$stage" = stable ]; then exit 1
+            else echo "::warning::$RELEASE_TAG has no release evidence; publishing an unqualified preview with unsigned clients."; fi
+          fi
+          echo "qualified=$qualified" >> "$GITHUB_OUTPUT"
+          # Signed candidates already include the Windows installer.
+          windows='{"os":"windows-latest","name":"windows-x64","target":"x86_64-pc-windows-msvc","bundles":"nsis"},{"os":"windows-latest","name":"windows-arm64","target":"aarch64-pc-windows-msvc","bundles":"nsis"},'
+          linux='{"os":"ubuntu-22.04","name":"linux-x64","target":"x86_64-unknown-linux-gnu","bundles":"deb,appimage"}'
+          if [ "$qualified" = true ]; then windows=''; fi
+          echo "desktop={\"include\":[$windows$linux]}" >> "$GITHUB_OUTPUT"
+      - id: signed
+        if: steps.evidence.outputs.qualified == 'true'
+        run: node -e 'const e=require("./docs/release-evidence.json"); console.log("run="+e.checks.signed_distribution.run_id)' >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.evidence.outputs.qualified == 'true'
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ steps.evidence.outputs.signed_run }}
+          run-id: ${{ steps.signed.outputs.run }}
           pattern: signed-*-${{ github.ref_name }}
           path: signed-candidates
       - name: Verify signed candidate checksums and source before any publication
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.evidence.outputs.qualified == 'true'
         run: |
           mkdir -p dist
           node scripts/verify-candidates.mjs signed-candidates dist
       - uses: actions/upload-artifact@v4
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.evidence.outputs.qualified == 'true'
         with:
-          name: validated-signed-apps
+          name: client-signed
           path: dist/
 
   linux:
@@ -57,8 +106,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
@@ -81,15 +128,10 @@ jobs:
         run: |
           curl -fsSL https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_amd64.deb -o /tmp/nfpm.deb
           sudo dpkg -i /tmp/nfpm.deb
-      - name: Version
-        id: version
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0~dev.$(git rev-parse --short HEAD)"; fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: Web server bundle (the same for every architecture)
         working-directory: web
         env:
-          TEMPERANCE_VERSION: ${{ steps.version.outputs.version }}
+          TEMPERANCE_VERSION: ${{ needs.qualify.outputs.version }}
         run: npm ci && npm run build
       - name: Gateway add-ons against glibc ${{ env.GLIBC }}
         working-directory: core
@@ -103,13 +145,13 @@ jobs:
           done
       - name: Package
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.qualify.outputs.version }}
         run: |
           deploy/linux/package.sh x64 "$VERSION" core/target/x86_64-unknown-linux-gnu/release/libtemperance_gateway.so
           deploy/linux/package.sh arm64 "$VERSION" core/target/aarch64-unknown-linux-gnu/release/libtemperance_gateway.so
       - name: Runs on old distributions (glibc 2.28)
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.qualify.outputs.version }}
         run: |
           for image in debian:10-slim rockylinux:8-minimal; do
             docker run --rm -v "$PWD/dist/temperance-$VERSION-linux-x64:/opt/temperance:ro" \
@@ -128,9 +170,126 @@ jobs:
             dist/*.deb
             dist/*.rpm
 
+  android:
+    name: Android APK (unsigned preview)
+    needs: qualify
+    if: needs.qualify.outputs.qualified != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android, i686-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: android
+      - run: cargo install cargo-ndk --locked
+      - run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+      - name: Debug-signed APK with the release version
+        env:
+          TEMPERANCE_VERSION: ${{ needs.qualify.outputs.version }}
+          # Above the 0.5.6 store build (7) so previews install over each other.
+          TEMPERANCE_BUILD_NUMBER: ${{ github.run_number }}00
+        run: |
+          clients/android/gradlew -p clients/android assembleDebug
+          mkdir -p dist
+          cp clients/android/app/build/outputs/apk/debug/app-debug.apk "dist/temperance-$TEMPERANCE_VERSION-android-preview.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-android
+          path: dist/*.apk
+          if-no-files-found: error
+
+  desktop:
+    name: Desktop ${{ matrix.name }}
+    needs: qualify
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.qualify.outputs.desktop) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: desktop-${{ matrix.target }}
+      - if: ${{ runner.os == 'Linux' }}
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - working-directory: clients/desktop
+        run: npm ci && npm run build
+      - name: Installer
+        working-directory: core/temperance-desktop
+        shell: bash
+        env:
+          VERSION: ${{ needs.qualify.outputs.version }}
+        run: ../../clients/desktop/node_modules/.bin/tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "{\"version\":\"$VERSION\"}"
+      - name: Name the installers after the release
+        shell: bash
+        env:
+          VERSION: ${{ needs.qualify.outputs.version }}
+        run: |
+          bundle=core/target/${{ matrix.target }}/release/bundle
+          prefix=dist/temperance-desktop-$VERSION-${{ matrix.name }}
+          mkdir -p dist
+          for f in "$bundle"/nsis/*.exe; do [ -e "$f" ] && cp "$f" "$prefix-setup.exe"; done
+          for f in "$bundle"/deb/*.deb; do [ -e "$f" ] && cp "$f" "$prefix.deb"; done
+          for f in "$bundle"/appimage/*.AppImage; do [ -e "$f" ] && cp "$f" "$prefix.AppImage"; done
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-desktop-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: GitHub release
+    needs: [qualify, linux, android, desktop]
+    # Qualified releases skip the Android preview: they ship the signed apps instead.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') && needs.linux.result == 'success' && needs.desktop.result == 'success' && (needs.android.result == 'success' || (needs.android.result == 'skipped' && needs.qualify.outputs.qualified == 'true')) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: client-*
+          path: dist
+          merge-multiple: true
+      - run: cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - name: Preview notice
+        if: needs.qualify.outputs.qualified != 'true'
+        run: |
+          cat > notes.md <<'EOF'
+          **Unqualified preview.** This beta has not passed release qualification, and its clients are unsigned test builds: the Android APK is debug-signed, the Windows installers have no Authenticode signature, and there are no Apple builds (iOS and macOS VPN apps need Apple signing). Use it to try the server and desktop app, not to protect a household.
+          EOF
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body_path: ${{ needs.qualify.outputs.qualified != 'true' && 'notes.md' || '' }}
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
   image:
     name: Container image (amd64, arm64)
-    needs: linux
+    needs: [qualify, linux, publish]
+    # Pushed only after the GitHub release exists; manual runs build without pushing.
+    if: ${{ !cancelled() && needs.linux.result == 'success' && (needs.publish.result == 'success' || (needs.publish.result == 'skipped' && !startsWith(github.ref, 'refs/tags/'))) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -177,10 +336,12 @@ jobs:
             mistertea/temperance
             ghcr.io/${{ github.repository }}
           tags: |
+            type=ref,event=tag
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-') }}
-            type=raw,value=beta,enable=${{ startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-beta.') }}
+            type=raw,value=latest,enable=${{ needs.qualify.outputs.newest == 'true' }}
+            type=raw,value=stable,enable=${{ needs.qualify.outputs.newest_of_kind == 'true' && !contains(github.ref_name, '-') }}
+            type=raw,value=beta,enable=${{ needs.qualify.outputs.newest_of_kind == 'true' && contains(github.ref_name, '-beta.') }}
             type=sha
       - uses: docker/build-push-action@v6
         with:
@@ -192,31 +353,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           sbom: true
-
-  publish:
-    name: GitHub release
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [qualify, linux, image]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      actions: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - uses: actions/download-artifact@v4
-        with:
-          name: linux-packages
-          path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          name: validated-signed-apps
-          path: dist
-      - run: cd dist && sha256sum -- * > SHA256SUMS
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-beta.') }}

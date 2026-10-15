@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { clientUsername, users as accountUsers } from "./accounts";
 import { hash, randomToken, validateKey } from "./auth";
+import { FREE_DOMAINS } from "./free-domains";
 import { homeNetwork, inNetwork, nextHomeAddress } from "./home-lan";
 import {
   type Device,
@@ -114,6 +115,8 @@ export function snapshot(state: State, at = now()) {
     ),
     catalog: CATALOG,
     extra_domains: state.extra_domains,
+    free_domains: freeDomains(state),
+    free_domains_default: !state.free_domains,
     paused: state.paused,
     home_profile_id: state.home_profile_id,
     retention_days: state.retention_days,
@@ -136,6 +139,8 @@ export function snapshot(state: State, at = now()) {
   };
 }
 const network = (state: State) => state.network ?? { upnp: true };
+export const freeDomains = (state: State) =>
+  state.free_domains ?? [...FREE_DOMAINS];
 /** Network settings for the dashboard: the Dynu password never leaves the server. */
 function publicNetwork(state: State) {
   const { upnp, ddns } = network(state);
@@ -910,18 +915,35 @@ export function settings(state: State, input: unknown) {
         .max(7 * 86400)
         .optional(),
       network: networkInput.optional(),
+      /** `null` goes back to the built-in list. */
+      free_domains: z.array(freeDomain).max(1000).nullable().optional(),
     })
     .parse(input);
-  const { network: reach, ...household } = data;
+  const { network: reach, free_domains: free, ...household } = data;
   if (reach) state.network = networkSettings(state, reach);
+  if (free === null) delete state.free_domains;
+  else if (free) state.free_domains = [...new Set(free)];
   Object.assign(state, household);
   changed(
     state,
     "settings",
-    reach ? "Remote access settings updated" : "Household settings updated",
+    reach
+      ? "Remote access settings updated"
+      : free !== undefined
+        ? "Free domains updated"
+        : "Household settings updated",
   );
   return snapshot(state);
 }
+/** A leading `*.` is accepted because every entry already covers its subdomains. */
+const freeDomain = z.string().transform((value, ctx) => {
+  try {
+    return normalizeDomain(value.trim().replace(/^\*\./, ""));
+  } catch {
+    ctx.addIssue({ code: "custom", message: `${value} is not a domain name` });
+    return z.NEVER;
+  }
+});
 const networkInput = z.object({
   upnp: z.boolean(),
   ddns: z

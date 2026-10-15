@@ -1118,6 +1118,42 @@ describe("settings", () => {
     await waitFor(async () => expect((await state()).history).toHaveLength(0));
   });
 
+  it("edits the free domains and restores the built-in list", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Settings");
+    const list = screen.getByLabelText<HTMLTextAreaElement>(
+      "Free domains, one per line",
+    );
+    expect(list.value).toContain("play.googleapis.com");
+    expect(
+      screen.getByRole("button", { name: "Restore built-in list" }),
+    ).toHaveProperty("disabled", true);
+    await user.clear(list);
+    await user.type(list, "updates.example\n*.cdn.example");
+    await user.click(screen.getByRole("button", { name: "Save free domains" }));
+    await waitFor(async () =>
+      expect((await state()).free_domains).toEqual([
+        "updates.example",
+        "cdn.example",
+      ]),
+    );
+    await screen.findByText(/edited for this household/);
+    expect(
+      screen.getByLabelText<HTMLTextAreaElement>("Free domains, one per line")
+        .value,
+    ).toBe("updates.example\ncdn.example");
+
+    await user.click(
+      screen.getByRole("button", { name: "Restore built-in list" }),
+    );
+    await waitFor(async () =>
+      expect((await state()).free_domains).toBeUndefined(),
+    );
+    await screen.findByText(/the built-in list/);
+  });
+
   it("shows new releases and updates Docker installs from the dashboard", async () => {
     vi.spyOn(maintenance, "backupNow").mockResolvedValue("encrypted-recovery.json");
     Object.assign(process.env, {
@@ -1131,12 +1167,14 @@ describe("settings", () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.startsWith("https://api.github.com/"))
-          return Response.json({
-            tag_name: "v0.6.0",
-            html_url:
-              "https://github.com/MisterTea/temperance/releases/tag/v0.6.0",
-            published_at: "2026-10-12T00:00:00Z",
-          });
+          return Response.json([
+            {
+              tag_name: "v0.6.0",
+              html_url:
+                "https://github.com/MisterTea/temperance/releases/tag/v0.6.0",
+              published_at: "2026-10-12T00:00:00Z",
+            },
+          ]);
         if (url.startsWith("http://updater:8080/")) {
           updater(url, init);
           process.env.TEMPERANCE_BUILD_VERSION = "0.6.0";
