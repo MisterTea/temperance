@@ -2,10 +2,12 @@ package org.temperance.app
 
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.closeSoftKeyboard
+import androidx.test.espresso.Espresso.openActionBarOverflowOrOptionsMenu
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.action.ViewActions.scrollTo
+import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.After
@@ -131,10 +133,15 @@ class LayoutTest {
             onView(withId(R.id.ask_time)).perform(scrollTo(), click())
             audit(scenario, "$name-time-dialog", dialog = true)
             onActivity(scenario) { it.dialog!!.dismiss() }
-            onActivity(scenario) { it.openOptionsMenu() }
+            openActionBarOverflowOrOptionsMenu(TestSupport.instrumentation.targetContext)
             settle()
             TestSupport.screenshot("layout-$name-menu")
-            device.findObject(androidx.test.uiautomator.By.text(TestSupport.app.getString(R.string.menu_about))).click()
+            val about = TestSupport.app.getString(R.string.menu_about)
+            if (device.findObject(androidx.test.uiautomator.By.text(about)) == null) {
+                androidx.test.uiautomator.UiScrollable(androidx.test.uiautomator.UiSelector().scrollable(true))
+                    .scrollIntoView(androidx.test.uiautomator.UiSelector().text(about))
+            }
+            onView(withText(R.string.menu_about)).perform(click())
             audit(scenario, "$name-about-dialog", dialog = true)
             onActivity(scenario) { it.dialog!!.dismiss() }
             onView(withId(R.id.emergency_unlock)).perform(scrollTo(), click())

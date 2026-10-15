@@ -100,7 +100,7 @@ class SetupFlowTest {
         TestSupport.device.setOrientationLeft()
         try {
             waitForScreen(scenario, MainActivity.Screen.VPN)
-            onView(withId(R.id.allow_vpn)).check(matches(isDisplayed()))
+            onView(withId(R.id.allow_vpn)).perform(scrollTo()).check(matches(isDisplayed()))
         } finally { TestSupport.device.setOrientationNatural() }
     }
 }
