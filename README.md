@@ -4,7 +4,7 @@
 
 Open source family VPN and DNS controls inspired by [Circle](https://meetcircle.com/pages/features-usage). Manage clients, devices, filters, pauses, bedtime and schedules, and daily time budgets from one program you run at home. Phones and computers are enforced through its built-in WireGuard VPN wherever they are; TVs and consoles on the home network are enforced through its DNS or (on Linux) router mode. There is no Temperance cloud service or telemetry.
 
-**Status: working MVP with device-app source for macOS, Windows, Android, and iOS; not a complete Circle replacement.** Temperance is an independent project and has no affiliation with Circle. It uses original code and a distinct interface.
+**Status: beta preparation; release acceptance is still pending.** The reference setup is Linux with Docker and SQLite, with device apps for macOS, Windows, Android, and iOS. Other server and home-network modes are experimental. See the [release checklist](docs/beta-readiness.md) and [operations guide](docs/beta-operations.md). Temperance is an independent project and has no affiliation with Circle. It uses original code and a distinct interface.
 
 ## VPN apps and policy service
 
@@ -42,7 +42,7 @@ If the home machine already runs Docker (a Linux box, a NAS such as Synology, Un
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/MisterTea/temperance/main/deploy/docker/install.sh)"
 ```
 
-The installer asks for your public hostname, timezone and HTTPS method. It writes `~/temperance/compose.yml` and a `.env` with a generated admin password, then starts the containers and waits for them to report healthy. Unless you answer no, it also starts an `updater` container ([Watchtower](https://github.com/nicholas-fedor/watchtower)), so **Settings → Software updates** in the dashboard installs new versions with one click; set `TEMPERANCE_AUTO_UPDATE=true` in `.env` to also update every night at 3:00. Rerun the installer to upgrade by hand, or to turn the updater on for an older install. To set it up by hand, copy [`deploy/docker/compose.yml`](deploy/docker/compose.yml) and [`deploy/docker/.env.example`](deploy/docker/.env.example) (as `.env`) into one directory and run `docker compose up -d`.
+The installer asks for your public hostname, timezone and HTTPS method. It writes `~/temperance/compose.yml` and a `.env` with a generated admin password, then starts the containers and waits for them to report healthy. Unless you answer no, it also starts an `updater` container ([Watchtower](https://github.com/nicholas-fedor/watchtower)), so **Settings → Software updates** in the dashboard installs new versions with one click; updates require an encrypted recovery snapshot first. Fresh installs generate a recovery passphrase in `.env`; save it separately and copy archives off the server. Unattended polling is disabled. Rerun the installer to upgrade by hand, or to turn the updater on for an older install. To set it up by hand, copy [`deploy/docker/compose.yml`](deploy/docker/compose.yml) and [`deploy/docker/.env.example`](deploy/docker/.env.example) (as `.env`) into one directory and run `docker compose up -d`.
 
 Client devices and admin phones reach home only through the gateway's UDP port, so HTTPS is optional. To also open the dashboard in any browser away from home, `.env` picks a front end with `COMPOSE_PROFILES`:
 
@@ -75,6 +75,8 @@ DNS and packet filtering cannot stop access through mobile data, other VPNs or D
 
 ## Development
 
+The web test suite uses OpenSSL to create a temporary certificate for local SMTP integration tests. These tests exercise TLS and authentication against a loopback server and never contact an email provider.
+
 ```sh
 (cd web && npm run test:coverage)                                # policy service + dashboard (80% gate)
 (cd web && npm run build && npx playwright test)                 # feature/UX + layout audits
@@ -93,10 +95,10 @@ Every project must keep at least 80% line coverage from its unit tests. In CI th
 
 Gateway layout (`core/temperance-gateway`): `wg.rs` runs WireGuard peers, `gateway.rs` admits packets, relays TCP/UDP flows and holds the policy lease, `policy.rs` turns the service's state document into per-flow verdicts with `temperance-core`, `dns.rs` filters and forwards DNS, `home.rs` generates router-mode nftables rules, `reach.rs` maps the VPN port on the router with UPnP and updates Dynu dynamic DNS, `node.rs` is the Node add-on, and `bin/temperance-gateway.rs` is the standalone CLI.
 
-## Next milestones
+## Release readiness
 
-1. Push/e-mail delivery of admin notifications.
-2. IPv6 internet forwarding and operational metrics.
-3. Physical-device acceptance testing and signed store releases.
+Settings includes server readiness, redacted support reports, SMTP delivery tests and failed-notice retry, recovery downloads and feed freshness. Update progress and outcomes survive dashboard reloads. Encrypted recovery runs daily when configured and before dashboard updates. Stable and beta update channels are separate.
+
+Physical-device qualification, signed distribution, independent security review, household trials, IPv6 forwarding, and native push remain tracked in the [release checklist](docs/beta-readiness.md). Automated tests do not satisfy those release gates.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).

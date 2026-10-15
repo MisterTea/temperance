@@ -115,6 +115,30 @@ export interface Parent {
   revoked?: boolean;
 }
 export interface State {
+  /** Local maintenance metadata; never part of the native policy protocol. */
+  maintenance?: {
+    update?: UpdateAttempt;
+    mail?: {
+      initialized_at: number;
+      deliveries: {
+        id: string;
+        kind?: string;
+        attempts: number;
+        next_at: number;
+        sent_at?: number;
+        failed?: boolean;
+      }[];
+      last_sent_at?: number;
+      last_error?: string;
+    };
+    feeds?: Record<
+      string,
+      { checked_at: number; updated_at?: number; count: number; error?: string }
+    >;
+    gateway_offline?: boolean;
+    backup_at?: number;
+    backup_error?: string;
+  };
   users?: User[];
   refresh_tokens?: RefreshToken[];
   schema: 2;
@@ -122,7 +146,12 @@ export interface State {
   nextProfileId: number;
   profiles: Profile[];
   devices: Device[];
-  codes: { hash: string; profile_id: number; admin?: boolean; expires: number }[];
+  codes: {
+    hash: string;
+    profile_id: number;
+    admin?: boolean;
+    expires: number;
+  }[];
   rewards: Reward[];
   usage: Usage;
   history: History[];
@@ -144,6 +173,16 @@ export interface State {
   remote_pin?: string;
   /** Set when the first-run wizard is finished or skipped. */
   setup_completed_at?: number;
+}
+export interface UpdateAttempt {
+  id: string;
+  from: string;
+  target: string;
+  status: "preparing" | "dispatched" | "succeeded" | "failed";
+  requested_at: number;
+  deadline_at: number;
+  finished_at?: number;
+  message?: string;
 }
 export const emptyState = (): State => ({
   schema: 2,

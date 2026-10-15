@@ -2,6 +2,8 @@
 //! desktop app and exported through UniFFI to Swift (iOS/macOS) and Kotlin (Android).
 pub mod api;
 pub mod diagnostics;
+pub mod emergency;
+pub use emergency::*;
 pub mod policy;
 #[cfg(feature = "remote")]
 pub mod remote;

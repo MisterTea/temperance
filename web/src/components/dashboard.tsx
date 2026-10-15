@@ -9,6 +9,7 @@ import type { UpdateStatus } from "@/lib/updates";
 import { ProfileEditor } from "./profile-editor";
 import { UsageCharts } from "./usage-charts";
 import { Onboarding } from "./onboarding";
+import { Operations } from "./operations";
 import { api } from "./api";
 import { nextHomeAddress, type HomeNetwork } from "@/lib/home-lan";
 type DashboardState = ReturnType<typeof snapshot>;
@@ -370,12 +371,16 @@ function SoftwareUpdates({
 }) {
   if (!update) return null;
   const { latest } = update;
+  const active = updating || (
+    !!update.attempt && ["preparing", "dispatched"].includes(update.attempt.status)
+  );
   const commands = updateCommands(update);
   return (
     <section>
       <h2>Software updates</h2>
       <p>
         This server runs Temperance <strong>{update.current}</strong>.{" "}
+        Update channel: {update.channel || "stable"}.{" "}
         {!update.checks
           ? "Update checks are off (TEMPERANCE_UPDATE_CHECK)."
           : update.available
@@ -392,15 +397,24 @@ function SoftwareUpdates({
           Could not check for updates: {update.error}
         </p>
       ) : null}
-      {updating ? (
+      {update.attempt?.status === "failed" ? (
+        <p className="notice warning" role="status">
+          Update to {update.attempt.target} failed. {update.attempt.message}
+        </p>
+      ) : update.attempt?.status === "succeeded" ? (
+        <p className="notice success" role="status">
+          Update to {update.attempt.target} completed.
+        </p>
+      ) : null}
+      {active ? (
         <p className="notice" role="status">
-          Updating to {latest?.version}. Temperance restarts when the new
+          Updating to {update.attempt?.target || latest?.version}. Temperance restarts when the new
           version is ready, and this page reconnects by itself.
         </p>
       ) : update.available && update.can_update ? (
         <p>
-          Updating takes a minute or two. Devices keep their rules while
-          Temperance restarts.
+          An encrypted recovery snapshot is required before updating. Internet
+          access through this server stops while it restarts.
         </p>
       ) : update.available && commands.length ? (
         <>
@@ -421,13 +435,13 @@ function SoftwareUpdates({
         {update.available && update.can_update ? (
           <button
             className="primary"
-            disabled={updating}
+            disabled={active}
             onClick={() => {
               if (confirm(`Update Temperance to ${latest!.version} now?`))
                 onUpdate();
             }}
           >
-            {updating ? "Updating…" : `Update to ${latest!.version}`}
+            {active ? "Updating…" : `Update to ${latest!.version}`}
           </button>
         ) : null}
         {latest ? (
@@ -441,7 +455,7 @@ function SoftwareUpdates({
           </a>
         ) : null}
         {update.checks ? (
-          <button className="secondary" disabled={updating} onClick={onCheck}>
+          <button className="secondary" disabled={active} onClick={onCheck}>
             Check now
           </button>
         ) : null}
@@ -752,14 +766,23 @@ export function Dashboard() {
     if (signedIn) loadUpdate().catch(() => undefined);
   }, [signedIn, loadUpdate]);
   useEffect(() => {
+    if (update?.attempt && ["preparing", "dispatched"].includes(update.attempt.status))
+      setUpdatingFrom(update.attempt.from);
+  }, [update?.attempt?.id, update?.attempt?.status]);
+  useEffect(() => {
     if (!updatingFrom) return;
     const started = Date.now();
     const timer = setInterval(async () => {
       const next = await api<UpdateStatus>("/api/update").catch(
         () => undefined,
       );
-      if (next && next.current !== updatingFrom) {
-        setUpdate(next);
+      if (next) setUpdate(next);
+      if (next?.attempt?.status === "failed") {
+        setUpdatingFrom(undefined);
+        setError(
+          next.attempt.message || "The update failed. Check the updater and recovery records.",
+        );
+      } else if (next && next.current !== updatingFrom) {
         setUpdatingFrom(undefined);
         refresh();
       } else if (Date.now() - started > 10 * 60_000) {
@@ -1109,14 +1132,18 @@ export function Dashboard() {
                       <span
                         className={
                           "badge " +
-                          (p.access_reason === "allowed"
-                            ? "allowed"
-                            : "blocked")
+                          (!p.managed
+                            ? ""
+                            : p.access_reason === "allowed"
+                              ? "allowed"
+                              : "blocked")
                         }
                       >
-                        {p.access_reason === "allowed"
-                          ? "Rules active"
-                          : capitalize(p.access_reason)}
+                        {!p.managed
+                          ? "Rules disabled"
+                          : p.access_reason === "allowed"
+                            ? "Rules active"
+                            : capitalize(p.access_reason)}
                       </span>
                     </div>
                     <div className="usage">
@@ -1204,6 +1231,20 @@ export function Dashboard() {
                         {p.paused ? "Resume" : "Pause"}
                       </button>
                       <button
+                        className={p.managed ? "primary" : "secondary"}
+                        aria-pressed={p.managed}
+                        onClick={() =>
+                          act(() =>
+                            save("/api/profiles", {
+                              ...p,
+                              managed: !p.managed,
+                            }),
+                          )
+                        }
+                      >
+                        {p.managed ? "Rules enabled" : "Rules disabled"}
+                      </button>
+                      <button
                         className="secondary"
                         onClick={() =>
                           setEditing({ ...p, name: label })
@@ -1224,20 +1265,6 @@ export function Dashboard() {
                       ) : null}
                       {signIn && me?.role !== "parent" ? (
                         <>
-                          <button
-                            className="secondary"
-                            onClick={() =>
-                              act(async () => {
-                                await api("/api/users/update", {
-                                  id: signIn.id,
-                                  disabled: !signIn.disabled,
-                                });
-                                await loadParents();
-                              })
-                            }
-                          >
-                            {signIn.disabled ? "Enable" : "Disable"}
-                          </button>
                           <button
                             className="secondary"
                             onClick={() => {
@@ -2111,7 +2138,9 @@ export function Dashboard() {
             <section>
               <h2>Portable backup</h2>
               <p>
-                Keep your policy and history independent of a hosting provider.
+                Export policy and history for migration. This file contains sensitive
+                household data and credential hashes; store it securely. It excludes
+                gateway identity and is not a disaster-recovery archive.
               </p>
               <a className="button secondary" href="/api/export">
                 Download backup
@@ -2169,16 +2198,14 @@ export function Dashboard() {
                   );
                 }}
               >
-                <label>
-                  Category
-                  <select name="category">
+                <label htmlFor="manual-feed-category">Category</label>
+                  <select id="manual-feed-category" name="category">
                     {Object.entries(state.catalog).map(([key, c]) => (
                       <option value={key} key={key}>
                         {c.name}
                       </option>
                     ))}
                   </select>
-                </label>
                 <label>
                   Domains
                   <textarea
@@ -2216,16 +2243,19 @@ export function Dashboard() {
               onCheck={() => act(() => loadUpdate(true))}
               onUpdate={() =>
                 act(async () => {
-                  await api("/api/update", {});
                   setUpdatingFrom(update!.current);
+                  try { await api("/api/update", {}); }
+                  catch (e) { setUpdatingFrom(undefined); throw e; }
                 })
               }
             />
+            <Operations />
             <section>
               <h2>Restart Temperance</h2>
               <p>
                 Reloads the settings file, for example after changing the VPN
-                endpoint. Devices and this page reconnect within a few seconds.
+                endpoint. Internet access through this server stops during restart;
+                devices reconnect when the gateway is available again.
               </p>
               <button
                 className="secondary"

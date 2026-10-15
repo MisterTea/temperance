@@ -6,6 +6,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         do {
             guard let identity = try Vault().load() else { throw ClientError.message("VPN identity missing") }
+            guard !identity.emergencyDisabled else { throw ClientError.message("VPN turned off by an admin") }
             let configuration = try tunnelConfiguration(identity)
             adapter.start(tunnelConfiguration: configuration) { error in completionHandler(error) }
         } catch { completionHandler(error) }

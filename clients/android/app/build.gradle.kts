@@ -3,12 +3,19 @@ android {
     namespace = "org.temperance.app"
     compileSdk = 36
     defaultConfig {
-        applicationId = "org.temperance.app"; minSdk = 26; targetSdk = 36; versionCode = 7; versionName = "0.5.6"
+        applicationId = "org.temperance.app"; minSdk = 26; targetSdk = 36; versionCode = System.getenv("TEMPERANCE_BUILD_NUMBER")?.toInt() ?: 7; versionName = System.getenv("TEMPERANCE_VERSION") ?: "0.5.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["clearPackageData"] = "true"
     }
-    // Sideloadable release builds; store builds need a real upload key.
-    buildTypes { release { signingConfig = signingConfigs.getByName("debug") } }
+    signingConfigs {
+        create("release") {
+            System.getenv("TEMPERANCE_ANDROID_KEYSTORE")?.let { storeFile = file(it) }
+            storePassword = System.getenv("TEMPERANCE_ANDROID_STORE_PASSWORD")
+            keyAlias = System.getenv("TEMPERANCE_ANDROID_KEY_ALIAS")
+            keyPassword = System.getenv("TEMPERANCE_ANDROID_KEY_PASSWORD")
+        }
+    }
+    buildTypes { release { signingConfig = signingConfigs.getByName("release") } }
     testOptions {
         execution = "ANDROIDX_TEST_ORCHESTRATOR"
         unitTests.isIncludeAndroidResources = true
@@ -25,6 +32,15 @@ android {
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17; isCoreLibraryDesugaringEnabled = true }
     kotlinOptions { jvmTarget = "17" }
+}
+// Refuse production packaging before any tasks run if release signing is missing.
+gradle.taskGraph.whenReady {
+    if (allTasks.any { it.name == "assembleRelease" || it.name == "bundleRelease" || it.name.startsWith("packageRelease") }) {
+        listOf("TEMPERANCE_ANDROID_KEYSTORE", "TEMPERANCE_ANDROID_STORE_PASSWORD", "TEMPERANCE_ANDROID_KEY_ALIAS", "TEMPERANCE_ANDROID_KEY_PASSWORD", "TEMPERANCE_VERSION", "TEMPERANCE_BUILD_NUMBER").forEach {
+            require(!System.getenv(it).isNullOrBlank()) { "Release packaging requires $it; debug signing is never used for releases." }
+        }
+        require(System.getenv("TEMPERANCE_BUILD_NUMBER").toInt() > 7) { "Release build number must exceed the last distributed build (7)." }
+    }
 }
 // Shared Rust business logic (core/temperance-core) via UniFFI + JNA.
 val buildRustCore by tasks.registering(Exec::class) {

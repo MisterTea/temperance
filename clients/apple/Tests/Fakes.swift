@@ -72,6 +72,10 @@ final class FakeVPN: VPNControl {
     var failure: Error?
     private(set) var installed: [String] = []
     func status() async -> (enabled: Bool, connected: Bool)? { current }
+    func disable() async throws {
+        if let failure { throw failure }
+        current = (false, false)
+    }
     func install(endpoint: String) async throws {
         if let failure { throw failure }
         installed.append(endpoint)

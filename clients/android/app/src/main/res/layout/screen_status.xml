@@ -44,7 +44,12 @@
         <Button android:id="@+id/wifi_sign_in" style="@style/Secondary" android:text="@string/wifi_sign_in" android:visibility="gone" />
         <Button android:id="@+id/ask_time" style="@style/Primary" android:text="@string/ask_time" />
 
+        <Button android:id="@+id/emergency_unlock" style="@style/Secondary" android:text="Admin emergency unlock" />
+        <Button android:id="@+id/emergency_vpn_settings" style="@style/Secondary" android:text="Android VPN settings" android:visibility="gone" />
+        <TextView android:id="@+id/emergency_android_note" style="@style/Note" android:text="If internet is still blocked, an admin must turn off Block connections without VPN in Android VPN settings." android:visibility="gone" />
+        <Button android:id="@+id/resume_vpn" style="@style/Primary" android:text="Turn on VPN" android:visibility="gone" />
+
         <TextView android:id="@+id/status_line" style="@style/Note" />
-        <TextView style="@style/Note" android:layout_marginTop="12dp" android:text="@string/always_on_note" />
+        <TextView android:id="@+id/always_on_note" style="@style/Note" android:layout_marginTop="12dp" android:text="@string/always_on_note" />
     </LinearLayout>
 </ScrollView>

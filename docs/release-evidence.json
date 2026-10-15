@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "version": "unreleased",
+  "source_digest": "pending",
+  "checks": {
+    "automated_acceptance": { "status": "pending", "owner": "maintainer", "evidence": "" },
+    "fresh_install": { "status": "pending", "owner": "release maintainer", "evidence": "" },
+    "android_device": { "status": "pending", "owner": "device QA", "evidence": "" },
+    "ios_device": { "status": "pending", "owner": "device QA", "evidence": "" },
+    "macos_device": { "status": "pending", "owner": "device QA", "evidence": "" },
+    "windows_device": { "status": "pending", "owner": "device QA", "evidence": "" },
+    "signed_distribution": { "status": "pending", "owner": "release maintainer", "evidence": "", "run_id": null },
+    "enforcement_matrix": { "status": "pending", "owner": "device QA", "evidence": "" },
+    "filter_corpus": { "status": "pending", "owner": "filter maintainer", "evidence": "" },
+    "accessibility": { "status": "pending", "owner": "product QA", "evidence": "" },
+    "security_review": { "status": "pending", "owner": "security reviewer", "evidence": "" },
+    "upgrade_restore": { "status": "pending", "owner": "release maintainer", "evidence": "" },
+    "beta_households": { "status": "pending", "owner": "beta coordinator", "evidence": "" },
+    "ipv6_compatibility": { "status": "pending", "owner": "gateway maintainer", "evidence": "" },
+    "capacity_soak": { "status": "pending", "owner": "gateway maintainer", "evidence": "" },
+    "stable_households": { "status": "pending", "owner": "beta coordinator", "evidence": "" },
+    "production_distribution": { "status": "pending", "owner": "release maintainer", "evidence": "" }
+  }
+}

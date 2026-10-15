@@ -12,6 +12,8 @@ struct ContentView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var note = ""
+    @State private var emergencyPassword = ""
+    @State private var unlocking = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -20,7 +22,7 @@ struct ContentView: View {
                     Text(client.status).foregroundStyle(.secondary).accessibilityIdentifier("status")
                 }
                 if let child = client.child {
-                    if client.vpnInstalled == false { allowVPN } else { status(child) }
+                    if client.vpnInstalled == false && !client.emergencyDisabled { allowVPN } else { status(child) }
                 } else {
                     signIn
                 }
@@ -74,7 +76,11 @@ struct ContentView: View {
 
     private func status(_ child: ChildStatus) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(child.headline).font(.title).bold()
+            Text(client.emergencyDisabled ? "VPN turned off by an admin" : child.headline).font(.title).bold()
+            if client.emergencyDisabled {
+                Text("Protection is off until you turn the VPN back on.")
+                Button("Turn on VPN") { Task { await client.install() } }.buttonStyle(.borderedProminent)
+            }
             Text(child.detail)
             Text(child.remainingMinutes.map { "\($0) min left today" } ?? "No daily limit").font(.title3)
             if let next = child.nextChange { Text(next).foregroundStyle(.secondary) }
@@ -106,6 +112,18 @@ struct ContentView: View {
                     }
                 }
             }
+            DisclosureGroup("Admin emergency unlock", isExpanded: $unlocking) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("If the server is unavailable, enter the household admin password to turn off this device's VPN. Filtering and time limits stop until you turn the VPN back on.")
+                    PasswordField(label: "Household admin password", text: $emergencyPassword)
+                    Button("Turn off VPN") {
+                        let password = emergencyPassword
+                        emergencyPassword = ""
+                        Task { await client.emergencyDisable(password: password) }
+                    }.buttonStyle(.bordered)
+                }
+            }
+            .onChange(of: unlocking) { expanded in if !expanded { emergencyPassword = "" } }
             if client.canAskPermissions {
                 Button("Allow alerts and location requests") { client.allowAlerts() }
             }

@@ -43,7 +43,15 @@ Use an actual iPhone/iPad and correctly signed entitlement-bearing build for VPN
 
 ## Android
 
-Requires JDK 17+ and Android SDK 36. The repository includes the Gradle 8.11.1 wrapper. The WireGuard library is pinned to `1.0.20260102`. A debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`; debug signing is for testing. Production APK/AAB signing uses your private release key and distribution review.
+Requires JDK 17+ and Android SDK 36. On macOS with Homebrew, use `brew install openjdk@17` if needed. If `java` still reports no runtime, select Homebrew's installation for the current shell:
+
+```sh
+export JAVA_HOME="$(brew --prefix openjdk@17)/libexec/openjdk.jdk/Contents/Home"
+export PATH="$JAVA_HOME/bin:$PATH"
+java -version
+```
+
+No global Java symlink or shell-profile change is required. The repository includes the Gradle 8.11.1 wrapper. The WireGuard library is pinned to `1.0.20260102`. A debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`; debug signing is for testing. Production APK/AAB signing uses your private release key and distribution review.
 
 Install the APK. On first launch it asks for the setup code and the client's username and password created on the dashboard, enrolls the device, then asks for Android's VPN consent (and notification permission on Android 13+) and connects. Use the menu's **Always-on VPN settings** to enable **Always-on VPN** and **Block connections without VPN**. The embedded VPN service supports always-on reactivation using saved provisioning. The app stores keys/tokens encrypted with an Android Keystore AES-GCM key and disables backups. A foreground session service keeps the connection/status active. Grant notification permission if your OS prompts so its status remains visible. Only a device owner/managed policy can prevent the client from changing these settings or uninstalling the app.
 
@@ -80,3 +88,7 @@ Integration follows upstream [WireGuard embedding documentation](https://www.wir
 ## Password sign-in
 
 Add a client on the dashboard overview, then add a sign-in on that client’s card, using the admin password. In the app, scan the setup code from the dashboard's **Devices** tab (Android and iPhone) or paste it (Mac and Windows), then enter that username and password. The server determines the profile; no admin account, OAuth exchange, enrollment code or profile picker is used on the device. Devices never use the dashboard's address: they send passwords only through the gateway's UDP port, over QUIC pinned to the key in the setup code (or inside the tunnel), and store only scoped device credentials. Devices set up before version 0.5.4 stored a web address instead and must be set up again with the setup code. Password reset, user deletion or disable revokes the associated devices; clear/reset their local identity before signing in again.
+
+## Offline emergency access
+
+After syncing with an updated server, every protected client offers **Admin emergency unlock**. Enter the household dashboard admin password to turn off its VPN without contacting the server. The VPN remains off until **Turn on VPN** / **Start protection** is selected. Wrong attempts are rate limited and the password is never saved. See the [emergency shutdown instructions](../docs/beta-operations.md#emergency-vpn-shutdown-during-a-server-outage), including Android's separate **Block connections without VPN** setting and offline password-rotation behavior.

@@ -155,13 +155,31 @@ open class TemperanceApp : Application() {
     val enrolled get() = child != null
     fun vpnPermission() = VpnService.prepare(this) == null
     fun disconnect() { backend.setState(tunnel, Tunnel.State.DOWN, null) }
-    fun connect() {
+    @Synchronized fun connect() {
         val identity = vault.load() ?: error("Enroll first")
+        if (identity.emergencyDisabled) return
         val config = tunnelConfig(identity.privateKey, identity.state?.tunnel ?: error("Enroll first"))
         backend.setState(tunnel, Tunnel.State.UP, Config.parse(config.byteInputStream()))
     }
-    fun refresh() {
+    val emergencyDisabled get() = vault.load()?.emergencyDisabled == true
+    @Synchronized fun emergencyDisable(password: String) {
+        val previous = vault.load() ?: error("Enroll first")
+        val result = uniffi.temperance_core.emergencyUnlock(previous, password, now())
+        vault.save(result.identity)
+        check(result.unlocked) { result.message }
+        try { disconnect() } catch (e: Exception) { vault.save(previous); throw e }
+        stopService(Intent(this, SessionService::class.java))
+        status = result.message + " If Android blocks connections without VPN, an admin must also turn that setting off in Always-on VPN settings."
+    }
+    @Synchronized fun resumeProtection() {
+        val previous = vault.load() ?: error("Enroll first")
+        vault.save(previous.copy(emergencyDisabled = false))
+        try { connect() } catch (e: Exception) { vault.save(previous); throw e }
+        status = "VPN protection is on."
+    }
+    @Synchronized fun refresh() {
         val identity = vault.load()?.takeIf { it.state != null } ?: return
+        if (identity.emergencyDisabled) return
         val (code, body) = try { transport.send(stateRequest(identity)) } catch (e: Exception) { checkHealth(identity, false); throw e }
         val latest = parseDeviceState(code, body)
         val alerts = childAlerts(identity.state, latest, now())

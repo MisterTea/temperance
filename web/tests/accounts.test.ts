@@ -86,6 +86,8 @@ describe("simple admin password and client IAM", () => {
     expect(login.status).toBe(200);
     const device = await login.json();
     expect(device.policy.id).toBe(1);
+    expect(await verifyPassword("Temperance emergency VPN unlock v1\0" + ADMIN, device.emergency_unlock)).toBe(true);
+    expect(await verifyPassword(ADMIN, device.emergency_unlock)).toBe(false);
     expect(device.user.id).toBe(user.id);
     expect(
       (

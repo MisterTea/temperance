@@ -75,10 +75,14 @@ TEMPERANCE_TIMEZONE=$TEMPERANCE_TIMEZONE
 COMPOSE_PROFILES=$profiles
 CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
 
-# Shared by Temperance and the updater container. TEMPERANCE_AUTO_UPDATE=true also
-# updates every night at 3:00 (TEMPERANCE_AUTO_UPDATE_SCHEDULE, a 6-field cron).
+# Shared by Temperance and the updater container. Updates run only when
+# requested through the dashboard, after a successful encrypted recovery snapshot.
 TEMPERANCE_UPDATER_TOKEN=$updater_token
 TEMPERANCE_AUTO_UPDATE=false
+TEMPERANCE_UPDATE_CHANNEL=stable
+# Recovery runs daily and before dashboard updates. Copy archives and this
+# passphrase to separate safe storage; keeping them only here is not recovery.
+TEMPERANCE_BACKUP_PASSPHRASE=$(secret 36)
 
 # Host side of the published ports. Forward UDP $TEMPERANCE_HOSTNAME:${TEMPERANCE_WIREGUARD_PORT:-51820} on your router to this machine.
 TEMPERANCE_DASHBOARD_PORT=127.0.0.1:8788
@@ -101,7 +105,12 @@ elif ! grep -q '^TEMPERANCE_UPDATER_TOKEN=.' .env; then
   fi
 fi
 
-docker compose pull --quiet || echo "warning: could not pull images; using local copies" >&2
+if [ -n "$(docker compose ps -q --status running temperance)" ]; then
+  echo "Creating an encrypted recovery snapshot before replacing this server."
+  docker compose exec -T temperance node scripts/recovery.cjs backup || fail "Recovery failed. Follow docs/beta-operations.md before upgrading an older installation."
+fi
+docker compose config --quiet
+docker compose pull --quiet || fail "Could not pull the requested images; existing containers were not replaced."
 docker compose up -d --remove-orphans
 
 printf 'Waiting for Temperance to start'
@@ -118,6 +127,7 @@ cat << EOF
 Temperance is running from $dir.
   Dashboard:  $(setting TEMPERANCE_PUBLIC_URL) (and http://$(setting TEMPERANCE_DASHBOARD_PORT) on this machine)
   Password:   TEMPERANCE_ADMIN_PASSWORD in $dir/.env
+  Recovery:   save the passphrase from .env separately; copy encrypted archives off this server
   Router:     forward UDP port $(setting TEMPERANCE_WIREGUARD_PORT) to this machine$( [ "$(setting COMPOSE_PROFILES)" = caddy ] && echo ", plus TCP 80 and 443 for Caddy")
               (how-to for TP-Link, eero and Netgear: https://github.com/MisterTea/temperance/blob/main/docs/routers.md)
   Upgrade:    $(case ",$(setting COMPOSE_PROFILES)," in *,updater,*) echo "Settings > Software updates in the dashboard, or rerun this installer" ;; *) echo "rerun this installer, or: cd $dir && docker compose pull && docker compose up -d" ;; esac)

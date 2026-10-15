@@ -68,24 +68,44 @@ pub fn failure(p: &[u8], code: u16, end: Option<usize>) -> Vec<u8> {
     out
 }
 
-/// Answer the question with a CNAME to `target`, pinning a restricted endpoint.
-pub fn cname(p: &[u8], end: usize, target: &str) -> Vec<u8> {
-    let mut name: Vec<u8> = target
-        .split('.')
-        .flat_map(|l| std::iter::once(l.len() as u8).chain(l.bytes()))
-        .collect();
-    name.push(0);
-    let mut out = p[..2].to_vec();
-    for v in [0x8180u16, 1, 1, 0, 0] {
+/// An A query for `host`, copying the id from the client question it stands in for.
+pub fn a_query(id: &[u8], host: &str) -> Vec<u8> {
+    let mut out = id.get(..2).unwrap_or(&[0, 0]).to_vec();
+    out.extend([0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
+    for label in host.split('.').filter(|l| !l.is_empty()) {
+        out.push(label.len() as u8);
+        out.extend(label.as_bytes());
+    }
+    out.push(0);
+    out.extend(1u16.to_be_bytes());
+    out.extend(1u16.to_be_bytes());
+    out
+}
+
+/// Answer the original name with these addresses.
+///
+/// SafeSearch and YouTube Restricted Mode are virtual IPs: the phone must
+/// keep asking for `www.google.com` (or `www.youtube.com`) and connect to
+/// the pinned address. A CNAME leaves a stub resolver with no address, so
+/// the lookup fails and the site never loads.
+pub fn a_answer(packet: &[u8], end: usize, records: &[(Ipv4Addr, u32)]) -> Vec<u8> {
+    if packet.len() < 12 || end < 12 || end > packet.len() {
+        return Vec::new();
+    }
+    let flags = 0x8080 | (u16_at(packet, 2).unwrap_or(0) & 0x0100);
+    let mut out = packet[..2].to_vec();
+    for v in [flags, 1, records.len() as u16, 0, 0] {
         out.extend(v.to_be_bytes());
     }
-    out.extend(&p[12..end]);
-    out.extend([0xc0, 0x0c]);
-    out.extend(5u16.to_be_bytes());
-    out.extend(1u16.to_be_bytes());
-    out.extend(60u32.to_be_bytes());
-    out.extend((name.len() as u16).to_be_bytes());
-    out.extend(name);
+    out.extend(&packet[12..end]);
+    for (ip, ttl) in records {
+        out.extend([0xc0, 0x0c]);
+        out.extend(1u16.to_be_bytes());
+        out.extend(1u16.to_be_bytes());
+        out.extend(ttl.to_be_bytes());
+        out.extend(4u16.to_be_bytes());
+        out.extend(ip.octets());
+    }
     out
 }
 
@@ -251,7 +271,27 @@ pub async fn resolve(shared: &Shared, packet: &[u8], ip: Ipv4Addr, tcp: bool) ->
             }
         }
         if let Some(target) = policy.dns_override(ip, &host) {
-            return cname(packet, end, target);
+            // AAAA and HTTPS records would skip the pin or stall on an alias.
+            if u16_at(packet, end - 4) != Some(1) {
+                return failure(packet, NOERROR, Some(end));
+            }
+            let query = a_query(&packet[..2], target);
+            match timeout(
+                Duration::from_secs(3),
+                forward(shared.config.dns_upstream, &query, tcp),
+            )
+            .await
+            {
+                Ok(Ok(response)) => {
+                    let found = addresses(&response);
+                    if found.is_empty() {
+                        return failure(packet, SERVFAIL, Some(end));
+                    }
+                    shared.observe(ip, &host, &found);
+                    return a_answer(packet, end, &found);
+                }
+                _ => return failure(packet, SERVFAIL, Some(end)),
+            }
         }
     }
     // IPv6 never leaves the tunnel; an empty answer avoids a slow fallback.
@@ -339,16 +379,25 @@ mod tests {
     }
 
     #[test]
-    fn builds_failures_and_cnames() {
+    fn builds_failures_and_pinned_answers() {
         let q = query("blocked.test", 1);
         let end = q.len();
         let nx = failure(&q, NXDOMAIN, Some(end));
         assert_eq!(&nx[..2], &[0x12, 0x34]);
         assert_eq!(u16_at(&nx, 2), Some(0x8183));
         assert_eq!(u16_at(&nx, 4), Some(1));
-        let c = cname(&q, end, "restrict.youtube.com");
-        assert_eq!(u16_at(&c, 6), Some(1), "one answer");
-        assert!(c.ends_with(b"\x08restrict\x07youtube\x03com\x00"));
+        let pinned = a_answer(&q, end, &[(Ipv4Addr::new(216, 239, 38, 120), 60)]);
+        assert_eq!(u16_at(&pinned, 2), Some(0x8180));
+        assert_eq!(u16_at(&pinned, 6), Some(1), "one address");
+        assert_eq!(
+            addresses(&pinned),
+            [(Ipv4Addr::new(216, 239, 38, 120), 60)]
+        );
+        let lookup = a_query(&[0x12, 0x34], "forcesafesearch.google.com");
+        assert_eq!(
+            question(&lookup),
+            Some(("forcesafesearch.google.com".into(), lookup.len()))
+        );
     }
 
     #[test]

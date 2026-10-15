@@ -1,3 +1,4 @@
+import { emergencyVerifier } from "./emergency";
 import { z } from "zod";
 import * as accounts from "./accounts";
 import { bearer, hash, secrets, trustedOrigin, validateKey } from "./auth";
@@ -97,9 +98,37 @@ export async function handle(
         throw new HTTPError(403, "Same-origin requests required");
       if (actor.role === "parent") await seen(repo, actor.parent);
       if (!write) {
-        const url = new URL(request.url),
-          today = service.snapshot(state).day;
+        const url = new URL(request.url);
         if (path === "api/state") return json(service.snapshot(state));
+        if (path === "api/readiness") {
+          const { readiness } = await import("./readiness");
+          const result = await readiness(repo);
+          return json(
+            result,
+            result.ready || url.searchParams.get("report") === "1" ? 200 : 503,
+          );
+        }
+        if (path === "api/support") {
+          const { supportBundle } = await import("./readiness");
+          return json(supportBundle(state), 200, {
+            "Content-Disposition":
+              'attachment; filename="temperance-support.json"',
+          });
+        }
+        if (path === "api/maintenance") {
+          const { notificationStatus } = await import("./notifications");
+          const { feedStatus } = await import("./feeds");
+          return json({
+            email: notificationStatus(state),
+            feeds: feedStatus(state),
+            recovery: {
+              configured:
+                (process.env.TEMPERANCE_BACKUP_PASSPHRASE?.length ?? 0) >= 16,
+              last_backup_at: state.maintenance?.backup_at ?? null,
+              error: state.maintenance?.backup_error ?? null,
+            },
+          });
+        }
         if (path === "api/me")
           return json(
             actor.role === "parent"
@@ -109,9 +138,11 @@ export async function handle(
         if (path === "api/users")
           return json(accounts.users(state).map(accounts.publicUser));
         if (path === "api/update")
-          return json(
-            await updates.status(url.searchParams.get("check") === "now"),
-          );
+          return json({
+            ...(await updates.status(url.searchParams.get("check") === "now")),
+            attempt: await updates.updateAttempt(repo),
+          });
+        const today = service.snapshot(state).day;
         if (path === "api/usage")
           return json(
             service.usageSummary(
@@ -192,13 +223,53 @@ export async function handle(
             },
           );
       } else {
+        if (path === "api/notifications/retry") {
+          const { retryFailedNotifications } = await import("./notifications");
+          try {
+            return json(await retryFailedNotifications(repo));
+          } catch {
+            throw new HTTPError(409, "Configure SMTP before retrying email.");
+          }
+        }
+        if (path === "api/notifications/test") {
+          const { testMail } = await import("./notifications");
+          try {
+            await testMail(repo);
+          } catch (e) {
+            throw new HTTPError(
+              409,
+              e instanceof Error ? e.message : "Delivery test failed",
+            );
+          }
+          return json({ ok: true });
+        }
+        if (path === "api/recovery") {
+          // Download only. Restoring identity is an offline operation on a new host.
+          const { recoveryJob } = await import("./recovery");
+          try {
+            return new Response(await recoveryJob("export"), {
+              headers: {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                "Content-Disposition":
+                  'attachment; filename="temperance-recovery.json"',
+                "X-Content-Type-Options": "nosniff",
+              },
+            });
+          } catch {
+            throw new HTTPError(
+              409,
+              "Configure SQLite recovery, gateway identity, and a recovery passphrase before downloading.",
+            );
+          }
+        }
         if (path === "api/restart") {
           setTimeout(() => process.exit(RESTART_EXIT_CODE), 250);
           return json({ restarting: true });
         }
         if (path === "api/update") {
           try {
-            await updates.update();
+            await updates.requestUpdate(repo);
           } catch (e) {
             throw new HTTPError(
               409,
@@ -210,6 +281,22 @@ export async function handle(
         const data = await body(request);
         const result = await mutate(repo, async (state) => {
           switch (path) {
+            case "api/setup/client": {
+              const input = z
+                .object({
+                  profile: serviceProfileSchema,
+                  password: z.string().min(8).max(200),
+                })
+                .parse(data);
+              const id = state.nextProfileId;
+              service.saveProfile(state, { ...input.profile, id: undefined });
+              await accounts.createUser(state, {
+                username: input.profile.name,
+                password: input.password,
+                profile_id: id,
+              });
+              return service.snapshot(state);
+            }
             case "api/users": {
               const user = await accounts.createUser(state, data);
               service.changed(
@@ -374,11 +461,20 @@ export async function handle(
         return { ...enrolled, user: accounts.publicUser(user) };
       });
       if (!result) throw new HTTPError(401, "Invalid username or password");
-      return json(result);
+      return json({
+        ...result,
+        emergency_unlock: await emergencyVerifier(result.device_id),
+      });
     }
     if (path === "v1/enroll" && write) {
       const data = await body(request);
-      return json(await mutate(repo, (state) => service.enroll(state, data)));
+      const enrolled = await mutate(repo, (state) =>
+        service.enroll(state, data),
+      );
+      return json({
+        ...enrolled,
+        emergency_unlock: await emergencyVerifier(enrolled.device_id),
+      });
     }
     if (path === "v1/gateway/parents/pair" && write) {
       if (!(await fromGateway(request)))
@@ -414,7 +510,10 @@ export async function handle(
         device = await service.authenticatedDevice(state, token);
       if (!device) throw new HTTPError(401, "Invalid or revoked device");
       if (!write && path === "v1/device/state")
-        return json(service.clientState(state, device));
+        return json({
+          ...service.clientState(state, device),
+          emergency_unlock: await emergencyVerifier(device.id),
+        });
       if (write && path === "v1/device/requests") {
         const data = await body(request);
         return json(

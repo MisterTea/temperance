@@ -23,7 +23,7 @@
     { "tap": "vpn.allow" },
     { "system": "allow-vpn" },
     { "show": "You're online" },
-    { "say": "That's it. Riley is online, the family's filters are on, and today's two hours of screen time are counting." },
+    { "say": "That's it. Riley is online, the family's filters are on, and today's two hours of estimated network activity are counting." },
     { "show": "status.remaining" },
     { "say": "Riley never needs to open Temperance again, but it's always here to check." }
   ]

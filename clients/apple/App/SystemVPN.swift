@@ -16,6 +16,7 @@ struct SimulatedVPN: VPNControl {
     private let key = "simulatedVPNInstalled"
     func status() async -> (enabled: Bool, connected: Bool)? { UserDefaults.standard.bool(forKey: key) ? (true, true) : nil }
     func install(endpoint: String) async throws { UserDefaults.standard.set(true, forKey: key) }
+    func disable() async throws { UserDefaults.standard.set(false, forKey: key) }
 }
 #endif
 
@@ -28,6 +29,14 @@ struct SystemVPN: VPNControl {
     func status() async -> (enabled: Bool, connected: Bool)? {
         guard identifier != nil, let manager = ours((try? await NETunnelProviderManager.loadAllFromPreferences()) ?? []) else { return nil }
         return (manager.isEnabled, manager.connection.status == .connected)
+    }
+    func disable() async throws {
+        guard let manager = ours(try await NETunnelProviderManager.loadAllFromPreferences()) else { return }
+        manager.isOnDemandEnabled = false
+        manager.isEnabled = false
+        try await manager.saveToPreferences()
+        try await manager.loadFromPreferences()
+        manager.connection.stopVPNTunnel()
     }
     func install(endpoint: String) async throws {
         guard let identifier else { throw ClientError.message("This build has no VPN extension") }
