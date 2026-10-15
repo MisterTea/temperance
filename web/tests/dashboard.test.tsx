@@ -527,6 +527,10 @@ describe("profile editor", () => {
         .textContent,
     ).toBe("Games 0 / 40 min");
     expect(
+      within(card).getByRole("list", { name: "riley category budgets" })
+        .textContent,
+    ).toBe("Video & streaming 0 / 45 min");
+    expect(
       within(card).getByRole("list", { name: "riley site budgets" })
         .textContent,
     ).toBe("roblox.com 0 / 20 min");
