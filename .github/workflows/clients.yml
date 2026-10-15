@@ -86,7 +86,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
             clients/android/gradlew -p clients/android connectedDebugAndroidTest
-            clients/android/e2e/real-server.sh
+            TEMPERANCE_DISPOSABLE_TEST=1 clients/android/e2e/real-server.sh
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

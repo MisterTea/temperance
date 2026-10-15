@@ -2,6 +2,7 @@ package org.temperance.app
 
 import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.Espresso.openActionBarOverflowOrOptionsMenu
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.action.ViewActions.scrollTo
@@ -38,14 +39,14 @@ class RealServerTest {
         app.transport = HomeTransport { app.connected }
 
         val scenario = TestSupport.launch()
-        onView(withId(R.id.server)).perform(replaceText(home!!))
-        onView(withId(R.id.username)).perform(replaceText(args.getString("username")!!))
-        onView(withId(R.id.password)).perform(replaceText("not the password"))
+        onView(withId(R.id.server)).perform(scrollTo(), replaceText(home!!))
+        onView(withId(R.id.username)).perform(scrollTo(), replaceText(args.getString("username")!!))
+        onView(withId(R.id.password)).perform(scrollTo(), replaceText("not the password"))
         closeSoftKeyboard()
         onView(withId(R.id.sign_in)).perform(scrollTo(), click())
         eventually { onView(withId(R.id.error)).check(matches(withText("Invalid username or password"))) }
 
-        onView(withId(R.id.password)).perform(replaceText(args.getString("password")!!))
+        onView(withId(R.id.password)).perform(scrollTo(), replaceText(args.getString("password")!!))
         closeSoftKeyboard()
         onView(withId(R.id.sign_in)).perform(scrollTo(), click())
 
@@ -57,17 +58,21 @@ class RealServerTest {
         onView(withId(R.id.remaining)).check(matches(withText(containsString("60 minutes left today"))))
         TestSupport.screenshot("real-server-status")
 
-        onView(withText(R.string.menu_refresh)).perform(click())
+        refreshFromMenu()
         eventually { onView(withId(R.id.status_line)).check(matches(withText(R.string.refreshed))) }
 
-        // Real browsing through the embedded gateway: DNS on 10.77.0.1 and TCP relayed by the server.
+        // A substantial HTTP transfer through the actual WireGuard tunnel.
         waitFor(30_000, "a page to load through the tunnel") { browse() }
+        val profileId = args.getString("profile_id")!!.toInt()
+        waitFor(30_000, "the gateway to account for the allowed transfer") {
+            admin("GET", "api/state").getJSONArray("profiles").objects().first { it.getInt("id") == profileId }.getInt("used") >= 1
+        }
 
-        // The parent lowers the limit below the minutes the gateway has already counted.
-        val riley = admin("GET", "api/state").getJSONArray("profiles").objects().first { it.getString("name") == "Riley" }
-        admin("POST", "api/profiles", JSONObject().put("id", riley.getInt("id")).put("name", "Riley").put("limit", 1))
+        // Identify the profile by its stable ID, not its editable display name.
+        val riley = admin("GET", "api/state").getJSONArray("profiles").objects().first { it.getInt("id") == profileId }
+        admin("POST", "api/profiles", JSONObject().put("id", riley.getInt("id")).put("name", riley.getString("name")).put("limit", 1))
         waitFor(30_000, "browsing to be blocked once time ran out") { !browse() }
-        onView(withText(R.string.menu_refresh)).perform(click())
+        refreshFromMenu()
         eventually { onView(withId(R.id.headline)).check(matches(withText("Time's up for today"))) }
         TestSupport.screenshot("real-server-time-up")
 
@@ -82,18 +87,26 @@ class RealServerTest {
         val request = admin("GET", "api/state").getJSONArray("requests").objects().first { it.getString("status") == "pending" }
         admin("POST", "api/requests", JSONObject().put("id", request.getString("id")).put("approve", true))
         waitFor(30_000, "browsing to come back after the reward") { browse() }
-        onView(withText(R.string.menu_refresh)).perform(click())
+        refreshFromMenu()
         eventually { onView(withId(R.id.headline)).check(matches(not(withText("Time's up for today")))) }
         TestSupport.screenshot("real-server-restored")
     }
 
+    private fun refreshFromMenu() {
+        try { onView(withText(R.string.menu_refresh)).perform(click()) }
+        catch (_: Exception) {
+            openActionBarOverflowOrOptionsMenu(TestSupport.instrumentation.targetContext)
+            onView(withText(R.string.menu_refresh)).perform(click())
+        }
+    }
+
     private fun browse(): Boolean = runCatching {
-        val connection = URL(args.getString("site") ?: "https://example.com/").openConnection() as HttpURLConnection
+        val connection = URL(args.getString("site")!!).openConnection() as HttpURLConnection
         connection.connectTimeout = 4_000
         connection.readTimeout = 4_000
         connection.useCaches = false
         connection.setRequestProperty("Connection", "close")
-        try { connection.responseCode in 200..399 && connection.inputStream.readBytes().isNotEmpty() } finally { connection.disconnect() }
+        try { connection.responseCode in 200..399 && connection.inputStream.readBytes().size >= 64 * 1024 } finally { connection.disconnect() }
     }.getOrDefault(false)
 
     private fun admin(method: String, path: String, body: JSONObject? = null): JSONObject {
