@@ -6,7 +6,8 @@ Client and server tested together, in isolation. One Docker Compose project star
   image), with its embedded WireGuard gateway.
 - **internet**: a fake internet on `198.51.100.0/24` (TEST-NET-2). It has a DNS resolver
   on `.53` and one web site per address (`allowed.test` on `.10`, `games.test` on `.11`).
-  Each page's body is the site's name.
+  Each index page's body is the site's name; a 128 KiB activity payload exercises
+  quota accounting without treating tiny probe pages as network activity.
 - **client**: a headless Linux device built from `tests/system.rs`. It takes the
   dashboard's setup code and signs in through `temperance-core`, the same library the
   apps use, over the gateway's WireGuard port (pinned QUIC). It then brings up a kernel

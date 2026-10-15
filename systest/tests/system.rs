@@ -341,13 +341,17 @@ fn resolve(name: &str, server: Ipv4Addr) -> Result<Vec<Ipv4Addr>, String> {
 
 /// `GET /` from one of the fake internet's sites; returns the page body.
 fn fetch(ip: Ipv4Addr, host: &str) -> Result<String, String> {
+    fetch_path(ip, host, "/")
+}
+
+fn fetch_path(ip: Ipv4Addr, host: &str, path: &str) -> Result<String, String> {
     let mut stream =
         TcpStream::connect_timeout(&SocketAddr::from((ip, 80)), Duration::from_secs(3))
             .map_err(|e| format!("connect {ip}: {e}"))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
-    write!(stream, "GET / HTTP/1.0\r\nHost: {host}\r\n\r\n").map_err(|e| e.to_string())?;
+    write!(stream, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n").map_err(|e| e.to_string())?;
     let mut response = String::new();
     stream
         .read_to_string(&mut response)
@@ -486,11 +490,17 @@ fn the_daily_limit_blocks_until_a_parent_approves_more_time() {
     connect(&identity);
     browsing_works(ALLOWED);
 
+    // Health probes and a tiny page must not consume an activity minute.
+    std::thread::sleep(Duration::from_secs(6));
+    assert_eq!(child.current()["used"].as_u64().unwrap_or(0), 0);
+    let activity = fetch_path(ALLOWED_IP, ALLOWED, "/activity.bin")
+        .expect("substantial allowed traffic reaches the client");
+    assert_eq!(activity.len(), 128 * 1024);
     wait_for(
         "the gateway to count a minute",
         Duration::from_secs(90),
         || {
-            let _ = browse(ALLOWED);
+            let _ = fetch_path(ALLOWED_IP, ALLOWED, "/activity.bin");
             (child.current()["used"].as_u64().unwrap_or(0) >= 1).then_some(())
         },
     );
