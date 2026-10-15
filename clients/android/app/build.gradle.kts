@@ -90,7 +90,7 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("net.java.dev.jna:jna:5.17.0")
-    testImplementation("org.robolectric:robolectric:4.16")
+    testImplementation("org.robolectric:robolectric:4.17")
 
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:rules:1.7.0")
