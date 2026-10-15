@@ -256,7 +256,7 @@ jobs:
           cat > notes.md <<'EOF'
           **Unqualified preview.** This beta has not passed release qualification, and its clients are unsigned test builds: the Android APK is debug-signed, the Windows installers have no Authenticode signature, and there are no Apple builds (iOS and macOS VPN apps need Apple signing). Use it to try the server and desktop app, not to protect a household.
           EOF
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           body_path: ${{ needs.qualify.outputs.qualified != 'true' && 'notes.md' || '' }}
