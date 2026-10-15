@@ -18,6 +18,8 @@ beforeEach(() => {
   );
   process.env.TEMPERANCE_TIMEZONE = "America/Chicago";
   process.env.TEMPERANCE_PUBLIC_URL = "http://127.0.0.1:3000";
+  process.env.TEMPERANCE_GATEWAY_AP =
+    "wlan0;192.168.1.1/24;Temperance;correct horse";
 });
 async function call(
   repo: TestRepository,
@@ -137,7 +139,7 @@ describe("home-network devices", () => {
     expect(
       (await call(repo, "api/devices/home", { ...TV, profile_id: 9 })).body
         .error,
-    ).toBe("Profile does not exist");
+    ).toBe("Client does not exist");
     await call(repo, "api/devices/home", TV);
     expect((await call(repo, "api/devices/home", TV)).body.error).toBe(
       "A device already uses that address",
@@ -184,5 +186,51 @@ describe("home-network devices", () => {
       (await call(repo, "api/import", { confirm: "RESTORE", backup: outside }))
         .status,
     ).toBe(400);
+  });
+
+  it("refuses a home device while access point mode is off", async () => {
+    delete process.env.TEMPERANCE_GATEWAY_AP;
+    const repo = new TestRepository();
+    await call(repo, "api/profiles", { name: "Alex" });
+    const refused = await call(repo, "api/devices/home", {
+      name: "Living room TV",
+      profile_id: 1,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toBe(
+      "Turn on access point mode before adding a device",
+    );
+  });
+
+  it("picks the next address on the access point and keeps it off the gateway", async () => {
+    process.env.TEMPERANCE_GATEWAY_AP =
+      "wlan0;192.168.50.1/24;Temperance;correct horse";
+    const repo = new TestRepository();
+    await call(repo, "api/profiles", { name: "Alex" });
+    const first = await call(repo, "api/devices/home", {
+      name: "Living room TV",
+      profile_id: 1,
+    });
+    expect(first.status).toBe(200);
+    expect(
+      first.body.devices.find((d: { name: string }) => d.name === "Living room TV")
+        .ip,
+    ).toBe("192.168.50.2");
+    const second = await call(repo, "api/devices/home", {
+      name: "Bedroom TV",
+      profile_id: 1,
+    });
+    expect(
+      second.body.devices.find((d: { name: string }) => d.name === "Bedroom TV")
+        .ip,
+    ).toBe("192.168.50.3");
+    const gateway = (await call(repo, "v1/gateway/state", undefined, GATEWAY))
+      .body;
+    expect(gateway.home_network).toBeUndefined();
+    expect(gateway.lan_devices.map((d: { ip: string }) => d.ip)).toEqual([
+      "192.168.50.2",
+      "192.168.50.3",
+    ]);
+    delete process.env.TEMPERANCE_GATEWAY_AP;
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useId, useRef, useState } from "react";
+import { clientUsername } from "@/lib/accounts";
 import { CATALOG, DAYS, type AppLimit, type Profile } from "@/lib/policy";
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 type Span = { name: string; start: string; end: string; days: number[] };
@@ -58,7 +59,7 @@ const fresh = (): Omit<Profile, "id"> => ({
   allow_only: false,
   safe_search: true,
   youtube_restricted: true,
-  bedtime: { start: "", end: "", days: DAYS },
+  bedtime: { enabled: true, start: "", end: "", days: DAYS },
   schedules: [],
   category_limits: {},
   site_limits: {},
@@ -105,8 +106,8 @@ export function ProfileEditor({
 }: {
   profile?: Profile;
   onClose: () => void;
-  onSave: (value: unknown) => Promise<void>;
-  onDelete?: () => Promise<void>;
+  onSave: (value: unknown) => Promise<unknown>;
+  onDelete?: () => Promise<unknown>;
 }) {
   const [value, setValue] = useState(() =>
     profile
@@ -115,9 +116,10 @@ export function ProfileEditor({
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const bedtimeOn = value.bedtime.enabled !== false;
   const conflicts = scheduleConflicts([
     ...value.schedules,
-    { name: "Bedtime", ...value.bedtime },
+    ...(bedtimeOn ? [{ name: "Bedtime", ...value.bedtime }] : []),
   ]);
   const dialog = useRef<HTMLDialogElement>(null);
   const id = useId();
@@ -135,7 +137,7 @@ export function ProfileEditor({
           e.preventDefault();
           setBusy(true);
           try {
-            await onSave(value);
+            await onSave({ ...value, name: clientUsername(value.name) });
             onClose();
           } catch (e) {
             setError(e instanceof Error ? e.message : "Could not save");
@@ -145,7 +147,7 @@ export function ProfileEditor({
         }}
       >
         <div className="section-title">
-          <h2>{profile ? "Edit family rules" : "Add family profile"}</h2>
+          <h2>{profile ? "Edit client" : "Add a client"}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -157,10 +159,12 @@ export function ProfileEditor({
         </div>
         <div className="two">
           <label>
-            Name
+            Username
             <input
               value={value.name}
-              maxLength={60}
+              maxLength={40}
+              autoCapitalize="none"
+              autoCorrect="off"
               onChange={(e) => field("name", e.target.value)}
               required
             />
@@ -294,56 +298,75 @@ export function ProfileEditor({
               checked={!value.managed}
               onChange={(e) => field("managed", !e.target.checked)}
             />
-            Unmanaged profile (no controls or history)
+            Unmanaged client (no controls or history)
           </label>
         </div>
         <fieldset>
           <legend>Bedtime</legend>
-          <div className="two">
-            <label>
-              Starts
-              <input
-                type="time"
-                value={value.bedtime.start}
-                onChange={(e) =>
-                  field("bedtime", { ...value.bedtime, start: e.target.value })
-                }
-              />
-            </label>
-            <label>
-              Ends
-              <input
-                type="time"
-                value={value.bedtime.end}
-                onChange={(e) =>
-                  field("bedtime", { ...value.bedtime, end: e.target.value })
-                }
-              />
-            </label>
-          </div>
-          <div className="checks">
-            {DAY_NAMES.map((name, n) => (
-              <label key={name}>
-                <input
-                  type="checkbox"
-                  checked={value.bedtime.days.includes(n)}
-                  onChange={(e) =>
-                    field("bedtime", {
-                      ...value.bedtime,
-                      days: e.target.checked
-                        ? [...value.bedtime.days, n]
-                        : value.bedtime.days.filter((d) => d !== n),
-                    })
-                  }
-                />
-                {name}
-              </label>
-            ))}
-          </div>
-          <small>
-            Days identify the night the window starts. Overnight windows
-            continue into the following day.
-          </small>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={bedtimeOn}
+              onChange={(e) =>
+                field("bedtime", { ...value.bedtime, enabled: e.target.checked })
+              }
+            />
+            Enable bedtime rules
+          </label>
+          {bedtimeOn ? (
+            <>
+              <div className="two">
+                <label>
+                  Starts
+                  <input
+                    type="time"
+                    value={value.bedtime.start}
+                    onChange={(e) =>
+                      field("bedtime", {
+                        ...value.bedtime,
+                        start: e.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Ends
+                  <input
+                    type="time"
+                    value={value.bedtime.end}
+                    onChange={(e) =>
+                      field("bedtime", { ...value.bedtime, end: e.target.value })
+                    }
+                  />
+                </label>
+              </div>
+              <div className="checks">
+                {DAY_NAMES.map((name, n) => (
+                  <label key={name}>
+                    <input
+                      type="checkbox"
+                      checked={value.bedtime.days.includes(n)}
+                      onChange={(e) =>
+                        field("bedtime", {
+                          ...value.bedtime,
+                          days: e.target.checked
+                            ? [...value.bedtime.days, n]
+                            : value.bedtime.days.filter((d) => d !== n),
+                        })
+                      }
+                    />
+                    {name}
+                  </label>
+                ))}
+              </div>
+              <small>
+                Days identify the night the window starts. Overnight windows
+                continue into the following day.
+              </small>
+            </>
+          ) : (
+            <small>Bedtime rules are off for this client.</small>
+          )}
         </fieldset>
         <fieldset>
           <legend>Off Time & Focus Time</legend>
@@ -714,7 +737,7 @@ export function ProfileEditor({
           {error}
         </p>
         <button className="primary full" disabled={busy}>
-          {busy ? "Saving…" : "Save profile"}
+          {busy ? "Saving…" : "Save client"}
         </button>
         {onDelete ? (
           <button
@@ -722,7 +745,7 @@ export function ProfileEditor({
             className="danger full"
             disabled={busy}
             onClick={async () => {
-              if (!confirm(`Delete ${value.name}? This removes its rules.`))
+              if (!confirm(`Delete ${value.name}? This removes their rules and time.`))
                 return;
               setBusy(true);
               try {
@@ -735,7 +758,7 @@ export function ProfileEditor({
               }
             }}
           >
-            Delete profile
+            Delete client
           </button>
         ) : null}
       </form>

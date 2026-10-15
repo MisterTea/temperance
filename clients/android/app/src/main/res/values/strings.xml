@@ -2,7 +2,7 @@
     <string name="app_name">Temperance</string>
 
     <string name="setup_title">Connect this device</string>
-    <string name="setup_intro">On the family dashboard at home, a parent opens Devices and shows the setup code. Scan it, then sign in with the username and password a parent created for you. Your family profile is assigned automatically. Your password is not saved on this device.</string>
+    <string name="setup_intro">On the family dashboard at home, a parent opens Devices and shows the setup code. Scan it, then sign in with the username and password for your client. Your rules and time budget come with that sign-in. Your password is not saved on this device.</string>
     <string name="scan_setup">Scan the setup code</string>
     <string name="server_label">Setup code</string>
     <string name="server_hint">temperance://home#…</string>

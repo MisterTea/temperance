@@ -88,14 +88,28 @@ fn yes() -> bool {
     true
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct Bedtime {
+    /// When false, saved times stay on the client but are not enforced.
+    #[serde(default = "yes")]
+    pub enabled: bool,
     #[serde(default)]
     pub start: String,
     #[serde(default)]
     pub end: String,
     #[serde(default = "all_days")]
     pub days: Vec<u8>,
+}
+
+impl Default for Bedtime {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            start: String::new(),
+            end: String::new(),
+            days: all_days(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, uniffi::Record)]
@@ -351,13 +365,15 @@ pub fn access_reason_at(p: &Profile, at: i64, tz: Tz, household_paused: bool) ->
     if p.paused {
         return "paused".into();
     }
-    if in_window(
-        &bedtime_start(p, at, tz),
-        &p.bedtime.end,
-        &p.bedtime.days,
-        at,
-        tz,
-    ) {
+    if p.bedtime.enabled
+        && in_window(
+            &bedtime_start(p, at, tz),
+            &p.bedtime.end,
+            &p.bedtime.days,
+            at,
+            tz,
+        )
+    {
         return "bedtime".into();
     }
     if active_windows(p, at, tz).iter().any(|w| w.mode == "off") {

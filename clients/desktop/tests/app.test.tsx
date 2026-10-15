@@ -134,14 +134,13 @@ test("a child's computer signs in, and protection can be restarted if it stops",
   );
   await user.type(screen.getByLabelText("Username"), "alex");
   await user.type(screen.getByLabelText("Password"), "secret");
-  await user.type(screen.getByLabelText("Name for this computer"), "Laptop");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
   expect(actions[0]).toEqual({
     action: "enroll",
     service: "temperance://home#CODE",
     username: "alex",
     password: "secret",
-    name: "Laptop",
+    name: "This computer",
   });
   expect(await screen.findByText(/Protection isn.t running/)).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Start protection" }));
@@ -226,7 +225,6 @@ test("signing in says what it is doing until the reply arrives", async () => {
   );
   await user.type(screen.getByLabelText("Username"), "alex");
   await user.type(screen.getByLabelText("Password"), "secret");
-  await user.type(screen.getByLabelText("Name for this computer"), "Laptop");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
   expect(screen.getByRole("status").textContent).toBe(
     "Signing in and turning on protection…",

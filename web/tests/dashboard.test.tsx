@@ -181,6 +181,10 @@ beforeEach(() => {
     TEMPERANCE_INSTALL: "",
     TEMPERANCE_UPDATER_TOKEN: "",
   });
+  delete process.env.TEMPERANCE_GATEWAY_AP;
+  delete process.env.TEMPERANCE_GATEWAY_ROUTER;
+  delete process.env.TEMPERANCE_GATEWAY_LAN_NETWORKS;
+  delete process.env.TEMPERANCE_GATEWAY_HOME_DNS;
   updates.resetForTests();
   repo = new TestRepository();
   cookie = "";
@@ -198,10 +202,10 @@ describe("sign-in", () => {
     await user.click(within(signIn).getByRole("button", { name: "Sign in" }));
 
     const rules = await screen.findByRole("form", {
-      name: "Starting rules for your first family member",
+      name: "Starting rules for your first client",
     });
     expect((await state()).users ?? []).toHaveLength(0);
-    await user.type(within(rules).getByLabelText("Their name"), "Avery");
+    await user.type(within(rules).getByLabelText("Username"), "Avery");
     await user.click(within(rules).getByLabelText(/^Teen/));
     expect(
       (
@@ -220,10 +224,10 @@ describe("sign-in", () => {
     await user.type(games, "{Enter}fortnite.com");
     await user.click(within(rules).getByRole("button", { name: "Save rules" }));
 
-    await screen.findByRole("heading", { name: "Avery’s rules are ready." });
+    await screen.findByRole("heading", { name: "avery’s rules are ready." });
     const avery = (await state()).profiles[0];
     expect(avery).toMatchObject({
-      name: "Avery",
+      name: "avery",
       filter_level: "teen",
       limit: 180,
       categories: ["social"],
@@ -257,11 +261,11 @@ describe("sign-in", () => {
     const user = userEvent.setup();
     render(<Dashboard />);
     await screen.findByRole("form", {
-      name: "Starting rules for your first family member",
+      name: "Starting rules for your first client",
     });
     await user.click(
       within(screen.getByRole("list", { name: "Setup progress" })).getByText(
-        "Family rules",
+        "Client",
       ),
     );
     await user.click(within(screen.getByRole("form")).getByLabelText(/^Adult/));
@@ -272,10 +276,8 @@ describe("sign-in", () => {
         ) as HTMLInputElement
       ).checked,
     ).toBe(false);
-    await user.click(screen.getByLabelText("Bedtime"));
-    expect((screen.getByLabelText("From") as HTMLInputElement).disabled).toBe(
-      true,
-    );
+    await user.click(screen.getByLabelText("Enable bedtime rules"));
+    expect(screen.queryByLabelText("From")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
     await screen.findByRole("heading", { name: "Your family's digital day." });
     expect((await state()).profiles).toHaveLength(0);
@@ -343,7 +345,7 @@ describe("overview", () => {
     const user = await openDashboard();
     const rename = async () => {
       await user.click(screen.getByRole("button", { name: "Rename Alex" }));
-      return screen.getByRole("textbox", { name: "New name for Alex" });
+      return screen.getByRole("textbox", { name: "New username for Alex" });
     };
 
     let input = await rename();
@@ -359,9 +361,9 @@ describe("overview", () => {
     input = await rename();
     await user.clear(input);
     await user.type(input, "  Lexi  {Enter}");
-    expect(await screen.findByRole("heading", { name: "Lexi" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "lexi" })).toBeTruthy();
     const saved = (await state()).profiles[0];
-    expect(saved.name).toBe("Lexi");
+    expect(saved.name).toBe("lexi");
     expect(saved.limit).toBe(90);
     expect(saved.bedtime.start).toBe("21:00");
   });
@@ -383,10 +385,10 @@ describe("profile editor", () => {
     await setupOwner();
     await signIn();
     const user = await openDashboard();
-    await user.click(screen.getByRole("button", { name: "+ Add profile" }));
+    await user.click(screen.getByRole("button", { name: "+ Add client" }));
     const dialog = screen.getByRole("dialog");
     const d = within(dialog);
-    await user.type(d.getByLabelText("Name"), "Riley");
+    await user.type(d.getByLabelText("Username"), "Riley");
     await user.clear(d.getByLabelText("Avatar"));
     await user.type(d.getByLabelText("Avatar"), "🐢");
     await user.selectOptions(d.getByLabelText("Filter preset"), "teen");
@@ -401,8 +403,8 @@ describe("profile editor", () => {
     await user.click(d.getByRole("checkbox", { name: /SafeSearch/ }));
     await user.click(d.getByRole("checkbox", { name: /YouTube restricted/ }));
     await user.click(d.getByRole("checkbox", { name: /Allow-list only/ }));
-    await user.click(d.getByRole("checkbox", { name: /Unmanaged profile/ }));
-    await user.click(d.getByRole("checkbox", { name: /Unmanaged profile/ }));
+    await user.click(d.getByRole("checkbox", { name: /Unmanaged client/ }));
+    await user.click(d.getByRole("checkbox", { name: /Unmanaged client/ }));
     const bedtime = within(d.getByRole("group", { name: "Bedtime" }));
     fireEvent.change(bedtime.getByLabelText("Starts"), {
       target: { value: "21:30" },
@@ -413,6 +415,14 @@ describe("profile editor", () => {
     await user.click(bedtime.getByRole("checkbox", { name: "Fri" }));
     await user.click(bedtime.getByRole("checkbox", { name: "Fri" }));
     await user.click(bedtime.getByRole("checkbox", { name: "Sat" }));
+    await user.click(
+      bedtime.getByRole("checkbox", { name: "Enable bedtime rules" }),
+    );
+    expect(bedtime.queryByLabelText("Starts")).toBeNull();
+    await user.click(
+      bedtime.getByRole("checkbox", { name: "Enable bedtime rules" }),
+    );
+    expect(bedtime.getByLabelText("Starts")).toHaveProperty("value", "21:30");
 
     const windows = within(
       d.getByRole("group", { name: "Off Time & Focus Time" }),
@@ -480,12 +490,12 @@ describe("profile editor", () => {
       "bad.example{enter}worse.example",
     );
     await user.type(d.getByLabelText(/Unmanaged domains/), "bank.example");
-    await user.click(d.getByRole("button", { name: "Save profile" }));
+    await user.click(d.getByRole("button", { name: "Save client" }));
 
-    await screen.findByRole("heading", { name: "Riley" });
+    await screen.findByRole("heading", { name: "riley" });
     const saved = (await state()).profiles[0];
     expect(saved).toMatchObject({
-      name: "Riley",
+      name: "riley",
       avatar: "🐢",
       filter_level: "teen",
       limit: 120,
@@ -510,13 +520,14 @@ describe("profile editor", () => {
       },
     ]);
     const card = screen
-      .getByRole("heading", { name: "Riley" })
+      .getByRole("heading", { name: "riley" })
       .closest("article")!;
     expect(
-      within(card).getByRole("list", { name: "Riley shared app limits" })
+      within(card).getByRole("list", { name: "riley shared app limits" })
         .textContent,
     ).toBe("Games 0 / 40 min");
     expect(saved.bedtime).toEqual({
+      enabled: true,
       start: "21:30",
       end: "06:45",
       days: [0, 1, 2, 3, 4, 5],
@@ -543,9 +554,9 @@ describe("profile editor", () => {
     );
     let dialog = within(screen.getByRole("dialog"));
     expect(
-      dialog.getByRole("heading", { name: "Edit family rules" }),
+      dialog.getByRole("heading", { name: "Edit client" }),
     ).toBeTruthy();
-    await user.click(dialog.getByRole("button", { name: "Delete profile" }));
+    await user.click(dialog.getByRole("button", { name: "Delete client" }));
     expect(dialog.getByRole("alert").textContent).toMatch(/Reassign or revoke/);
     await user.click(dialog.getByRole("button", { name: "Close editor" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -558,9 +569,9 @@ describe("profile editor", () => {
       within(sam as HTMLElement).getByRole("button", { name: "Edit rules" }),
     );
     dialog = within(screen.getByRole("dialog"));
-    await user.click(dialog.getByRole("button", { name: "Delete profile" }));
+    await user.click(dialog.getByRole("button", { name: "Delete client" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
-    await user.click(dialog.getByRole("button", { name: "Delete profile" }));
+    await user.click(dialog.getByRole("button", { name: "Delete client" }));
     await waitFor(() =>
       expect(screen.queryByRole("heading", { name: "Sam" })).toBeNull(),
     );
@@ -571,7 +582,7 @@ describe("profile editor", () => {
     );
     dialog = within(screen.getByRole("dialog"));
     cookie = "";
-    await user.click(dialog.getByRole("button", { name: "Save profile" }));
+    await user.click(dialog.getByRole("button", { name: "Save client" }));
     await waitFor(() =>
       expect(dialog.getByRole("alert").textContent).toMatch(/sign-in/i),
     );
@@ -622,7 +633,7 @@ describe("devices", () => {
     await signIn();
     const user = await openDashboard();
     await tab(user, "Devices");
-    await user.selectOptions(screen.getByLabelText("Family profile"), "2");
+    await user.selectOptions(screen.getByLabelText("Client"), "2");
     await user.click(
       screen.getByRole("button", { name: "Create enrollment code" }),
     );
@@ -646,7 +657,7 @@ describe("devices", () => {
       expect((await state()).devices[0].name).toBe("Alex tablet"),
     );
 
-    await user.selectOptions(screen.getByLabelText("Alex tablet profile"), "2");
+    await user.selectOptions(screen.getByLabelText("Alex tablet client"), "2");
     await waitFor(async () =>
       expect((await state()).devices[0].profile_id).toBe(2),
     );
@@ -687,32 +698,51 @@ describe("devices", () => {
     expect((await state()).devices[0].location?.accuracy).toBe(18.4);
   });
 
+  it("explains that a home device needs the access point", async () => {
+    await seedHousehold();
+    await signIn();
+    const user = await openDashboard();
+    await tab(user, "Devices");
+    expect(screen.queryByRole("button", { name: "Add home device" })).toBeNull();
+    expect(screen.getByText(/Access point mode is off/)).toBeTruthy();
+  });
+
   it("adds, labels and removes a home-network device", async () => {
+    process.env.TEMPERANCE_GATEWAY_AP =
+      "wlan0;192.168.50.1/24;Temperance;correct horse";
     await seedHousehold();
     await signIn();
     const user = await openDashboard();
     await tab(user, "Devices");
     const add = screen.getByRole("button", { name: "Add home device" });
+    expect(screen.queryByLabelText("Assigned address")).toBeNull();
+    expect(screen.queryByText(/correct horse/)).toBeNull();
     await user.type(screen.getByLabelText("Device name"), "Living room TV");
-    await user.type(
-      screen.getByLabelText("Home-network IPv4 address"),
-      "8.8.8.8",
+    await user.selectOptions(
+      within(
+        screen
+          .getByRole("heading", { name: "Add a home-network device" })
+          .closest("section")!,
+      ).getByLabelText("Client"),
+      "2",
     );
-    await user.click(add);
-    await screen.findByText(/private home-network IPv4 address/);
-    const ip = screen.getByLabelText("Home-network IPv4 address");
-    await user.clear(ip);
-    await user.type(ip, "192.168.1.50");
-    await user.selectOptions(screen.getByLabelText("Home device profile"), "2");
     await user.click(add);
     const name = await screen.findByRole("textbox", {
       name: "Living room TV name",
     });
-    expect((ip as HTMLInputElement).value).toBe("");
+    const guide = await screen.findByRole("dialog", {
+      name: "Set up Living room TV",
+    });
+    expect(guide.textContent).toContain("192.168.50.2");
+    expect(guide.textContent).toContain("Router: 192.168.50.1");
+    expect(guide.textContent).toContain("correct horse");
+    await user.click(within(guide).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
     const tv = (await state()).devices.find((d) => d.kind === "home")!;
-    expect(tv).toMatchObject({ ip: "192.168.1.50", profile_id: 2 });
+    expect(tv).toMatchObject({ ip: "192.168.50.2", profile_id: 2 });
     const row = within(name.closest("tr") as HTMLElement);
     expect(row.getByText("Home network")).toBeTruthy();
+    expect(row.getByText("How to connect")).toBeTruthy();
     expect(row.getByText("Not available")).toBeTruthy();
     expect(row.queryByRole("button", { name: "Locate" })).toBeNull();
     await user.click(row.getByRole("button", { name: "Remove" }));
@@ -806,7 +836,7 @@ describe("usage and history", () => {
     await waitFor(() =>
       expect(screen.queryByText("school.example")).toBeNull(),
     );
-    await user.selectOptions(screen.getByLabelText("Profile"), "1");
+    await user.selectOptions(screen.getByLabelText("Client"), "1");
     const csv = screen.getByRole("link", { name: "Export CSV" });
     expect(csv.getAttribute("href")).toContain("format=csv");
     expect(csv.getAttribute("href")).toContain("profile_id=1");
@@ -911,7 +941,7 @@ describe("settings", () => {
     await user.clear(screen.getByLabelText(/offline grace/));
     await user.type(screen.getByLabelText(/offline grace/), "2");
     await user.selectOptions(
-      screen.getByLabelText("Home/default profile"),
+      screen.getByLabelText("Home/default client"),
       "2",
     );
     await user.click(screen.getByRole("button", { name: "Save settings" }));
@@ -1264,31 +1294,42 @@ describe("settings", () => {
     expect(view.queryByRole("button", { name: "Revoke" })).toBeNull();
   });
 
-  it("creates client users with assigned profiles and allows admin revocation", async () => {
+  it("creates a sign-in on the overview and lets an admin revoke it", async () => {
     await seedHousehold();
     await signIn();
     const user = await openDashboard();
-    await tab(user, "Settings");
-    expect(screen.queryByRole("heading", { name: "Client users" })).toBeNull();
-    await tab(user, "Clients");
-    expect(
-      screen.getByRole("heading", { level: 1, name: "Clients" }),
-    ).toBeTruthy();
-    const form = await screen.findByRole("form", { name: "Add client user" });
+    expect(screen.queryByRole("button", { name: "Clients" })).toBeNull();
+    const alex = (
+      await screen.findByRole("heading", { name: "Alex" })
+    ).closest("article")!;
+    await user.click(
+      await within(alex).findByRole("button", { name: "Add sign-in" }),
+    );
+    const form = within(alex).getByRole("form", { name: "Sign-in for Alex" });
     await user.type(within(form).getByLabelText("Username"), "alex-client");
     await user.type(within(form).getByLabelText("Password"), "client-password");
-    await user.selectOptions(
-      within(form).getByLabelText("Family profile"),
-      "1",
-    );
-    await user.click(within(form).getByRole("button", { name: "Create user" }));
-    const label = await screen.findByText("alex-client");
-    expect((await state()).users![0].profile_id).toBe(1);
+    await user.click(within(form).getByRole("button", { name: "Add sign-in" }));
+    const label = await screen.findByRole("heading", { name: "alex-client" });
+    const stored = await state();
+    const client = stored.profiles.find((p) => p.name === "alex-client");
+    expect(client).toBeTruthy();
+    expect(stored.users![0].profile_id).toBe(client!.id);
     const card = label.closest("article")!;
     await user.click(within(card).getByRole("button", { name: "Disable" }));
-    await waitFor(() => expect(screen.getByText("Disabled")).toBeTruthy());
-    await user.click(within(card).getByRole("button", { name: "Delete user" }));
-    await waitFor(() => expect(screen.queryByText("alex-client")).toBeNull());
+    await waitFor(() =>
+      expect(within(card).getByText(/sign-in disabled/)).toBeTruthy(),
+    );
+    await user.click(
+      within(card).getByRole("button", { name: "Delete sign-in" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(card).queryByRole("button", { name: "Delete sign-in" }),
+      ).toBeNull(),
+    );
+    expect(
+      within(card).getByRole("button", { name: "Add sign-in" }),
+    ).toBeTruthy();
   });
   it("admins set a new password for an existing client user", async () => {
     await seedHousehold();
@@ -1299,8 +1340,9 @@ describe("settings", () => {
     );
     await signIn();
     const user = await openDashboard();
-    await tab(user, "Clients");
-    const card = (await screen.findByText("alex-client")).closest("article")!;
+    const card = (
+      await screen.findByRole("heading", { name: "alex-client" })
+    ).closest("article")!;
     await user.click(
       within(card).getByRole("button", { name: "Set password" }),
     );
@@ -1317,9 +1359,9 @@ describe("settings", () => {
     await user.clear(form.getByLabelText("Confirm password"));
     await user.type(form.getByLabelText("Confirm password"), "new-client-pass");
     await user.click(form.getByRole("button", { name: "Set password" }));
-    expect((await screen.findByRole("status")).textContent).toMatch(
-      /Password set for alex-client/,
-    );
+    expect(
+      await screen.findByText(/Password set for alex-client/),
+    ).toBeTruthy();
     expect(
       screen.queryByRole("form", { name: "Set client password" }),
     ).toBeNull();

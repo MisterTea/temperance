@@ -10,6 +10,7 @@ homepage: https://github.com/MisterTea/temperance
 license: MIT
 recommends:
   - nftables
+  - hostapd
 contents:
   - src: @ROOT@/node
     dst: /opt/temperance/node
@@ -19,6 +20,10 @@ contents:
     type: tree
   - src: @ROOT@/temperance.service
     dst: /usr/lib/systemd/system/temperance.service
+  - src: @ROOT@/ap-prepare.sh
+    dst: /usr/lib/temperance/ap-prepare.sh
+    file_info:
+      mode: 0755
   - src: @ROOT@/temperance.env.example
     dst: /usr/share/temperance/temperance.env.example
   - src: @ROOT@/LICENSE

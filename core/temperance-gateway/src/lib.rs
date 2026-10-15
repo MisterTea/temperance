@@ -3,6 +3,7 @@
 //!
 //! Embedded in the Next.js server through the `node` feature (napi-rs) or run
 //! standalone with the `cli` feature, which polls `/v1/gateway/*`.
+pub mod ap;
 pub mod dns;
 pub mod gateway;
 pub mod home;

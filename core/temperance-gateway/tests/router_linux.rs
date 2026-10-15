@@ -218,6 +218,7 @@ fn router_mode_routes_filters_and_fails_closed() {
         "home_dns": "192.168.50.1:53",
         "lan_networks": ["192.168.50.0/24"],
         "router": {"lan_interface": "lan-test", "lan_address": "192.168.50.1", "uplink": "wan-test"},
+        "idle_bytes": 0,
     }))
     .unwrap();
     let mut gateway = Gateway::start(config).unwrap();

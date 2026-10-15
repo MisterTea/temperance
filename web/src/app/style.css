@@ -861,6 +861,18 @@ input[type="radio"] {
 .enrollment button {
   margin-bottom: 14px;
 }
+.setup-steps {
+  margin: 4px 0 18px;
+  max-width: 40rem;
+}
+.setup-steps p,
+.setup-steps li {
+  margin: 6px 0;
+}
+.setup-steps ol {
+  margin: 0;
+  padding-left: 1.2em;
+}
 td small {
   display: block;
   font-size: 10px;

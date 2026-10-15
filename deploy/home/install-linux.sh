@@ -35,6 +35,13 @@ if [ ! -f "$env_file" ]; then
   echo "  sudo systemctl restart temperance"
 fi
 install -m 644 "$unit" /etc/systemd/system/temperance.service
+script=$here/ap-prepare.sh
+if [ ! -f "$script" ]; then
+  script=$(cd "$here/../.." && pwd)/deploy/home/ap-prepare.sh
+fi
+[ -f "$script" ] || { echo "Missing ap-prepare.sh" >&2; exit 1; }
+install -d /usr/lib/temperance
+install -m 755 "$script" /usr/lib/temperance/ap-prepare.sh
 systemctl daemon-reload
 systemctl enable temperance >/dev/null 2>&1
 systemctl restart temperance

@@ -27,9 +27,9 @@ export function secrets() {
       process.env.TEMPERANCE_ADMIN_TOKEN ??
       "",
     gateway = process.env.TEMPERANCE_GATEWAY_TOKEN ?? "";
-  if (admin.length < 10 || gateway.length < 32 || admin === gateway)
+  if (admin.length < 6 || gateway.length < 32 || admin === gateway)
     throw new Error(
-      "Configure an admin password (10+ characters) and a different gateway secret (32+ characters)",
+      "Configure an admin password (6+ characters) and a different gateway secret (32+ characters)",
     );
   return { admin, gateway };
 }

@@ -1,10 +1,11 @@
 "use client";
 import { useState } from "react";
+import { clientUsername } from "@/lib/accounts";
 import { CATALOG, DAYS, PRESETS, type Category } from "@/lib/policy";
 import { api } from "./api";
 import { DomainList } from "./profile-editor";
 
-const STEPS = ["Welcome", "Admin account", "Family rules", "Finish"];
+const STEPS = ["Welcome", "Admin account", "Client", "Finish"];
 const AGES = [
   { value: "kid", label: "Young child", limit: 90, games: 45 },
   { value: "teen", label: "Teen", limit: 180, games: 90 },
@@ -91,7 +92,7 @@ export function Onboarding({
           </p>
           <ol className="plan">
             <li>sign in with your server’s admin password,</li>
-            <li>choose starting rules for your first family member, and</li>
+            <li>choose starting rules for your first client, and</li>
             <li>connect their first device.</li>
           </ol>
           <p className="hint">
@@ -145,10 +146,9 @@ export function Onboarding({
           aria-labelledby="rules"
           onSubmit={(e) => {
             e.preventDefault();
-            const name = String(
-              new FormData(e.currentTarget).get("name"),
-            ).trim();
+            const entered = String(new FormData(e.currentTarget).get("name"));
             run(async () => {
+              const name = clientUsername(entered);
               await api("/api/profiles", {
                 name,
                 filter_level: age,
@@ -156,9 +156,12 @@ export function Onboarding({
                 categories: blocked,
                 safe_search: safe,
                 youtube_restricted: safe,
-                bedtime: bedtime
-                  ? { start, end, days: DAYS }
-                  : { start: "", end: "", days: DAYS },
+                bedtime: {
+                  enabled: bedtime,
+                  start,
+                  end,
+                  days: DAYS,
+                },
                 app_limits:
                   games && gameDomains.length
                     ? [
@@ -176,10 +179,17 @@ export function Onboarding({
             });
           }}
         >
-          <h1 id="rules">Starting rules for your first family member</h1>
+          <h1 id="rules">Starting rules for your first client</h1>
           <label>
-            Their name
-            <input name="name" required maxLength={60} placeholder="Avery" />
+            Username
+            <input
+              name="name"
+              required
+              maxLength={40}
+              autoCapitalize="none"
+              autoCorrect="off"
+              placeholder="avery"
+            />
           </label>
           <fieldset>
             <legend>Age group</legend>
@@ -224,38 +234,39 @@ export function Onboarding({
               <small>0 means no daily limit.</small>
             </label>
             <fieldset className="inline">
-              <legend>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={bedtime}
-                    onChange={(e) => setBedtime(e.target.checked)}
-                  />
-                  Bedtime
-                </label>
-              </legend>
-              <div className="two">
-                <label>
-                  From
-                  <input
-                    type="time"
-                    value={start}
-                    disabled={!bedtime}
-                    required={bedtime}
-                    onChange={(e) => setStart(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Until
-                  <input
-                    type="time"
-                    value={end}
-                    disabled={!bedtime}
-                    required={bedtime}
-                    onChange={(e) => setEnd(e.target.value)}
-                  />
-                </label>
-              </div>
+              <legend>Bedtime</legend>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={bedtime}
+                  onChange={(e) => setBedtime(e.target.checked)}
+                />
+                Enable bedtime rules
+              </label>
+              {bedtime ? (
+                <div className="two">
+                  <label>
+                    From
+                    <input
+                      type="time"
+                      value={start}
+                      required
+                      onChange={(e) => setStart(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Until
+                    <input
+                      type="time"
+                      value={end}
+                      required
+                      onChange={(e) => setEnd(e.target.value)}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <small>Bedtime rules are off for this client.</small>
+              )}
             </fieldset>
           </div>
           <fieldset>
@@ -339,10 +350,9 @@ export function Onboarding({
         <section aria-labelledby="done">
           <h1 id="done">{saved}’s rules are ready.</h1>
           <p>
-            Next, connect {saved}’s phone, tablet or computer: create a client
-            username/password in Clients, then scan the setup code under
-            Devices with the Temperance app and sign in. TVs and consoles can be
-            added as home-network devices.
+            {saved} has the rules and the time budget. Add a sign-in on their
+            card so a phone can use the app, then scan the setup code under
+            Devices. A TV or console is added there and assigned to this client.
           </p>
           <div className="actions">
             <button

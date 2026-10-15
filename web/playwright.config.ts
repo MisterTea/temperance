@@ -41,6 +41,7 @@ export default defineConfig({
       TEMPERANCE_VPN_PUBLIC_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
       TEMPERANCE_TIMEZONE: "America/Chicago",
       TEMPERANCE_UPDATE_CHECK: "off",
+      TEMPERANCE_GATEWAY_AP: "wlan0;192.168.50.1/24;Temperance;correct horse",
     },
   },
   projects: [

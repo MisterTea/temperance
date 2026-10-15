@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { hash, secrets } from "./auth";
 import type { State, User } from "./model";
+import { profileSchema } from "./policy";
 
 const ITERATIONS = 600_000;
 const now = () => Math.floor(Date.now() / 1000);
@@ -68,11 +69,35 @@ export const username = z
   .trim()
   .toLowerCase()
   .regex(/^[a-z0-9._-]{3,40}$/, "Use 3–40 letters, digits, dots or dashes");
+const sameUsername = (stored: string, name: string) =>
+  stored.trim().toLowerCase() === name.trim().toLowerCase();
+export function clientUsername(value: string) {
+  const parsed = username.safeParse(value);
+  if (!parsed.success)
+    throw new Error("Use 3–40 letters, digits, dots or dashes");
+  return parsed.data;
+}
 export const password = z
   .string()
-  .min(10, "Use at least 10 characters")
+  .min(6, "Use at least 6 characters")
   .max(200);
 export const users = (state: State) => (state.users ??= []);
+/** A sign-in is the client's only name. An older display name is drift. */
+export function clientNameDrift(state: State) {
+  return users(state).some((user) => {
+    if (user.role !== "user" || !user.profile_id) return false;
+    const client = state.profiles.find((p) => p.id === user.profile_id);
+    return !!client && client.name !== user.username;
+  });
+}
+/** Delete a client's old name and keep the username. */
+export function adoptClientUsernames(state: State) {
+  for (const user of users(state)) {
+    if (user.role !== "user" || !user.profile_id) continue;
+    const client = state.profiles.find((p) => p.id === user.profile_id);
+    if (client && client.name !== user.username) client.name = user.username;
+  }
+}
 export const publicUser = (u: User) => ({
   id: u.id,
   username: u.username,
@@ -82,20 +107,35 @@ export const publicUser = (u: User) => ({
 });
 function assignedProfile(state: State, id: number) {
   if (!state.profiles.some((p) => p.id === id))
-    throw new Error("Choose an existing family profile");
+    throw new Error("That client does not exist");
 }
 export async function createUser(state: State, input: unknown) {
   const data = z
-    .object({ username, password, profile_id: z.number().int().positive() })
+    .object({
+      username,
+      password,
+      profile_id: z.number().int().positive().optional(),
+    })
     .parse(input);
-  assignedProfile(state, data.profile_id);
-  if (users(state).some((u) => u.username === data.username))
+  if (users(state).some((u) => sameUsername(u.username, data.username)))
     throw new Error("That username is taken");
+  let profileId = data.profile_id;
+  if (profileId === undefined) {
+    const created = profileSchema.parse({ name: data.username });
+    profileId = state.nextProfileId++;
+    state.profiles.push({ ...created, id: profileId });
+  } else {
+    assignedProfile(state, profileId);
+    if (users(state).some((u) => u.profile_id === profileId))
+      throw new Error("That client already has a sign-in");
+    const client = state.profiles.find((p) => p.id === profileId)!;
+    client.name = data.username;
+  }
   const user: User = {
     id: crypto.randomUUID(),
     username: data.username,
     password_hash: await hashPassword(data.password),
-    profile_id: data.profile_id,
+    profile_id: profileId,
     role: "user",
     disabled: false,
     session_version: 1,
@@ -118,20 +158,21 @@ export async function updateUser(state: State, input: unknown) {
     .parse(input);
   const u = users(state).find((u) => u.id === data.id);
   if (!u) throw new Error("User does not exist");
+  const name = data.username;
   if (
-    data.username &&
+    name &&
     users(state).some(
-      (other) => other.id !== u.id && other.username === data.username,
+      (other) => other.id !== u.id && sameUsername(other.username, name),
     )
   )
     throw new Error("That username is taken");
-  if (data.profile_id !== undefined) {
-    assignedProfile(state, data.profile_id);
-    u.profile_id = data.profile_id;
-    for (const d of state.devices)
-      if (d.user_id === u.id && !d.revoked) d.profile_id = data.profile_id;
+  if (data.profile_id !== undefined && data.profile_id !== u.profile_id)
+    throw new Error("A client keeps its own rules and time");
+  if (data.username) {
+    u.username = data.username;
+    const client = state.profiles.find((p) => p.id === u.profile_id);
+    if (client) client.name = data.username;
   }
-  if (data.username) u.username = data.username;
   if (data.disabled !== undefined) u.disabled = data.disabled;
   if (data.password) {
     u.password_hash = await hashPassword(data.password);
@@ -153,7 +194,7 @@ export function deleteUser(state: State, id: string) {
   state.version++;
 }
 export async function authenticate(state: State, name: string, secret: string) {
-  const u = users(state).find((u) => u.username === name.trim().toLowerCase());
+  const u = users(state).find((u) => sameUsername(u.username, name));
   if (
     !u ||
     u.disabled ||

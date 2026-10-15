@@ -260,10 +260,45 @@ describe("gateway configuration", () => {
       },
       public_port: 51820,
       remote: null,
+      ap: null,
     });
     expect(() =>
       gatewayConfig({ TEMPERANCE_GATEWAY_ROUTER: "eth0" }, "k"),
     ).toThrow(/lan_interface/);
+  });
+
+  it("makes an access point answer DNS on its own address", () => {
+    const config = gatewayConfig(
+      {
+        TEMPERANCE_GATEWAY_AP:
+          "wlan0;192.168.50.1/24;Temperance;correct horse",
+        TEMPERANCE_GATEWAY_LAN_NETWORKS: "192.168.4.0/22",
+      },
+      "k",
+    );
+    expect(config.ap).toEqual({
+      interface: "wlan0",
+      address: "192.168.50.1",
+      prefix: 24,
+      ssid: "Temperance",
+      passphrase: "correct horse",
+      dns: true,
+    });
+    expect(config.home_dns).toBe("192.168.50.1:53");
+    expect(config.lan_networks).toEqual([
+      "192.168.4.0/22",
+      "192.168.50.1/24",
+    ]);
+    const off = gatewayConfig(
+      {
+        TEMPERANCE_GATEWAY_AP:
+          "wlan0;192.168.50.1/24;Temperance;correct;horse",
+        TEMPERANCE_GATEWAY_HOME_DNS: "off",
+      },
+      "k",
+    );
+    expect(off.home_dns).toBeNull();
+    expect(off.ap).toMatchObject({ passphrase: "correct;horse", dns: false });
   });
 
   it("serves children's devices always and parent phones unless turned off", () => {

@@ -348,6 +348,7 @@ fn start() -> (Gateway, Phone, String) {
         "listen": "127.0.0.1:0",
         "private_key": gateway_key,
         "dns_upstream": dns_server().to_string(),
+        "idle_bytes": 0,
         "connect_map": {ALLOWED.to_string(): "127.0.0.1"},
     }))
     .unwrap();
@@ -713,6 +714,7 @@ fn parent_phones_pair_and_reach_the_dashboard_over_the_wireguard_port() {
         "listen": "127.0.0.1:0",
         "private_key": generate_private_key(),
         "dns_upstream": dns_server().to_string(),
+        "idle_bytes": 0,
         "connect_map": {ALLOWED.to_string(): "127.0.0.1"},
         "remote": {"key_file": dir.join("parent.key"), "secret": SECRET, "target": target},
     }))
@@ -833,6 +835,7 @@ fn children_sign_in_over_the_wireguard_port_without_pairing() {
         "listen": "127.0.0.1:0",
         "private_key": generate_private_key(),
         "dns_upstream": dns_server().to_string(),
+        "idle_bytes": 0,
         "remote": {"key_file": dir.join("parent.key"), "secret": SECRET, "target": target, "parents": false},
     }))
     .unwrap();

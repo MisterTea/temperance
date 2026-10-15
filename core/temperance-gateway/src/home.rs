@@ -1,7 +1,7 @@
 //! Router mode (Linux): home-network devices that cannot run the VPN app are
 //! enforced by LAN address with nftables when this machine is their default
 //! router. DNS mode needs none of this; it only answers DNS (see `home_dns`).
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::time::Instant;
 
@@ -237,9 +237,33 @@ pub fn install(script: Option<&str>) -> Result<(), String> {
     nft(&["-f", "-"], Some(&body)).map(drop)
 }
 
+/// Docker sets the filter FORWARD policy to DROP. An accept in our chain does
+/// not stop that later chain, so home-device traffic still dies unless
+/// DOCKER-USER accepts it too. Missing Docker is not an error.
+pub fn accept_through_docker(nets: &[crate::net::Net]) {
+    for net in nets {
+        let cidr = net.cidr();
+        for side in ["-s", "-d"] {
+            if iptables(&["-C", "DOCKER-USER", side, &cidr, "-j", "ACCEPT"]) {
+                continue;
+            }
+            let _ = iptables(&["-I", "DOCKER-USER", side, &cidr, "-j", "ACCEPT"]);
+        }
+    }
+}
+
+fn iptables(args: &[&str]) -> bool {
+    std::process::Command::new("iptables")
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 /// Read and reset nothing: counters restart whenever the table is replaced.
-pub fn activity(counters: &Counters) -> HashMap<String, BTreeSet<String>> {
-    let mut active: HashMap<String, BTreeSet<String>> = HashMap::new();
+pub fn activity(counters: &Counters) -> HashMap<String, Vec<(String, u64)>> {
+    let mut active: HashMap<String, Vec<(String, u64)>> = HashMap::new();
     if counters.is_empty() {
         return active;
     }
@@ -249,14 +273,15 @@ pub fn activity(counters: &Counters) -> HashMap<String, BTreeSet<String>> {
     let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
     for item in parsed["nftables"].as_array().into_iter().flatten() {
         let counter = &item["counter"];
-        if counter["bytes"].as_u64().unwrap_or(0) == 0 {
+        let bytes = counter["bytes"].as_u64().unwrap_or(0);
+        if bytes == 0 {
             continue;
         }
         if let Some((device, bucket)) = counter["name"].as_str().and_then(|n| counters.get(n)) {
             active
                 .entry(device.clone())
                 .or_default()
-                .insert(bucket.clone());
+                .push((bucket.clone(), bytes));
         }
     }
     active
@@ -267,6 +292,7 @@ mod tests {
     use super::*;
     use crate::policy::State;
     use serde_json::json;
+    use std::collections::BTreeSet;
 
     fn policy(profile: serde_json::Value, paused: bool) -> Policy {
         let mut p = json!({"id": 1, "name": "TV", "filter_level": "teen"});

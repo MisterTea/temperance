@@ -34,14 +34,14 @@ test("a fresh install walks the parent through the admin account and first rules
   await account.getByLabel("Admin password").fill(ADMIN_TOKEN);
   await account.getByRole("button", { name: "Sign in" }).click();
   const rules = page.getByRole("form", {
-    name: "Starting rules for your first family member",
+    name: "Starting rules for your first client",
   });
   await expect(rules).toBeVisible();
   const progress = page.getByRole("list", { name: "Setup progress" });
   await expect(progress.locator('[aria-current="step"]')).toContainText(
-    "Family rules",
+    "Client",
   );
-  await rules.getByLabel("Their name").fill("Jordan");
+  await rules.getByLabel("Username").fill("Jordan");
   await rules.getByLabel(/^Teen/).check();
   await expect(rules.getByLabel(/Daily screen-time limit/)).toHaveValue("180");
   await rules.getByLabel("Social media").check();
@@ -53,7 +53,7 @@ test("a fresh install walks the parent through the admin account and first rules
   await rules.getByRole("button", { name: "Save rules" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "Jordan’s rules are ready." }),
+    page.getByRole("heading", { name: "jordan’s rules are ready." }),
   ).toBeVisible();
   await auditEverySize(page, "setup finished");
   const state = await api<{
@@ -66,7 +66,7 @@ test("a fresh install walks the parent through the admin account and first rules
     needs_onboarding: boolean;
   }>(request, "/api/state");
   expect(state.profiles[0]).toMatchObject({
-    name: "Jordan",
+    name: "jordan",
     filter_level: "teen",
     categories: ["social"],
     app_limits: [
@@ -80,10 +80,10 @@ test("a fresh install walks the parent through the admin account and first rules
 
   await page.getByRole("button", { name: "Add a device" }).click();
   await expect(page.getByRole("heading", { name: "Devices" })).toBeVisible();
-  const jordan = page.locator("article.profile", { hasText: "Jordan" });
+  const jordan = page.locator("article.profile", { hasText: "jordan" });
   await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(
-    jordan.getByRole("list", { name: "Jordan shared app limits" }),
+    jordan.getByRole("list", { name: "jordan shared app limits" }),
   ).toHaveText("Games 0 / 60 min");
   await expectCleanLayout(page, "overview after setup");
   await page.context().storageState({ path: "test-results/parent.json" });

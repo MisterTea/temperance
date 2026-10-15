@@ -81,6 +81,7 @@ export async function handle(
     if (path === "healthz") return json({ ok: true });
     const write = request.method === "POST";
     repo ??= repository();
+    await reconcileClients(repo);
     if (path === "v1/setup" || path === "v1/login" || path === "v1/logout")
       return await accountRoute(request, path, repo);
     if (path.startsWith("api/")) {
@@ -500,6 +501,12 @@ async function principal(
   return (await accounts.verifyAdminSession(cookie(request) ?? ""))
     ? { role: "admin" }
     : null;
+}
+/** Replace a client's leftover display name with its username, once. */
+async function reconcileClients(repo: Repository) {
+  const { state } = await repo.read();
+  if (!accounts.clientNameDrift(state)) return;
+  await mutate(repo, (current) => accounts.adoptClientUsernames(current));
 }
 /** Last-seen for the dashboard's list; written at most once a minute. */
 async function seen(repo: Repository, parent: Parent) {

@@ -26,15 +26,15 @@ test("parent creates and edits a profile with limits, bedtime, and schedules", a
 }, info) => {
   const clean = watchConsole(page);
   const name =
-    "Avery " + info.project.name + (info.retry ? ` ${info.retry}` : "");
+    "avery-" + info.project.name + (info.retry ? `-${info.retry}` : "");
   await page.goto("/");
-  await page.getByRole("button", { name: "+ Add profile" }).click();
+  await page.getByRole("button", { name: "+ Add client" }).click();
   const editor = page.getByRole("dialog");
   await expect(
-    editor.getByRole("heading", { name: "Add family profile" }),
+    editor.getByRole("heading", { name: "Add a client" }),
   ).toBeVisible();
   await expectCleanLayout(page, "new profile editor");
-  await editor.getByLabel("Name", { exact: true }).fill(name);
+  await editor.getByLabel("Username", { exact: true }).fill(name);
   await editor.getByLabel("Daily network-minute limit").fill("90");
   await editor.getByLabel("Sat limit").fill("150");
   await editor.getByLabel("Starts").fill("21:00");
@@ -49,7 +49,7 @@ test("parent creates and edits a profile with limits, bedtime, and schedules", a
     .getByLabel("Apps and sites in this group")
     .fill("roblox.com\nminecraft.net");
   await expectCleanLayout(page, "profile editor filled");
-  await editor.getByRole("button", { name: "Save profile" }).click();
+  await editor.getByRole("button", { name: "Save client" }).click();
   await expect(editor).toBeHidden();
 
   const card = page.locator("article.profile", { hasText: name });
@@ -72,7 +72,7 @@ test("parent creates and edits a profile with limits, bedtime, and schedules", a
 
   await card.getByRole("button", { name: "Edit rules" }).click();
   await expect(
-    editor.getByRole("heading", { name: "Edit family rules" }),
+    editor.getByRole("heading", { name: "Edit client" }),
   ).toBeVisible();
   await expect(editor.getByLabel("Blocked domains")).toHaveValue("example.org");
   await editor.getByRole("button", { name: "Close editor" }).click();
@@ -90,7 +90,7 @@ test("parent creates and edits a profile with limits, bedtime, and schedules", a
     .getByRole("button", { name: "Edit rules" })
     .click();
   page.once("dialog", (d) => d.accept());
-  await editor.getByRole("button", { name: "Delete profile" }).click();
+  await editor.getByRole("button", { name: "Delete client" }).click();
   await expect(editor).toBeHidden();
   await expect(
     page.locator("article.profile", { hasText: doomed }),
@@ -129,7 +129,10 @@ test("devices enroll, are reassigned, paused, and revoked", async ({
   await page.goto("/");
   await openTab(page, "Devices");
   await page
-    .getByLabel("Family profile")
+    .locator("section", {
+      has: page.getByRole("heading", { name: "Enroll a VPN device" }),
+    })
+    .getByLabel("Client")
     .selectOption({ label: "Kid " + info.project.name });
   await page.getByRole("button", { name: "Create enrollment code" }).click();
   await expect(
@@ -191,9 +194,9 @@ test("devices enroll, are reassigned, paused, and revoked", async ({
   const renamedPhone = renamed;
 
   await row
-    .getByLabel(`${renamedPhone} profile`)
+    .getByLabel(`${renamedPhone} client`)
     .selectOption({ label: "Teen " + info.project.name });
-  await expect(row.getByLabel(`${renamedPhone} profile`)).toHaveValue(
+  await expect(row.getByLabel(`${renamedPhone} client`)).toHaveValue(
     String((await profileNamed(request, "Teen " + info.project.name))!.id),
   );
   await row.getByRole("button", { name: "Pause" }).click();
@@ -205,12 +208,17 @@ test("devices enroll, are reassigned, paused, and revoked", async ({
   const tv = `TV ${info.project.name}`;
   await page.getByLabel("Device name").fill(tv);
   await page
-    .getByLabel("Home-network IPv4 address")
-    .fill(`192.168.77.${seed + 10}`);
-  await page
-    .getByLabel("Home device profile")
+    .locator("section", {
+      has: page.getByRole("heading", { name: "Add a home-network device" }),
+    })
+    .getByLabel("Client")
     .selectOption({ label: "Kid " + info.project.name });
+  await expect(page.getByLabel("Assigned address")).toHaveCount(0);
   await page.getByRole("button", { name: "Add home device" }).click();
+  const setup = page.getByRole("dialog", { name: /Set up/ });
+  await expect(setup).toContainText("192.168.50.2");
+  await expectCleanLayout(page, "home device setup");
+  await setup.getByRole("button", { name: "Done" }).click();
   const tvRow = deviceRow(tv);
   await expect(tvRow).toContainText("Home network");
   await expect(tvRow.getByRole("button", { name: "Locate" })).toHaveCount(0);
@@ -219,9 +227,7 @@ test("devices enroll, are reassigned, paused, and revoked", async ({
     request,
     "/api/state",
   );
-  expect(
-    state.devices.find((d) => d.ip === `192.168.77.${seed + 10}`)?.kind,
-  ).toBe("home");
+  expect(state.devices.find((d) => d.kind === "home")?.ip).toBe("192.168.50.2");
   page.once("dialog", (d) => d.accept());
   await tvRow.getByRole("button", { name: "Remove" }).click();
   await expect(tvRow).toBeHidden();
@@ -280,7 +286,7 @@ test("history shows gateway decisions and one-click rules; usage summarizes minu
   );
   await page.goto("/");
   await openTab(page, "History");
-  await page.getByLabel("Profile").selectOption({ label: profile });
+  await page.getByLabel("Client").selectOption({ label: profile });
   const row = page
     .getByRole("row", { name: /youtube\.com/ })
     .filter({ hasText: profile });
@@ -357,7 +363,7 @@ test("children request time and parents approve, reward, and cancel", async ({
 
   const rewards = page.locator("section", { hasText: "Today’s rewards" });
   await expect(rewards).toContainText(`${profile}: 20 extra minutes`);
-  await page.getByLabel("Profile").selectOption({ label: profile });
+  await page.getByLabel("Client").selectOption({ label: profile });
   await page.getByLabel("Extra minutes").fill("10");
   await page.getByRole("button", { name: "Send reward" }).click();
   await expect(rewards).toContainText(`${profile}: 10 extra minutes`);
@@ -384,16 +390,20 @@ test("clients and settings manage client users, retention, and feeds", async ({
   const clean = watchConsole(page);
   const coParent = "coparent-" + info.project.name;
   await page.goto("/");
-  await openTab(page, "Clients");
-  const add = page.getByRole("form", { name: "Add client user" });
-  await add.getByLabel("Username").fill(coParent);
-  await add.getByLabel("Password").fill("client-test-password");
-  await add.getByRole("button", { name: "Create user" }).click();
-  const row = page.locator(".row-card", { hasText: coParent });
-  await expect(row).toContainText("Enabled");
-  await expectCleanLayout(page, "clients");
+  await page.getByRole("button", { name: "+ Add client" }).click();
+  const editor = page.getByRole("dialog");
+  await editor.getByLabel("Username", { exact: true }).fill(coParent);
+  await editor.getByRole("button", { name: "Save client" }).click();
+  const card = page.locator("article.profile", { hasText: coParent });
+  await card.getByRole("button", { name: "Add sign-in" }).click();
+  const signIn = card.getByRole("form");
+  await signIn.getByLabel("Username").fill(coParent);
+  await signIn.getByLabel("Password").fill("client-test-password");
+  await signIn.getByRole("button", { name: "Add sign-in" }).click();
+  await expect(card).toContainText("sign-in enabled");
+  await expectCleanLayout(page, "client sign-in");
 
-  await row.getByRole("button", { name: "Set password" }).click();
+  await card.getByRole("button", { name: "Set password" }).click();
   const reset = page.getByRole("form", { name: "Set client password" });
   await reset.getByLabel("New password").fill("client-new-password");
   await reset.getByLabel("Confirm password").fill("client-new-password");
@@ -403,8 +413,8 @@ test("clients and settings manage client users, retention, and feeds", async ({
   );
 
   page.once("dialog", (d) => d.accept());
-  await row.getByRole("button", { name: "Delete user" }).click();
-  await expect(row).toBeHidden();
+  await card.getByRole("button", { name: "Delete sign-in" }).click();
+  await expect(card.getByRole("button", { name: "Add sign-in" })).toBeVisible();
 
   await openTab(page, "Settings");
   await page.getByLabel("History retention (days)").fill("14");

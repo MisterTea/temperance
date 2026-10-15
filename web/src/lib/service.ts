@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { clientUsername, users as accountUsers } from "./accounts";
 import { hash, randomToken, validateKey } from "./auth";
+import { homeNetwork, inNetwork, nextHomeAddress } from "./home-lan";
 import {
   type Device,
   type NetworkSettings,
@@ -125,6 +127,7 @@ export function snapshot(state: State, at = now()) {
       host: remoteEndpoint(state)?.host ?? null,
     },
     device_setup: deviceSetupLink(state),
+    home_network: homeNetwork(),
     needs_onboarding: !state.setup_completed_at && state.profiles.length === 0,
     total: profiles.reduce((sum, p) => sum + p.used, 0),
     blocked: profiles.filter((p) => p.access_reason !== "allowed").length,
@@ -273,7 +276,7 @@ export function revokeParent(state: State, id: string) {
 }
 function profile(state: State, id: number) {
   const found = state.profiles.find((p) => p.id === id);
-  if (!found) throw new Error("Profile does not exist");
+  if (!found) throw new Error("Client does not exist");
   return found;
 }
 function event(state: State, kind: string, message: string) {
@@ -301,26 +304,37 @@ export function saveProfile(state: State, input: unknown) {
   const data = profileSchema.parse(input);
   const existing = data.id ? profile(state, data.id) : null;
   const saved = { ...data, id: existing?.id ?? state.nextProfileId++ };
+  const linked = accountUsers(state).find((u) => u.profile_id === saved.id);
+  if (linked) {
+    const name = clientUsername(saved.name);
+    if (
+      accountUsers(state).some(
+        (u) => u.id !== linked.id && u.username === name,
+      )
+    )
+      throw new Error("That username is taken");
+    saved.name = name;
+    linked.username = name;
+  }
   if (existing)
     state.profiles = state.profiles.map((p) => (p.id === saved.id ? saved : p));
   else state.profiles.push(saved);
   changed(
     state,
     "policy",
-    `Profile ${saved.name} ${existing ? "updated" : "created"}`,
+    `Client ${saved.name} ${existing ? "updated" : "created"}`,
   );
   return snapshot(state);
 }
 export function deleteProfile(state: State, id: number) {
   profile(state, id);
-  if ((state.users ?? []).some((u) => u.profile_id === id))
-    throw new Error("Reassign or delete this profile’s client users first");
   if (state.devices.some((d) => !d.revoked && d.profile_id === id))
-    throw new Error("Reassign or revoke this profile’s devices first");
+    throw new Error("Reassign or revoke this client’s devices first");
+  state.users = (state.users ?? []).filter((u) => u.profile_id !== id);
   state.profiles = state.profiles.filter((p) => p.id !== id);
   state.rewards = state.rewards.filter((r) => r.profile_id !== id);
   if (state.home_profile_id === id) delete state.home_profile_id;
-  changed(state, "policy", "Profile removed");
+  changed(state, "policy", "Client removed");
   return snapshot(state);
 }
 export async function issueCode(state: State, id: number) {
@@ -349,25 +363,37 @@ export function isHomeAddress(ip: string) {
 }
 const homeInput = z.object({
   name: z.string().trim().min(1).max(80),
-  ip: z
-    .string()
-    .trim()
-    .refine(
-      isHomeAddress,
-      "Use the device's private home-network IPv4 address",
-    ),
+  ip: z.string().trim().optional().or(z.literal("")),
   profile_id: z.number().int().positive(),
 });
 export function addHomeDevice(state: State, input: unknown) {
   const data = homeInput.parse(input);
   profile(state, data.profile_id);
-  if (state.devices.some((d) => d.ip === data.ip && !d.revoked))
-    throw new Error("A device already uses that address");
-  state.devices = state.devices.filter((d) => d.ip !== data.ip);
+  const lan = homeNetwork();
+  if (!lan) throw new Error("Turn on access point mode before adding a device");
+  const used = state.devices.filter((d) => !d.revoked).map((d) => d.ip);
+  let ip = data.ip ?? "";
+  if (!ip) {
+    ip = nextHomeAddress(lan, used) ?? "";
+    if (!ip) throw new Error("There are no free addresses on this subnet");
+  } else if (!isHomeAddress(ip)) {
+    throw new Error("Use a private IPv4 address");
+  } else if (
+    lan &&
+    (ip === lan.gateway || !inNetwork(ip, lan.gateway, lan.prefix))
+  ) {
+    throw new Error(
+      `Use an address on ${lan.gateway}/${lan.prefix} other than ${lan.gateway}`,
+    );
+  }
+  if (used.includes(ip)) throw new Error("A device already uses that address");
+  state.devices = state.devices.filter((d) => d.ip !== ip);
   state.devices.push({
     id: crypto.randomUUID(),
     kind: "home",
-    ...data,
+    name: data.name,
+    ip,
+    profile_id: data.profile_id,
     public_key: "",
     token_hash: "",
     revoked: false,
@@ -392,7 +418,7 @@ export function saveDevice(state: State, input: unknown) {
   const owner =
     device.user_id && (state.users ?? []).find((u) => u.id === device.user_id);
   if (owner && owner.profile_id !== data.profile_id)
-    throw new Error("Change the client user's assigned profile in Clients");
+    throw new Error("This device follows the client who signed in");
   Object.assign(device, data);
   if (device.kind === "home") delete device.location_requested;
   changed(state, "device", `Device ${device.name} updated`);
@@ -446,6 +472,10 @@ export function provisioning(device: Device) {
 export function clientState(state: State, device: Device, at = now()) {
   const p = profile(state, device.profile_id),
     policy = effectiveProfile(state, p, at);
+  const bedtime =
+    p.bedtime.enabled === false
+      ? { ...policy.bedtime, start: "", end: "" }
+      : policy.bedtime;
   const reason = !device.managed
     ? "unmanaged"
     : device.paused
@@ -454,7 +484,7 @@ export function clientState(state: State, device: Device, at = now()) {
   return {
     device_id: device.id,
     version: state.version,
-    policy: { ...policy, timezone: timezone() },
+    policy: { ...policy, bedtime, timezone: timezone() },
     tunnel: provisioning(device),
     status: {
       reason,
@@ -587,8 +617,9 @@ export async function enroll(state: State, input: unknown) {
   return { token, ...clientState(state, device) };
 }
 export function gatewayState(state: State, at = now()) {
+  const { home_network: _network, ...view } = snapshot(state, at);
   return {
-    ...snapshot(state, at),
+    ...view,
     issued_at: at,
     policy_schema: 2,
     offline_grace_seconds: state.offline_grace_seconds,

@@ -314,6 +314,32 @@ describe("schedule, filter and reward semantics", () => {
       ]),
     ).toBe("allowed");
   });
+  it("does not enforce bedtime while bedtime rules are off", () => {
+    const p = {
+      ...profileSchema.parse({
+        name: "A",
+        bedtime: {
+          enabled: false,
+          start: "21:00",
+          end: "07:00",
+          days: [0, 1, 2, 3, 4, 5, 6],
+        },
+      }),
+      id: 1,
+    };
+    expect(
+      accessReason(p, at("2026-10-12T05:00:00Z"), "America/Chicago", {}, []),
+    ).toBe("allowed");
+    expect(
+      accessReason(
+        { ...p, bedtime: { ...p.bedtime, enabled: true } },
+        at("2026-10-12T05:00:00Z"),
+        "America/Chicago",
+        {},
+        [],
+      ),
+    ).toBe("bedtime");
+  });
   it("allows unmanaged sites through all profile restrictions", () => {
     const p = {
       ...profileSchema.parse({

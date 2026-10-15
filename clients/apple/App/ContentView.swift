@@ -11,7 +11,6 @@ struct ContentView: View {
     @State private var scanning = false
     @State private var username = ""
     @State private var password = ""
-    @State private var name = ""
     @State private var note = ""
     var body: some View {
         ScrollView {
@@ -53,10 +52,7 @@ struct ContentView: View {
             }
             Field("Username") { TextField("Username", text: $username).plainEntry(.username) }
             PasswordField(label: "Password", text: $password)
-            Field("Name for this \(deviceNoun)") {
-                TextField("Name for this \(deviceNoun)", text: $name, prompt: Text(verbatim: "Alex's \(deviceNoun)"))
-            }
-            Button { Task { await client.enroll(home: home, username: username, password: password, name: name); password = "" } } label: {
+            Button { Task { await client.enroll(home: home, username: username, password: password, name: defaultDeviceName()); password = "" } } label: {
                 Text("Sign in").frame(maxWidth: .infinity)
             }.buttonStyle(.borderedProminent).controlSize(.large)
             if client.busy { ProgressView().frame(maxWidth: .infinity) }
@@ -67,7 +63,7 @@ struct ContentView: View {
     private var allowVPN: some View {
         VStack(alignment: .leading, spacing: 16) {
             if !client.profile.isEmpty { Text(client.profile).font(.title2).bold() }
-            Text("You're signed in. Your family's rules for this profile come with your account.")
+            Text("You're signed in. Your rules and time budget come with this account.")
             Text("One last step").font(.headline)
             Text("Allow the family VPN so the rules work on this \(deviceNoun). Your \(deviceNoun) asks you to confirm.")
             Button { Task { await client.install() } } label: {

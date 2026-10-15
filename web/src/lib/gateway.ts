@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomToken } from "./auth";
 import { dataDir, mutate, repository, type Repository } from "./database";
 import { account, gatewaySeen, gatewayState, vpnEndpoint } from "./service";
+import { accessPoint } from "./home-lan";
 
 // The embedded WireGuard gateway (Rust, Node-API). State, config and activity are JSON strings.
 export interface GatewayHandle {
@@ -69,17 +70,26 @@ export function gatewayConfig(env: Env, privateKey: string) {
   } catch {
     // Without an endpoint the router maps the listen port.
   }
+  const ap = accessPoint(env.TEMPERANCE_GATEWAY_AP);
+  const dnsSetting = env.TEMPERANCE_GATEWAY_HOME_DNS?.trim();
+  const homeDns =
+    dnsSetting === "off" ? null : dnsSetting || (ap ? `${ap.address}:53` : null);
+  const lan = (env.TEMPERANCE_GATEWAY_LAN_NETWORKS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (ap) {
+    const cidr = `${ap.address}/${ap.prefix}`;
+    if (!lan.includes(cidr)) lan.push(cidr);
+  }
   return {
     listen: env.TEMPERANCE_GATEWAY_LISTEN,
     private_key: privateKey,
     dns_upstream: env.TEMPERANCE_GATEWAY_DNS_UPSTREAM || "1.1.1.1:53",
     management_domains: [...new Set(management)],
     web,
-    home_dns: env.TEMPERANCE_GATEWAY_HOME_DNS || null,
-    lan_networks: (env.TEMPERANCE_GATEWAY_LAN_NETWORKS ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
+    home_dns: homeDns,
+    lan_networks: lan,
     router: router
       ? {
           lan_interface: router[0],
@@ -97,6 +107,7 @@ export function gatewayConfig(env: Env, privateKey: string) {
           parents: env.TEMPERANCE_REMOTE_PARENTS !== "off",
         }
       : null,
+    ap: ap ? { ...ap, dns: dnsSetting !== "off" } : null,
   };
 }
 

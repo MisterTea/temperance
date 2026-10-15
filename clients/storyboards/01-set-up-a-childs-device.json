@@ -16,7 +16,6 @@
     { "type": "signin.server", "text": "{{server}}" },
     { "type": "signin.username", "text": "riley" },
     { "type": "signin.password", "text": "{{password}}", "secret": true },
-    { "type": "signin.name", "text": "Riley's {{device}}" },
     { "tap": "signin.submit" },
     { "say": "Riley's profile comes from the account, so there is nothing else to choose. The password isn't kept on the {{device}}." },
     { "show": "vpn.allow" },

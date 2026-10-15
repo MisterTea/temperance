@@ -143,6 +143,9 @@ function Field(props: {
   type?: string;
   placeholder?: string;
   autoComplete?: string;
+  autoCapitalize?: string;
+  autoCorrect?: string;
+  spellCheck?: boolean;
   multiline?: boolean;
 }) {
   const { label, hint, multiline, ...input } = props;
@@ -231,7 +234,7 @@ function ChildSetup({ run, back }: { run: Run; back: () => void }) {
       <p>
         On the family dashboard at home, open Devices and copy the setup code
         for a child&apos;s device. Then use the username and password a parent
-        created under Clients.
+        created on the overview.
       </p>
       <form
         onSubmit={(event) => {
@@ -241,7 +244,7 @@ function ChildSetup({ run, back }: { run: Run; back: () => void }) {
             service: get("service"),
             username: get("username"),
             password: get("password"),
-            name: get("name"),
+            name: "This computer",
           });
         }}
       >
@@ -251,14 +254,15 @@ function ChildSetup({ run, back }: { run: Run; back: () => void }) {
           placeholder="temperance://home#…"
           multiline
         />
-        <Field label="Username" name="username" autoComplete="username" />
-        <PasswordField label="Password" name="password" />
         <Field
-          label="Name for this computer"
-          name="name"
-          placeholder="Alex's laptop"
-          autoComplete="off"
+          label="Username"
+          name="username"
+          autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
         />
+        <PasswordField label="Password" name="password" />
         <button type="submit">Sign in</button>
       </form>
       <button className="link" onClick={back}>

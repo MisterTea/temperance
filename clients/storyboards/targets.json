@@ -31,9 +31,9 @@
   },
   "signin.name": {
     "android": null,
-    "ios": { "field": "Name for this phone" },
-    "macos": { "field": "Name for this Mac" },
-    "windows": { "field": "Name for this computer" }
+    "ios": null,
+    "macos": null,
+    "windows": null
   },
   "signin.submit": {
     "android": "Sign in",

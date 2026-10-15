@@ -26,7 +26,7 @@
             android:id="@+id/username"
             style="@style/Field"
             android:autofillHints="username"
-            android:inputType="textNoSuggestions"
+            android:inputType="textVisiblePassword|textNoSuggestions"
             android:imeOptions="actionNext|flagNoExtractUi" />
 
         <TextView style="@style/Label" android:text="@string/password_label" android:labelFor="@+id/password" />

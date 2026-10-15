@@ -25,14 +25,9 @@
       "value": "Living room Xbox"
     },
     {
-      "fill": {
-        "label": "Home-network IPv4 address"
-      },
-      "value": "192.168.1.40"
-    },
-    {
       "select": {
-        "label": "Home device profile"
+        "label": "Client",
+        "within": { "section": "Add a home-network device" }
       },
       "option": "Jordan"
     },
@@ -44,15 +39,13 @@
     },
     {
       "show": {
-        "css": "tr",
-        "has": {
-          "label": "Living room Xbox name"
-        }
+        "role": "dialog",
+        "name": "Set up Living room Xbox"
       },
-      "hold": 2000
+      "hold": 2500
     },
     {
-      "say": "Reserve that address in your router and point the router's DNS at Temperance. The Xbox now follows Jordan's rules.",
+      "say": "Temperance assigned an address. Type that address, the subnet mask, the router and the DNS server into the Xbox.",
       "hold": 4500
     }
   ]

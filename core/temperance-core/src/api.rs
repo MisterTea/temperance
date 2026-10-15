@@ -303,13 +303,14 @@ pub fn sign_in_request(
     public_key: String,
 ) -> Result<HttpRequest, CoreError> {
     let name = name.trim();
-    if username.trim().is_empty() || password.is_empty() {
+    let username = username.trim().to_lowercase();
+    if username.is_empty() || password.is_empty() {
         return Err(invalid("Enter your username and password"));
     }
     if name.is_empty() || name.chars().count() > 80 {
         return Err(invalid("Enter a device name up to 80 characters"));
     }
-    let body = serde_json::json!({"username":username.trim(),"password":password,"name":name,"public_key":public_key});
+    let body = serde_json::json!({"username":username,"password":password,"name":name,"public_key":public_key});
     request(
         "POST",
         &service,

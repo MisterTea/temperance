@@ -29,6 +29,15 @@ impl Net {
         };
         u32::from(ip) & mask == self.addr & mask
     }
+
+    pub fn cidr(self) -> String {
+        let mask = if self.prefix == 0 {
+            0
+        } else {
+            u32::MAX << (32 - self.prefix)
+        };
+        format!("{}/{}", Ipv4Addr::from(self.addr & mask), self.prefix)
+    }
 }
 
 impl FromStr for Net {

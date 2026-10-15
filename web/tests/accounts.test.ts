@@ -89,6 +89,16 @@ describe("simple admin password and client IAM", () => {
     expect(device.user.id).toBe(user.id);
     expect(
       (
+        await call(
+          repo,
+          "api/users",
+          { username: "ALEX", password: "another-password", profile_id: 1 },
+          headers,
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
         await call(repo, "api/state", undefined, {
           Authorization: "Bearer " + device.token,
         })
@@ -110,7 +120,7 @@ describe("simple admin password and client IAM", () => {
       ),
     ).not.toContain("password_hash");
   });
-  it("admin reassigns profiles and disables or resets client access", async () => {
+  it("a client keeps its rules, and resetting the password revokes devices", async () => {
     const { repo, headers, user } = await setup();
     const device = await (
       await call(repo, "v1/device/login", {
@@ -120,12 +130,16 @@ describe("simple admin password and client IAM", () => {
         public_key: PUBLIC,
       })
     ).json();
-    await call(
-      repo,
-      "api/users/update",
-      { id: user.id, profile_id: 2 },
-      headers,
-    );
+    expect(
+      (
+        await call(
+          repo,
+          "api/users/update",
+          { id: user.id, profile_id: 2 },
+          headers,
+        )
+      ).status,
+    ).toBe(400);
     expect(
       (
         await (
@@ -134,7 +148,7 @@ describe("simple admin password and client IAM", () => {
           })
         ).json()
       ).policy.id,
-    ).toBe(2);
+    ).toBe(1);
     await call(
       repo,
       "api/users/update",
@@ -259,6 +273,22 @@ describe("simple admin password and client IAM", () => {
         })
       ).status,
     ).toBe(200);
+  });
+  it("replaces a client's old name with the username", async () => {
+    const { repo, headers } = await setup();
+    const current = await repo.read();
+    const client = current.state.profiles.find((p) => p.id === 1)!;
+    client.name = "GauciKids";
+    expect(await repo.commit(current.state, current.revision)).toBe(true);
+    const view = await (
+      await call(repo, "api/state", undefined, headers)
+    ).json();
+    expect(view.profiles.find((p: { id: number }) => p.id === 1).name).toBe(
+      "alex",
+    );
+    const stored = await repo.read();
+    expect(stored.state.profiles.find((p) => p.id === 1)?.name).toBe("alex");
+    expect(stored.state.users?.[0].username).toBe("alex");
   });
   it("hashes passwords with independent salts", async () => {
     const a = await hashPassword("simple-user-password"),

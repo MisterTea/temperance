@@ -43,6 +43,8 @@ cp -R "$web/.next/static" "$root/app/.next/static"
 cp "$addon" "$root/app/node_modules/@temperance/gateway-addon/temperance-gateway.linux-$arch.node"
 cp "$repo/deploy/home/install-linux.sh" "$root/install.sh"
 cp "$repo/deploy/home/temperance.service" "$root/temperance.service"
+cp "$repo/deploy/home/ap-prepare.sh" "$root/ap-prepare.sh"
+chmod 755 "$root/ap-prepare.sh"
 cp "$repo/deploy/.env.example" "$root/temperance.env.example"
 cp "$repo/LICENSE" "$root/LICENSE"
 printf 'Temperance %s for Linux %s (Node.js %s, glibc 2.28 or newer).\nInstall: sudo ./install.sh, then see https://github.com/MisterTea/temperance/blob/main/docs/deployment.md\n' \

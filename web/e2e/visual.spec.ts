@@ -15,7 +15,6 @@ const TABS = [
   "Usage",
   "History",
   "Requests",
-  "Clients",
   "Settings",
 ];
 
@@ -104,7 +103,7 @@ test("profile editor dialog fits the viewport", async ({ page }) => {
   const viewport = page.viewportSize()!;
   expect(box!.width).toBeLessThanOrEqual(viewport.width);
   await dialog
-    .getByRole("button", { name: "Save profile" })
+    .getByRole("button", { name: "Save client" })
     .scrollIntoViewIfNeeded();
   await expectCleanLayout(page, "editor bottom");
   clean();

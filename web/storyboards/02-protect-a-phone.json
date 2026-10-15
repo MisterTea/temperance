@@ -3,18 +3,12 @@
   "subtitle": "Give Jordan a sign-in, then connect the Temperance app",
   "steps": [
     {
+      "say": "Each client lives on the overview, with the rules and the time budget. Add a sign-in so their phone can use the app."
+    },
+    {
       "click": {
         "role": "button",
-        "name": "Clients",
-        "exact": true
-      }
-    },
-    {
-      "say": "Each child gets their own sign-in. It decides which rules their devices follow."
-    },
-    {
-      "show": {
-        "section": "Client users"
+        "name": "Add sign-in"
       }
     },
     {
@@ -22,7 +16,7 @@
         "label": "Username",
         "within": {
           "role": "form",
-          "name": "Add client user"
+          "name": "/Sign-in for/"
         }
       },
       "value": "jordan"
@@ -32,30 +26,20 @@
         "label": "Password",
         "within": {
           "role": "form",
-          "name": "Add client user"
+          "name": "/Sign-in for/"
         }
       },
       "value": "purple-otter-42"
     },
     {
-      "select": {
-        "label": "Family profile",
-        "within": {
-          "role": "form",
-          "name": "Add client user"
-        }
-      },
-      "option": "Jordan"
-    },
-    {
       "click": {
         "role": "button",
-        "name": "Create user"
+        "name": "Add sign-in"
       }
     },
     {
       "show": {
-        "css": ".row-card",
+        "css": "article.profile",
         "hasText": "jordan"
       }
     },

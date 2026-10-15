@@ -1,12 +1,14 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { snapshot } from "@/lib/service";
+import { clientUsername } from "@/lib/accounts";
 import { CATALOG, dailyLimit, type Profile } from "@/lib/policy";
 import type { History } from "@/lib/model";
 import type { UpdateStatus } from "@/lib/updates";
 import { ProfileEditor } from "./profile-editor";
 import { Onboarding } from "./onboarding";
 import { api } from "./api";
+import { nextHomeAddress, type HomeNetwork } from "@/lib/home-lan";
 type DashboardState = ReturnType<typeof snapshot>;
 type ParentAccount = {
   id: string;
@@ -50,13 +52,42 @@ const clock = (time: string) => {
   const [h, m] = time.split(":").map(Number);
   return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
 };
+function HomeSetup({ network, ip }: { network: HomeNetwork; ip: string }) {
+  return (
+    <div className="setup-steps">
+      <p>On the device, set the network by hand:</p>
+      <ol>
+        {network.ssid ? (
+          <li>
+            Join the Wi-Fi network <strong>{network.ssid}</strong>. Password:{" "}
+            <strong>{network.passphrase}</strong>
+          </li>
+        ) : null}
+        <li>Choose a manual or static address.</li>
+        <li>
+          IP address: <strong>{ip}</strong>
+        </li>
+        <li>
+          Subnet mask: <strong>{network.mask}</strong>
+        </li>
+        <li>
+          Router: <strong>{network.gateway}</strong>
+        </li>
+        {network.dns ? (
+          <li>
+            DNS: <strong>{network.dns}</strong>
+          </li>
+        ) : null}
+      </ol>
+    </div>
+  );
+}
 const INTROS: Record<string, string> = {
   overview: "Make room for the things that matter.",
   devices: "Phones, tablets, TVs and consoles that follow your family’s rules.",
   usage: "How much time each person spent online, and on what.",
   history: "Sites your family’s devices looked up, and why.",
   requests: "Answer requests for more time and hand out rewards.",
-  clients: "Sign-ins for your family’s devices and the rules each one follows.",
   settings: "Remote access, parent devices, backups and data retention.",
 };
 const ROUTER_GUIDE =
@@ -204,7 +235,7 @@ function DeviceSetup({
   act,
 }: {
   state: DashboardState;
-  act: (action: () => Promise<void>) => Promise<void>;
+  act: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const link = state.device_setup;
   const [qr, setQr] = useState("");
@@ -225,7 +256,7 @@ function DeviceSetup({
       <p>
         Devices find home through the family VPN&apos;s UDP port, so they need
         no web address. This code says where home is; the device still signs in
-        with a client username and password from Clients.
+        with that client’s username and password.
       </p>
       {!link ? (
         <p className="notice" role="status">
@@ -389,7 +420,7 @@ function ParentPhones({
   state: DashboardState;
   viewer?: Viewer;
   refresh: () => Promise<void>;
-  act: (action: () => Promise<void>) => Promise<void>;
+  act: (action: () => Promise<unknown>) => Promise<void>;
 }) {
   const [pairing, setPairing] = useState<Pairing>();
   const [copied, setCopied] = useState(false);
@@ -545,6 +576,8 @@ export function Dashboard() {
   const [resetUser, setResetUser] = useState<ParentAccount>();
   const [resetError, setResetError] = useState("");
   const [passwordSet, setPasswordSet] = useState("");
+  const [signInFor, setSignInFor] = useState<number>();
+  const [accountsReady, setAccountsReady] = useState(false);
   const resetDialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     if (resetUser) resetDialog.current?.showModal();
@@ -557,6 +590,11 @@ export function Dashboard() {
   const [renaming, setRenaming] = useState<number>();
   const [tab, setTab] = useState("overview");
   const [code, setCode] = useState("");
+  const [homeSetup, setHomeSetup] = useState<{ name: string; ip: string }>();
+  const homeDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (homeSetup) homeDialog.current?.showModal();
+  }, [homeSetup]);
   const [selected, setSelected] = useState<number>();
   const [rewardKind, setRewardKind] = useState("extra_time");
   const [history, setHistory] = useState<History[]>([]);
@@ -601,8 +639,9 @@ export function Dashboard() {
     const next = await api<DashboardState>(path, value);
     setState(next);
     setError("");
+    return next;
   };
-  const act = async (action: () => Promise<void>) => {
+  const act = async (action: () => Promise<unknown>) => {
     try {
       await action();
     } catch (e) {
@@ -652,12 +691,13 @@ export function Dashboard() {
     try {
       setParents(await api<ParentAccount[]>("/api/users"));
       setMe(await api<ParentAccount>("/api/me"));
+      setAccountsReady(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load accounts");
     }
   }, []);
   useEffect(() => {
-    if (tab === "clients" && signedIn) loadParents();
+    if (signedIn) loadParents();
   }, [tab, signedIn, loadParents]);
   const loadUpdate = useCallback(
     (check = false) =>
@@ -776,6 +816,8 @@ export function Dashboard() {
       </main>
     );
   const profileById = new Map(state.profiles.map((p) => [p.id, p]));
+  const clientName = (p?: { id: number; name: string }) =>
+    (p && parents.find((u) => u.profile_id === p.id)?.username) || p?.name;
   const usageStart = new Date(state.day + "T12:00:00Z");
   usageStart.setUTCDate(usageStart.getUTCDate() - period + 1);
   const currentUsage = usage.filter(
@@ -797,7 +839,6 @@ export function Dashboard() {
           "usage",
           "history",
           "requests",
-          "clients",
           "settings",
         ].map((name) => (
           <button
@@ -892,7 +933,8 @@ export function Dashboard() {
                       <div>
                         <strong>
                           {state.devices.find((d) => d.id === r.device_id)
-                            ?.name ?? profileById.get(r.profile_id)?.name}{" "}
+                            ?.name ??
+                            clientName(profileById.get(r.profile_id))}{" "}
                           asks for {r.minutes} more minutes
                         </strong>
                         {r.message ? <p>“{r.message}”</p> : null}
@@ -913,7 +955,7 @@ export function Dashboard() {
               <article>
                 <span>Network activity minutes</span>
                 <strong>{state.total}</strong>
-                <small>Estimated allowed traffic across profiles</small>
+                <small>Estimated allowed traffic across clients</small>
               </article>
               <article>
                 <span>Offline right now</span>
@@ -928,8 +970,8 @@ export function Dashboard() {
             </section>
             <div className="section-title">
               <div>
-                <h2>Family profiles</h2>
-                <p>A little structure, tailored to each person.</p>
+                <h2>Clients</h2>
+                <p>Each client has the rules and the time budget.</p>
               </div>
               <div className="actions">
                 <button
@@ -941,47 +983,62 @@ export function Dashboard() {
                   {state.paused ? "Resume family" : "Pause family"}
                 </button>
                 <button className="primary" onClick={() => setEditing(true)}>
-                  + Add profile
+                  + Add client
                 </button>
               </div>
             </div>
+            {passwordSet ? (
+              <p className="notice success" role="status">
+                Password set for {passwordSet}. Its devices must sign in again
+                with the new password.
+              </p>
+            ) : null}
             <section className="profiles">
               {state.profiles.length ? (
-                state.profiles.map((p) => (
+                state.profiles.map((p) => {
+                  const signIn = parents.find((u) => u.profile_id === p.id);
+                  const label = signIn?.username ?? p.name;
+                  return (
                   <article className="profile" key={p.id}>
                     <div className="profile-head">
                       <span className="avatar">{p.avatar}</span>
                       <div>
                         {renaming === p.id ? (
                           <input
-                            aria-label={`New name for ${p.name}`}
+                            aria-label={`New username for ${label}`}
                             className="profile-name"
-                            defaultValue={p.name}
-                            maxLength={60}
+                            defaultValue={label}
+                            maxLength={40}
+                            autoCapitalize="none"
+                            autoCorrect="off"
                             autoFocus
                             onFocus={(e) => e.currentTarget.select()}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") e.currentTarget.blur();
                               if (e.key === "Escape") {
-                                e.currentTarget.value = p.name;
+                                e.currentTarget.value = label;
                                 e.currentTarget.blur();
                               }
                             }}
                             onBlur={(e) => {
                               const name = e.target.value.trim();
                               setRenaming(undefined);
-                              if (name && name !== p.name)
-                                act(() =>
-                                  save("/api/profiles", { ...p, name }),
-                                );
+                              if (!name || name.toLowerCase() === label.toLowerCase())
+                                return;
+                              act(() =>
+                                save("/api/profiles", {
+                                  ...p,
+                                  name: clientUsername(name),
+                                }),
+                              );
                             }}
                           />
                         ) : (
                           <div className="profile-name-row">
-                            <h3>{p.name}</h3>
+                            <h3>{label}</h3>
                             <button
                               className="quiet rename"
-                              aria-label={`Rename ${p.name}`}
+                              aria-label={`Rename ${label}`}
                               title="Rename"
                               onClick={() => setRenaming(p.id)}
                             >
@@ -996,6 +1053,12 @@ export function Dashboard() {
                             "device",
                           )}{" "}
                           · {p.filter_level} preset
+                          {accountsReady && !signIn ? " · no sign-in" : ""}
+                          {signIn
+                            ? signIn.disabled
+                              ? " · sign-in disabled"
+                              : " · sign-in enabled"
+                            : ""}
                         </small>
                       </div>
                       <span
@@ -1025,11 +1088,11 @@ export function Dashboard() {
                     <progress
                       max={p.effective_limit || 1440}
                       value={p.used}
-                      aria-label={`${p.name} daily budget`}
+                      aria-label={`${label} daily budget`}
                     />
                     <p className="profile-info">
                       {plural(p.schedules.length, "schedule")} ·{" "}
-                      {p.bedtime.start
+                      {p.bedtime.enabled !== false && p.bedtime.start
                         ? `Bedtime ${clock(p.bedtime.start)}–${clock(p.bedtime.end)}`
                         : "No bedtime"}
                       <br />
@@ -1039,7 +1102,7 @@ export function Dashboard() {
                     {(p.app_limits ?? []).length ? (
                       <ul
                         className="app-groups"
-                        aria-label={`${p.name} shared app limits`}
+                        aria-label={`${label} shared app limits`}
                       >
                         {p.app_limits.map((g) => (
                           <li key={g.id}>
@@ -1072,10 +1135,72 @@ export function Dashboard() {
                       </button>
                       <button
                         className="secondary"
-                        onClick={() => setEditing(p)}
+                        onClick={() =>
+                          setEditing({ ...p, name: label })
+                        }
                       >
                         Edit rules
                       </button>
+                      {!signIn &&
+                      accountsReady &&
+                      me?.role !== "parent" &&
+                      signInFor !== p.id ? (
+                        <button
+                          className="secondary"
+                          onClick={() => setSignInFor(p.id)}
+                        >
+                          Add sign-in
+                        </button>
+                      ) : null}
+                      {signIn && me?.role !== "parent" ? (
+                        <>
+                          <button
+                            className="secondary"
+                            onClick={() =>
+                              act(async () => {
+                                await api("/api/users/update", {
+                                  id: signIn.id,
+                                  disabled: !signIn.disabled,
+                                });
+                                await loadParents();
+                              })
+                            }
+                          >
+                            {signIn.disabled ? "Enable" : "Disable"}
+                          </button>
+                          <button
+                            className="secondary"
+                            onClick={() => {
+                              setResetError("");
+                              setPasswordSet("");
+                              setResetUser(signIn);
+                            }}
+                          >
+                            Set password
+                          </button>
+                          <button
+                            className="secondary"
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  `Remove ${signIn.username}’s sign-in and revoke its devices? The client’s rules stay.`,
+                                )
+                              )
+                                act(async () => {
+                                  setParents(
+                                    await api<ParentAccount[]>(
+                                      "/api/users/delete",
+                                      { id: signIn.id },
+                                    ),
+                                  );
+                                  await refresh();
+                                });
+                            }}
+                          >
+                            Delete sign-in
+                          </button>
+                        </>
+                      ) : null}
                       <button
                         className="secondary"
                         onClick={() => {
@@ -1086,20 +1211,64 @@ export function Dashboard() {
                         Reward
                       </button>
                     </div>
+                    {signInFor === p.id ? (
+                      <form
+                        aria-label={`Sign-in for ${label}`}
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const form = e.currentTarget;
+                          const data = new FormData(form);
+                          act(async () => {
+                            await api("/api/users", {
+                              username: data.get("username"),
+                              password: data.get("password"),
+                              profile_id: p.id,
+                            });
+                            form.reset();
+                            setSignInFor(undefined);
+                            await loadParents();
+                            await refresh();
+                          });
+                        }}
+                      >
+                        <label>
+                          Username
+                          <input
+                            name="username"
+                            required
+                            autoComplete="off"
+                            autoCapitalize="none"
+                          />
+                        </label>
+                        <label>
+                          Password
+                          <input
+                            name="password"
+                            type="password"
+                            minLength={6}
+                            required
+                            autoComplete="new-password"
+                          />
+                        </label>
+                        <button className="secondary">Add sign-in</button>
+                      </form>
+                    ) : null}
                   </article>
-                ))
+                  );
+                })
               ) : (
                 <div className="empty">
-                  Welcome home. Add a profile, then enroll a device.
+                  Welcome home. Add a client, then connect a device.
                 </div>
               )}
             </section>
             <div className="notice">
               <strong>Activity is an estimate, not exact screen time.</strong>
               <p>
-                Background traffic can count. Domain/category attribution
-                depends on DNS visibility. Use History to understand a decision
-                before changing a rule.
+                Background pings under 32 KB in a minute are not counted.
+                Larger traffic is still an estimate, not exact screen time.
+                Domain and category attribution depends on DNS visibility. Use
+                History to understand a decision before changing a rule.
               </p>
             </div>
           </>
@@ -1129,11 +1298,11 @@ export function Dashboard() {
                 }}
               >
                 <label>
-                  Family profile
+                  Client
                   <select name="profile_id" required>
                     {state.profiles.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name}
+                        {clientName(p)}
                       </option>
                     ))}
                   </select>
@@ -1149,60 +1318,70 @@ export function Dashboard() {
             </section>
             <section>
               <h2>Add a home-network device</h2>
-              <p>
-                For TVs, consoles and speakers that cannot run the app. Reserve
-                its address in your router, then run the gateway on your home
-                network as its DNS server (and router, for time limits and
-                pause).
-              </p>
-              <form
-                className="enrollment"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const form = e.currentTarget,
-                    data = new FormData(form);
-                  act(async () => {
-                    await save("/api/devices/home", {
-                      name: data.get("name"),
-                      ip: data.get("ip"),
-                      profile_id: Number(data.get("profile_id")),
-                    });
-                    form.reset();
-                  });
-                }}
-              >
-                <label>
-                  Device name
-                  <input name="name" required maxLength={80} />
-                </label>
-                <label>
-                  Home-network IPv4 address
-                  <input
-                    name="ip"
-                    required
-                    inputMode="decimal"
-                    placeholder="192.168.1.50"
-                  />
-                </label>
-                <label>
-                  Home device profile
-                  <select name="profile_id" required>
-                    {state.profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button className="primary">Add home device</button>
-              </form>
+              {state.home_network ? (
+                <>
+                  <p>
+                    For a TV, console, or speaker. Temperance assigns a free
+                    address when you add the device.
+                  </p>
+                  {nextHomeAddress(
+                    state.home_network,
+                    state.devices.map((d) => d.ip),
+                  ) ? (
+                    <form
+                      className="enrollment"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const form = e.currentTarget,
+                          data = new FormData(form);
+                        const known = new Set(state.devices.map((d) => d.id));
+                        act(async () => {
+                          const next = await save("/api/devices/home", {
+                            name: data.get("name"),
+                            profile_id: Number(data.get("profile_id")),
+                          });
+                          form.reset();
+                          const added = next.devices.find(
+                            (d) => d.kind === "home" && !known.has(d.id),
+                          );
+                          if (added)
+                            setHomeSetup({ name: added.name, ip: added.ip });
+                        });
+                      }}
+                    >
+                      <label>
+                        Device name
+                        <input name="name" required maxLength={80} />
+                      </label>
+                      <label>
+                        Client
+                        <select name="profile_id" required>
+                          {state.profiles.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {clientName(p)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button className="primary">Add home device</button>
+                    </form>
+                  ) : (
+                    <p>Every address on the access point is already assigned.</p>
+                  )}
+                </>
+              ) : (
+                <p>
+                  Access point mode is off, so a TV or console cannot be added.
+                  Turn on the access point, then restart Temperance.
+                </p>
+              )}
             </section>
             <div className="table-wrap">
               <table className="devices">
                 <thead>
                   <tr>
                     <th>Device</th>
-                    <th>Profile</th>
+                    <th>Client</th>
                     <th>Address</th>
                     <th>Last active</th>
                     <th>Location</th>
@@ -1231,7 +1410,7 @@ export function Dashboard() {
                       </td>
                       <td>
                         <select
-                          aria-label={`${d.name} profile`}
+                          aria-label={`${d.name} client`}
                           disabled={!!d.user_id}
                           value={d.profile_id}
                           onChange={(e) =>
@@ -1245,7 +1424,7 @@ export function Dashboard() {
                         >
                           {state.profiles.map((p) => (
                             <option key={p.id} value={p.id}>
-                              {p.name}
+                              {clientName(p)}
                             </option>
                           ))}
                         </select>
@@ -1255,6 +1434,12 @@ export function Dashboard() {
                         <small>
                           {d.kind === "home" ? "Home network" : "VPN"}
                         </small>
+                        {d.kind === "home" && state.home_network ? (
+                          <details>
+                            <summary>How to connect</summary>
+                            <HomeSetup network={state.home_network} ip={d.ip} />
+                          </details>
+                        ) : null}
                       </td>
                       <td>
                         {d.last_seen ? ago(d.last_seen) : "Never"}
@@ -1355,7 +1540,7 @@ export function Dashboard() {
               <div>
                 <h2>Observed usage by day</h2>
                 <p>
-                  Distinct allowed traffic minutes, shared across each profile’s
+                  Distinct allowed traffic minutes, shared across each client’s
                   devices.
                 </p>
               </div>
@@ -1393,9 +1578,9 @@ export function Dashboard() {
                   .sort((a, b) => b[1] - a[1])
                   .slice(0, 3);
                 return (
-                  <article key={p.id} aria-label={`${p.name} usage summary`}>
+                  <article key={p.id} aria-label={`${clientName(p)} usage summary`}>
                     <h3>
-                      {p.avatar} {p.name}
+                      {p.avatar} {clientName(p)}
                     </h3>
                     <strong>{total} min</strong>
                     <small>
@@ -1422,7 +1607,7 @@ export function Dashboard() {
                   <tr>
                     <th>Date</th>
                     {state.profiles.map((p) => (
-                      <th key={p.id}>{p.name}</th>
+                      <th key={p.id}>{clientName(p)}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1472,15 +1657,15 @@ export function Dashboard() {
                 />
               </label>
               <label>
-                Profile
+                Client
                 <select
                   value={historyProfile}
                   onChange={(e) => setHistoryProfile(e.target.value)}
                 >
-                  <option value="">All profiles</option>
+                  <option value="">All clients</option>
                   {state.profiles.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name}
+                      {clientName(p)}
                     </option>
                   ))}
                 </select>
@@ -1517,7 +1702,7 @@ export function Dashboard() {
                 <thead>
                   <tr>
                     <th>Time</th>
-                    <th>Profile</th>
+                    <th>Client</th>
                     <th>Domain</th>
                     <th>Decision</th>
                     <th>Rule action</th>
@@ -1606,7 +1791,7 @@ export function Dashboard() {
                 <article className="row-card" key={r.id}>
                   <div>
                     <strong>
-                      {profileById.get(r.profile_id)?.name} · {r.minutes} extra
+                      {clientName(profileById.get(r.profile_id))} · {r.minutes} extra
                       minutes
                     </strong>
                     <p>{r.message}</p>
@@ -1669,7 +1854,7 @@ export function Dashboard() {
               >
                 <div className="two">
                   <label>
-                    Profile
+                    Client
                     <select
                       name="profile_id"
                       value={selected ?? state.profiles[0]?.id ?? ""}
@@ -1677,7 +1862,7 @@ export function Dashboard() {
                     >
                       {state.profiles.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.name}
+                          {clientName(p)}
                         </option>
                       ))}
                     </select>
@@ -1690,7 +1875,10 @@ export function Dashboard() {
                       onChange={(e) => setRewardKind(e.target.value)}
                     >
                       <option value="extra_time">Extra time</option>
-                      <option value="late_bedtime">Late bedtime</option>
+                      {profileById.get(selected ?? state.profiles[0]?.id)
+                        ?.bedtime.enabled === false ? null : (
+                        <option value="late_bedtime">Late bedtime</option>
+                      )}
                       <option value="skip_window">Skip a schedule today</option>
                     </select>
                   </label>
@@ -1751,7 +1939,7 @@ export function Dashboard() {
               {state.rewards.map((r) => (
                 <article className="row-card" key={r.id}>
                   <span>
-                    {profileById.get(r.profile_id)?.name}:{" "}
+                    {clientName(profileById.get(r.profile_id))}:{" "}
                     {r.kind === "extra_time"
                       ? `${r.minutes} extra minutes`
                       : r.kind === "late_bedtime"
@@ -1796,144 +1984,6 @@ export function Dashboard() {
                 ))}
             </section>
           </>
-        ) : null}
-        {tab === "clients" ? (
-          <section>
-            <h2>Client users</h2>
-            <p>
-              Create a username/password and assign its family profile. Clients
-              sign in as that user; users cannot edit policy or administer this
-              website.
-            </p>
-            {passwordSet ? (
-              <p className="notice success" role="status">
-                Password set for {passwordSet}. Its devices must sign in again
-                with the new password.
-              </p>
-            ) : null}
-            {parents.map((u) => (
-              <article className="row-card" key={u.id}>
-                <div>
-                  <strong>{u.username}</strong>
-                  <small>{u.disabled ? "Disabled" : "Enabled"}</small>
-                </div>
-                <label>
-                  Family profile
-                  <select
-                    value={u.profile_id ?? ""}
-                    onChange={(e) =>
-                      act(async () => {
-                        await api("/api/users/update", {
-                          id: u.id,
-                          profile_id: Number(e.target.value),
-                        });
-                        await loadParents();
-                        await refresh();
-                      })
-                    }
-                  >
-                    <option value="" disabled>
-                      Assign a profile
-                    </option>
-                    {state.profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div>
-                  <button
-                    onClick={() =>
-                      act(async () => {
-                        await api("/api/users/update", {
-                          id: u.id,
-                          disabled: !u.disabled,
-                        });
-                        await loadParents();
-                      })
-                    }
-                  >
-                    {u.disabled ? "Enable" : "Disable"}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setResetError("");
-                      setPasswordSet("");
-                      setResetUser(u);
-                    }}
-                  >
-                    Set password
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (
-                        confirm(`Delete ${u.username} and revoke its devices?`)
-                      )
-                        act(async () =>
-                          setParents(
-                            await api<ParentAccount[]>("/api/users/delete", {
-                              id: u.id,
-                            }),
-                          ),
-                        );
-                    }}
-                  >
-                    Delete user
-                  </button>
-                </div>
-              </article>
-            ))}
-            <form
-              aria-label="Add client user"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const target = e.currentTarget;
-                const f = Object.fromEntries(new FormData(target));
-                act(async () => {
-                  await api("/api/users", {
-                    ...f,
-                    profile_id: Number(f.profile_id),
-                  });
-                  target.reset();
-                  await loadParents();
-                });
-              }}
-            >
-              <div className="two">
-                <label>
-                  Username
-                  <input
-                    name="username"
-                    required
-                    autoComplete="off"
-                    autoCapitalize="none"
-                  />
-                </label>
-                <label>
-                  Password
-                  <input
-                    name="password"
-                    type="password"
-                    minLength={10}
-                    required
-                    autoComplete="new-password"
-                  />
-                </label>
-                <label>
-                  Family profile
-                  <select name="profile_id" required>
-                    {state.profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <button className="secondary">Create user</button>
-            </form>
-          </section>
         ) : null}
         {tab === "settings" ? (
           <>
@@ -1980,7 +2030,7 @@ export function Dashboard() {
                     </small>
                   </label>
                   <label>
-                    Home/default profile
+                    Home/default client
                     <select
                       name="home"
                       defaultValue={state.home_profile_id ?? ""}
@@ -1988,7 +2038,7 @@ export function Dashboard() {
                       <option value="">No default</option>
                       {state.profiles.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.name}
+                          {clientName(p)}
                         </option>
                       ))}
                     </select>
@@ -2094,7 +2144,7 @@ export function Dashboard() {
             </section>
             <section>
               <h2>Delete domain history</h2>
-              <p>This does not remove profiles, rules, or minute totals.</p>
+              <p>This does not remove clients, rules, or minute totals.</p>
               <button
                 className="secondary"
                 onClick={() => {
@@ -2146,6 +2196,36 @@ export function Dashboard() {
           <span>Policy version {state.version}</span>
         </footer>
       </main>
+      {homeSetup && state?.home_network ? (
+        <dialog
+          className="editor"
+          ref={homeDialog}
+          aria-labelledby="home-setup-title"
+          onCancel={() => setHomeSetup(undefined)}
+        >
+          <div className="dialog-heading">
+            <h2 id="home-setup-title">Set up {homeSetup.name}</h2>
+            <button
+              type="button"
+              className="close"
+              aria-label="Close"
+              onClick={() => setHomeSetup(undefined)}
+            >
+              ×
+            </button>
+          </div>
+          <HomeSetup network={state.home_network} ip={homeSetup.ip} />
+          <div className="actions">
+            <button
+              className="primary"
+              type="button"
+              onClick={() => setHomeSetup(undefined)}
+            >
+              Done
+            </button>
+          </div>
+        </dialog>
+      ) : null}
       {resetUser ? (
         <dialog
           className="editor"
@@ -2181,7 +2261,7 @@ export function Dashboard() {
               <input
                 name="password"
                 type="password"
-                minLength={10}
+                minLength={6}
                 maxLength={200}
                 autoComplete="new-password"
                 required
@@ -2192,7 +2272,7 @@ export function Dashboard() {
               <input
                 name="confirm"
                 type="password"
-                minLength={10}
+                minLength={6}
                 maxLength={200}
                 autoComplete="new-password"
                 required

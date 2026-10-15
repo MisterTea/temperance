@@ -33,6 +33,12 @@ fn default_upstream() -> SocketAddr {
     "1.1.1.1:53".parse().expect("static")
 }
 
+/// Traffic quieter than this in a minute is idle (pings, keepalives) and is not
+/// charged against the client's time. Zero counts any byte.
+fn default_idle_bytes() -> u64 {
+    32 * 1024
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     /// UDP address WireGuard listens on, e.g. `0.0.0.0:51820`.
@@ -41,6 +47,9 @@ pub struct Config {
     pub private_key: String,
     #[serde(default = "default_upstream")]
     pub dns_upstream: SocketAddr,
+    /// Bytes in one minute before that bucket counts as in use.
+    #[serde(default = "default_idle_bytes")]
+    pub idle_bytes: u64,
     /// Hostnames of this Temperance server; reachable even when a device is blocked.
     #[serde(default)]
     pub management_domains: Vec<String>,
@@ -67,6 +76,9 @@ pub struct Config {
     /// Parent phones reaching the dashboard over QUIC on the listen port.
     #[serde(default)]
     pub remote: Option<parent::Config>,
+    /// Wi-Fi interface to run as an access point. Linux only.
+    #[serde(default)]
+    pub ap: Option<crate::ap::AccessPoint>,
 }
 
 pub struct Flow {
@@ -78,6 +90,33 @@ pub struct Flow {
     close: watch::Sender<bool>,
 }
 
+#[derive(Default)]
+struct MinuteUse {
+    bytes: BTreeMap<String, u64>,
+    reported: BTreeSet<String>,
+}
+
+impl MinuteUse {
+    fn add(&mut self, bucket: &str, bytes: u64) {
+        if bytes == 0 {
+            return;
+        }
+        *self.bytes.entry(bucket.to_string()).or_default() += bytes;
+    }
+
+    /// Buckets that have crossed `minimum` and have not been reported yet.
+    fn take_ready(&mut self, minimum: u64) -> Vec<String> {
+        let mut ready = Vec::new();
+        for (bucket, bytes) in &self.bytes {
+            let counts = bytes > &0 && (minimum == 0 || *bytes >= minimum);
+            if counts && self.reported.insert(bucket.clone()) {
+                ready.push(bucket.clone());
+            }
+        }
+        ready
+    }
+}
+
 pub struct Shared {
     pub config: Config,
     wg: Arc<Wireguard>,
@@ -85,7 +124,8 @@ pub struct Shared {
     applied: Mutex<Option<Instant>>,
     destinations: Mutex<Destinations>,
     history: Mutex<Vec<HistoryEntry>>,
-    usage: Mutex<BTreeMap<(String, i64), BTreeSet<String>>>,
+    /// Bytes carried this minute, per device and bucket.
+    usage: Mutex<BTreeMap<(String, i64), MinuteUse>>,
     flows: Mutex<HashMap<u64, Arc<Flow>>>,
     next_flow: AtomicU64,
     router_counters: Mutex<home::Counters>,
@@ -178,21 +218,33 @@ impl Shared {
         self.flows.lock().expect("flows lock").remove(&id);
     }
 
-    fn touch(&self, flow: &Flow) {
+    fn touch(&self, flow: &Flow, bytes: u64) {
         let Verdict::Allow { device, buckets } = &*flow.verdict.lock().expect("verdict lock")
         else {
             return;
         };
-        if buckets.is_empty() {
+        if buckets.is_empty() || bytes == 0 {
+            return;
+        }
+        let minute = (crate::now() / 60.0).floor() as i64;
+        let mut usage = self.usage.lock().expect("usage lock");
+        let entry = usage.entry((device.clone(), minute)).or_default();
+        for bucket in buckets {
+            entry.add(bucket, bytes);
+        }
+    }
+
+    fn note(&self, device: &str, bucket: &str, bytes: u64) {
+        if bytes == 0 {
             return;
         }
         let minute = (crate::now() / 60.0).floor() as i64;
         self.usage
             .lock()
             .expect("usage lock")
-            .entry((device.clone(), minute))
+            .entry((device.to_string(), minute))
             .or_default()
-            .extend(buckets.iter().cloned());
+            .add(bucket, bytes);
     }
 
     /// Re-decide every open flow; flows that are no longer allowed are closed.
@@ -261,38 +313,42 @@ impl Shared {
             return Ok(());
         };
         let mut counters = self.router_counters.lock().expect("counters lock");
-        let minute = (crate::now() / 60.0).floor() as i64;
-        for (device, buckets) in home::activity(&counters) {
-            self.usage
-                .lock()
-                .expect("usage lock")
-                .entry((device, minute))
-                .or_default()
-                .extend(buckets);
+        for (device, samples) in home::activity(&counters) {
+            for (bucket, bytes) in samples {
+                self.note(&device, &bucket, bytes);
+            }
         }
         let script = {
             let destinations = self.destinations.lock().expect("destinations lock");
             home::script(router, &policy, &destinations, expired)?
         };
         home::install(script.as_ref().map(|(s, _)| s.as_str()))?;
+        home::accept_through_docker(&self.config.lan_networks);
         *counters = script.map(|(_, c)| c).unwrap_or_default();
         Ok(())
     }
 
     fn drain(&self) -> Value {
-        let usage = std::mem::take(&mut *self.usage.lock().expect("usage lock"));
+        let now_minute = (crate::now() / 60.0).floor() as i64;
+        let minimum = self.config.idle_bytes;
+        let mut usage = self.usage.lock().expect("usage lock");
         let mut activity = Vec::new();
-        for ((device, minute), buckets) in usage {
-            if activity.len() == 1000 {
-                break;
+        usage.retain(|(device, minute), use_| {
+            if activity.len() < 1000 {
+                let mut valid: Vec<String> = use_
+                    .take_ready(minimum)
+                    .into_iter()
+                    .filter(|b| valid_bucket(b))
+                    .collect();
+                valid.sort_by_key(|b| b != "total");
+                valid.truncate(40);
+                if !valid.is_empty() {
+                    activity.push(json!({"device_id": device, "minute": minute, "buckets": valid}));
+                }
             }
-            let mut valid: Vec<String> = buckets.into_iter().filter(|b| valid_bucket(b)).collect();
-            valid.sort_by_key(|b| b != "total");
-            valid.truncate(40);
-            if !valid.is_empty() {
-                activity.push(json!({"device_id": device, "minute": minute, "buckets": valid}));
-            }
-        }
+            *minute + 1 >= now_minute
+        });
+        drop(usage);
         let mut history = self.history.lock().expect("history lock");
         let count = history.len().min(500);
         let reported: Vec<HistoryEntry> = history.drain(..count).collect();
@@ -416,7 +472,7 @@ fn target(shared: &Shared, dst: SocketAddrV4) -> SocketAddr {
 async fn pipe<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     mut from: R,
     mut to: W,
-    touch: &(dyn Fn() + Sync),
+    touch: &(dyn Fn(usize) + Sync),
 ) {
     let mut buf = vec![0; 16384];
     loop {
@@ -426,7 +482,7 @@ async fn pipe<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                 if to.write_all(&buf[..n]).await.is_err() {
                     break;
                 }
-                touch();
+                touch(n);
             }
         }
     }
@@ -458,7 +514,7 @@ async fn closed(rx: Option<watch::Receiver<bool>>) {
 async fn splice<C, U>(
     client: C,
     upstream: U,
-    touch: &(dyn Fn() + Sync),
+    touch: &(dyn Fn(usize) + Sync),
     close: Option<watch::Receiver<bool>>,
 ) where
     C: AsyncRead + AsyncWrite + Unpin,
@@ -493,7 +549,7 @@ async fn handle_tcp(shared: Arc<Shared>, stream: IpStackTcpStream) {
     if *dst.ip() == GATEWAY_IP {
         if let Some(web) = shared.config.web.filter(|_| dst.port() == 80) {
             if let Some(upstream) = connect(web).await {
-                splice(stream, upstream, &|| {}, None).await;
+                splice(stream, upstream, &|_| {}, None).await;
             }
         }
         return;
@@ -503,7 +559,13 @@ async fn handle_tcp(shared: Arc<Shared>, stream: IpStackTcpStream) {
     };
     if let Some(upstream) = connect(target(&shared, dst)).await {
         let rx = flow.close.subscribe();
-        splice(stream, upstream, &|| shared.touch(&flow), Some(rx)).await;
+        splice(
+            stream,
+            upstream,
+            &|n| shared.touch(&flow, n as u64),
+            Some(rx),
+        )
+        .await;
     }
     shared.finish(id);
 }
@@ -534,11 +596,11 @@ async fn handle_udp(shared: Arc<Shared>, mut stream: IpStackUdpStream) {
         loop {
             tokio::select! {
                 r = stream.read(&mut inbound) => match r {
-                    Ok(n @ 1..) => { let _ = sock.send(&inbound[..n]).await; shared.touch(&flow); }
+                    Ok(n @ 1..) => { let _ = sock.send(&inbound[..n]).await; shared.touch(&flow, n as u64); }
                     _ => return Some(()),
                 },
                 r = sock.recv(&mut outbound) => match r {
-                    Ok(n) => { if stream.write_all(&outbound[..n]).await.is_err() { return Some(()) } shared.touch(&flow); }
+                    Ok(n) => { if stream.write_all(&outbound[..n]).await.is_err() { return Some(()) } shared.touch(&flow, n as u64); }
                     Err(_) => return Some(()),
                 },
                 _ = &mut close => return Some(()),
@@ -638,8 +700,17 @@ pub struct Gateway {
 }
 
 impl Gateway {
-    pub fn start(config: Config) -> Result<Gateway, String> {
+    pub fn start(mut config: Config) -> Result<Gateway, String> {
         let key = decode_key(&config.private_key)?;
+        if config.ap.is_some() && !cfg!(target_os = "linux") {
+            return Err("An access point is only available on Linux".into());
+        }
+        crate::ap::configure(&mut config)?;
+        if let Some(router) = config.router.as_mut() {
+            if router.uplink.is_empty() {
+                router.uplink = crate::ap::default_uplink(&router.lan_interface)?;
+            }
+        }
         if config.router.is_some() && !cfg!(target_os = "linux") {
             return Err("Router mode is only available on Linux".into());
         }
@@ -762,6 +833,22 @@ impl Drop for Gateway {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quiet_traffic_is_not_usage_until_it_passes_the_threshold() {
+        let mut minute = MinuteUse::default();
+        minute.add("total", 1000);
+        minute.add("site:ping.example", 1000);
+        assert!(minute.take_ready(32 * 1024).is_empty());
+        minute.add("total", 40_000);
+        minute.add("site:video.example", 40_000);
+        assert_eq!(
+            minute.take_ready(32 * 1024),
+            vec!["site:video.example".to_string(), "total".to_string()]
+        );
+        assert!(minute.take_ready(32 * 1024).is_empty());
+        assert_eq!(minute.take_ready(0), vec!["site:ping.example".to_string()]);
+    }
 
     #[test]
     fn only_accepted_buckets_are_reported() {

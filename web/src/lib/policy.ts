@@ -147,11 +147,12 @@ export const profileSchema = z
     youtube_restricted: z.boolean().default(false),
     bedtime: z
       .object({
+        enabled: z.boolean().default(true),
         start: z.union([time, z.literal("")]).default(""),
         end: z.union([time, z.literal("")]).default(""),
         days,
       })
-      .default({ start: "", end: "", days: DAYS }),
+      .default({ enabled: true, start: "", end: "", days: DAYS }),
     schedules: z.array(windowSchema).max(20).default([]),
     category_limits: z
       .partialRecord(
@@ -358,6 +359,7 @@ export function accessReason(
     )
     .at(-1);
   if (
+    p.bedtime.enabled !== false &&
     inWindow(
       { ...p.bedtime, start: bedtimeReward?.bedtime ?? p.bedtime.start },
       at,

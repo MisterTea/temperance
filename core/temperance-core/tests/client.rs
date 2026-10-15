@@ -432,6 +432,7 @@ fn policy_engine_edge_cases() {
 
     let late = Profile {
         bedtime: Bedtime {
+            enabled: true,
             start: "12:00".into(),
             end: "14:00".into(),
             days: (0..7).collect(),
@@ -625,7 +626,7 @@ fn child_alerts_fire_once_on_transitions() {
 fn client_password_sign_in_is_scoped_and_goes_to_the_home_gateway() {
     let request = sign_in_request(
         home(),
-        " alex ".into(),
+        " Alex ".into(),
         "user-password".into(),
         "Phone".into(),
         "public-key".into(),
