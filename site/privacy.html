@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="How Temperance handles family data, device information, internet activity, and visits to this website."
+    />
+    <meta name="theme-color" content="#2b3675" />
+    <title>Privacy policy — Temperance</title>
+    <link rel="icon" href="assets/favicon.ico" />
+    <link rel="stylesheet" href="assets/site.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="site-header wrap">
+      <a class="brand" href="./" aria-label="Temperance home"
+        ><img
+          src="assets/temperance-mark.svg"
+          width="38"
+          height="38"
+          alt=""
+        /><span>Temperance</span></a
+      >
+      <nav aria-label="Main navigation">
+        <a href="./#why">Our story</a><a href="./#how">How it works</a
+        ><a href="privacy.html" aria-current="page">Privacy</a
+        ><a
+          class="button secondary compact"
+          href="https://github.com/MisterTea/temperance"
+          >View on GitHub <span aria-hidden="true">↗</span></a
+        >
+      </nav>
+    </header>
+    <main id="main" class="policy wrap">
+      <p class="eyebrow">FAMILY DATA BELONGS WITH THE FAMILY</p>
+      <h1>Privacy policy</h1>
+      <p class="updated">Effective October 15, 2026</p>
+      <p class="policy-intro">
+        Temperance is open-source software that parents run themselves to manage
+        their children’s internet access. The project does not operate a
+        Temperance cloud service or collect app telemetry. Your installation
+        does process family data so it can apply your rules.
+      </p>
+      <nav class="toc" aria-label="Privacy policy contents">
+        <a href="#website">This website</a><a href="#app">The app</a
+        ><a href="#sharing">External services</a
+        ><a href="#choices">Your choices</a><a href="#contact">Contact</a>
+      </nav>
+      <h2 id="website">1. This public website</h2>
+      <p>
+        This policy covers the Temperance project website and the software in
+        the official
+        <a href="https://github.com/MisterTea/temperance"
+          >Temperance repository</a
+        >. This website is a static introduction to the product. It has no
+        sign-in, forms, advertising, analytics scripts, tracking pixels, or
+        embedded third-party content. It does not set application cookies or use
+        browser storage. Fonts and brand assets are served with the website.
+      </p>
+      <p>
+        GitHub Pages hosts this website. GitHub states that it logs and stores
+        visitors’ IP addresses for security purposes. GitHub’s processing is
+        described in its
+        <a
+          href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement"
+          >Privacy Statement</a
+        >
+        and
+        <a
+          href="https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages#data-collection"
+          >Pages data collection documentation</a
+        >. Following a link to GitHub or another website subjects that visit to
+        the destination’s policies.
+      </p>
+      <h2 id="app">2. Information your installation handles</h2>
+      <p>
+        The parent or administrator chooses where Temperance runs and controls
+        access to its data. The standard installation stores its database on
+        that server using SQLite; administrators can configure PostgreSQL
+        instead. Depending on the features you use, that installation can store:
+      </p>
+      <ul>
+        <li>
+          <strong>Profiles and rules:</strong> profile names, avatars,
+          schedules, internet time budgets, filtering rules, rewards, and
+          account usernames and password hashes.
+        </li>
+        <li>
+          <strong>Device and connection information:</strong> device names and
+          identifiers, IP addresses, VPN public keys, authentication records,
+          last-seen times, and reported connectivity or permission issues.
+          Device apps generate VPN keys locally and store credentials on the
+          device.
+        </li>
+        <li>
+          <strong>Usage and filtering history:</strong> observed network minutes
+          and domain decisions, including the domain, time, associated device
+          and profile, whether access was blocked, and the reason or category.
+          Network minutes are not a complete measure of screen-on time.
+        </li>
+        <li>
+          <strong>Requests and events:</strong> requests for more time, messages
+          submitted with those requests, approval decisions, and administrative
+          notifications.
+        </li>
+        <li>
+          <strong>Optional location:</strong> when an administrator requests a
+          location and a supported device shares it with the required
+          permission, the server stores the reported latitude, longitude,
+          accuracy, and timestamp. This is a requested location feature, rather
+          than a continuous location history.
+        </li>
+        <li>
+          <strong>Service configuration:</strong> settings and credentials for
+          optional services you enable, such as dynamic DNS, plus backups and
+          exports you create.
+        </li>
+      </ul>
+      <p>
+        Temperance uses this information to authenticate devices and
+        administrators, route VPN traffic, enforce parental rules, display usage
+        and device status, and handle family requests. The VPN gateway processes
+        traffic that devices route through it. Domain history is not a copy of
+        page contents or messages, but domains and network metadata can still
+        reveal sensitive information.
+      </p>
+      <h2 id="sharing">3. Who can access data and external services</h2>
+      <p>
+        Administrators with access to your installation can view family data in
+        the dashboard. The project maintainers do not automatically receive your
+        installation’s database, browsing history, location, or diagnostics.
+        Temperance does not include advertising, sell family data, or send app
+        telemetry to the project.
+      </p>
+      <p>
+        Self-hosting does not mean that all traffic stays inside your home. Your
+        gateway contacts websites and services on behalf of connected devices.
+        Allowed DNS queries are forwarded to the configured DNS resolver (by
+        default, Cloudflare’s 1.1.1.1). Your internet provider, server or
+        database host, DNS provider, and any optional tunnel, dynamic DNS,
+        update, or category-feed providers may process information as part of
+        providing their services. Their handling of that information is governed
+        by their own policies.
+      </p>
+      <p>
+        Opening a device’s location link in the admin dashboard sends the
+        coordinates in that link to OpenStreetMap. Backups, exports, issue
+        reports, and any data you choose to share go to the recipients or
+        services you select.
+      </p>
+      <h2>4. Security and retention</h2>
+      <p>
+        Temperance uses WireGuard for VPN tunnels, hashed account passwords, and
+        scoped device credentials. The admin dashboard uses authentication and
+        session cookies. Those cookies belong to your running installation,
+        rather than this public website. Protect your admin credentials,
+        devices, server, database, and backups; use HTTPS for browser access
+        outside a trusted local connection. No software or hosting arrangement
+        can guarantee complete security.
+      </p>
+      <p>
+        History and usage retention defaults to 30 days and can be configured
+        from 1 to 90 days. Cleanup applies the configured window to domain
+        history and daily usage; domain history is also capped at 20,000
+        entries. Notifications and time requests are each capped at the latest
+        500 entries. These limits do not automatically expire every other
+        record, such as profiles, configuration, or the latest reported device
+        location. Backups and exports are separate copies and keep their data
+        until you delete them.
+      </p>
+      <h2 id="choices">5. Your controls and children’s privacy</h2>
+      <p>
+        Temperance is intended to be installed and administered by parents or
+        other authorized adults. It does not require children to create an
+        account with the Temperance project. Accounts and profiles are created
+        in the family’s own installation.
+      </p>
+      <p>
+        Explain to your children what is monitored and why, use only the
+        information your family needs, and manage device permissions for
+        optional features such as location. Administrators can change retention
+        settings, delete domain history, revoke or remove devices, and remove
+        profiles or accounts from the dashboard. To remove an entire
+        installation’s retained data, also remove its database, device
+        credentials, backups, and exports. Uninstalling an app alone does not
+        erase server records or backup copies.
+      </p>
+      <p>
+        For access, correction, or deletion requests about a family
+        installation, contact its administrator, who controls that data. The
+        project maintainers cannot access or delete records from a server you
+        operate. If someone else hosts or modifies Temperance for you, ask that
+        operator about their additional data practices.
+      </p>
+      <h2 id="contact">6. Questions and changes</h2>
+      <p>
+        For questions about this policy, use the contact options on the
+        <a href="https://github.com/MisterTea/temperance"
+          >official GitHub repository</a
+        >. Public issues are visible to everyone: do not post children’s names,
+        credentials, location, browsing history, or other private family
+        information there.
+      </p>
+      <p>
+        We will update this page when the project’s described data practices
+        change and revise the effective date above. Because Temperance is
+        self-hosted and open source, the behavior of your installed version or a
+        modified version may differ; review the source and configuration for the
+        version you run.
+      </p>
+      <p><a class="text-link" href="./">← Back to Temperance</a></p>
+    </main>
+    <footer class="site-footer wrap">
+      <a class="brand" href="./"
+        ><img
+          src="assets/temperance-mark.svg"
+          width="30"
+          height="30"
+          alt=""
+        /><span>Temperance</span></a
+      >
+      <p>Open source. Built for balance.</p>
+      <nav aria-label="Footer">
+        <a href="privacy.html" aria-current="page">Privacy policy</a
+        ><a href="https://github.com/MisterTea/temperance">GitHub</a
+        ><a href="https://github.com/MisterTea/temperance/blob/main/LICENSE"
+          >MIT license</a
+        >
+      </nav>
+    </footer>
+  </body>
+</html>
