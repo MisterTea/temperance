@@ -384,7 +384,7 @@ function ChildStatus({ child, run }: { child: Child; run: Run }) {
       ) : null}
       {child.pending ? (
         <section>
-          <p>Your request for more time is waiting for a parent.</p>
+          <p>Your request for more time is waiting for an admin.</p>
         </section>
       ) : child.can_ask && !asking ? (
         <div className="actions ask">

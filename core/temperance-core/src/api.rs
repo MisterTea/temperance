@@ -68,7 +68,7 @@ pub struct DeviceState {
     pub status: DeviceStatus,
     #[serde(default)]
     pub requests: Vec<TimeRequest>,
-    /// A parent asked this device to share its location once.
+    /// An admin asked this device to share its location once.
     #[serde(default)]
     pub location_requested: bool,
 }
@@ -193,7 +193,7 @@ pub fn enroll_request(
         return Err(invalid("Enter a device name up to 80 characters"));
     }
     if code.trim().is_empty() {
-        return Err(invalid("Enter the enrollment code from a parent"));
+        return Err(invalid("Enter the enrollment code from an admin"));
     }
     let body = serde_json::json!({ "code": code.trim(), "name": name, "public_key": public_key });
     request("POST", &service, "/v1/enroll", None, Some(body.to_string()))
@@ -215,7 +215,7 @@ pub fn state_request(identity: Identity) -> Result<HttpRequest, CoreError> {
     )
 }
 
-/// A child's request for more time, sent to parents for approval.
+/// A client's request for more time, sent to admins for approval.
 #[uniffi::export]
 pub fn time_request(
     identity: Identity,
@@ -240,7 +240,7 @@ pub fn time_request(
     )
 }
 
-/// Answers a parent's one-time location request.
+/// Answers an admin's one-time location request.
 #[uniffi::export]
 pub fn location_request(
     identity: Identity,
@@ -269,7 +269,7 @@ pub fn location_request(
     )
 }
 
-/// Tells parents why a location request could not be answered (e.g. permission denied).
+/// Tells admins why a location request could not be answered (e.g. permission denied).
 #[uniffi::export]
 pub fn location_unavailable_request(
     identity: Identity,
@@ -392,7 +392,7 @@ pub fn refreshed_identity(
     crate::tunnel::tunnel_config(identity.private_key.clone(), latest.tunnel.clone())?;
     if connected && previous.tunnel != latest.tunnel {
         return Err(invalid(
-            "Tunnel provisioning changed; restart with parent supervision",
+            "Tunnel provisioning changed; restart with an admin",
         ));
     }
     if latest.version < previous.version {

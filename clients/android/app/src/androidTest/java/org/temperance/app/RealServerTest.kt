@@ -75,7 +75,7 @@ class RealServerTest {
         onView(withText(R.string.minutes_30)).perform(click())
         onView(withText(R.string.send)).perform(click())
         eventually { onView(withId(R.id.status_line)).check(matches(withText(R.string.request_sent))) }
-        eventually { onView(withId(R.id.remaining)).check(matches(withText(containsString("waiting for a parent")))) }
+        eventually { onView(withId(R.id.remaining)).check(matches(withText(containsString("waiting for an admin")))) }
         TestSupport.screenshot("real-server-requested")
         assertTrue("still blocked while the request is pending", !browse())
 

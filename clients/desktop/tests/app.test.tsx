@@ -239,7 +239,7 @@ test("signing in says what it is doing until the reply arrives", async () => {
 
 test("a child asks for more time with a reason, then sees it is waiting", async () => {
   const actions = backend({ status: "", screen: "child", ...child }, () => ({
-    status: "Request sent to your parents.",
+    status: "Request sent to your admins.",
     screen: "child",
     ...child,
     can_ask: false,
@@ -261,7 +261,7 @@ test("a child asks for more time with a reason, then sees it is waiting", async 
   expect(actions).toEqual([
     { action: "request_time", minutes: 30, message: "Science project" },
   ]);
-  expect(await screen.findByText(/waiting for a parent/)).toBeTruthy();
+  expect(await screen.findByText(/waiting for an admin/)).toBeTruthy();
   expect(screen.queryByRole("button", { name: /Ask for/ })).toBeNull();
 
   // Once a parent answers, the form starts closed again.

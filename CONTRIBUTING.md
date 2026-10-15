@@ -4,7 +4,7 @@ The web service is Next.js (`web/`); the shared policy and device-app logic (`co
 
 ## Vocabulary
 
-Use these words in the interface, headings, and docs. Family language (a parent, a child, bedtime, "Young child") belongs in examples and in the messages a client sees, such as "A parent paused this device."
+Use these words in the interface, headings, docs, and the messages a client sees. The person who changes the rules is an admin, as in "An admin paused this device." Age presets stay Young child, Teen, and Adult.
 
 | Word | Means |
 | --- | --- |

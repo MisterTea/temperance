@@ -34,8 +34,8 @@
     <string name="send">Send</string>
     <string name="cancel">Cancel</string>
     <string name="close">Close</string>
-    <string name="request_sent">Request sent to your parents.</string>
-    <string name="location_on">Parents can now ask for this device\'s location.</string>
+    <string name="request_sent">Request sent to your admins.</string>
+    <string name="location_on">Admins can now ask for this device\'s location.</string>
     <string name="location_off">Location sharing stays off.</string>
     <string name="refreshed">Rules updated</string>
     <string name="about_text">Temperance %1$s\nCore %2$s\nHome %3$s</string>

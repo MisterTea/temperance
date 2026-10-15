@@ -1,11 +1,11 @@
 {
-  "title": "The dashboard in a parent's pocket",
-  "subtitle": "Pair a parent's {{device}} once, then open the family dashboard from anywhere, with no VPN.",
+  "title": "The dashboard in an admin's pocket",
+  "subtitle": "Pair an admin's {{device}} once, then open the family dashboard from anywhere, with no VPN.",
   "fresh": true,
   "steps": [
     { "pairingLink": true },
     { "childRequest": { "name": "Riley's tablet", "profile": "Riley", "minutes": 15, "message": "One more episode please" } },
-    { "say": "This time the {{device}} belongs to Jordan, a parent." },
+    { "say": "This time the {{device}} belongs to Jordan, an admin." },
     { "tap": "choose.parent" },
     { "say": "On the dashboard at home, Jordan opened Devices → Admin devices and chose Pair an admin device." },
     { "show": "pair.scan" },

@@ -1,6 +1,6 @@
 //! Connectivity and permission diagnostics shared by every client, including
 //! captive-portal detection. Platforms gather facts; the core decides what
-//! they mean and what the child (and parents) should be told.
+//! they mean and what the client (and admins) should be told.
 use serde::Serialize;
 
 use crate::{api::authorized, CoreError, HttpRequest, Identity};
@@ -118,7 +118,7 @@ pub fn diagnose(facts: DeviceFacts, now: i64) -> Vec<Diagnostic> {
                 ),
             ));
         }
-        // Devices are usually offline during sign-in, so parents learn of it afterwards.
+        // Devices are usually offline during sign-in, so admins learn of it afterwards.
         Some(until) if now - until < RECENT_SIGN_IN_SECONDS => found.push(issue(
             "portal_sign_in",
             Severity::Warning,
@@ -195,7 +195,7 @@ pub fn diagnose(facts: DeviceFacts, now: i64) -> Vec<Diagnostic> {
     found
 }
 
-/// Reports the current diagnostics so parents can see device health.
+/// Reports the current diagnostics so admins can see device health.
 #[uniffi::export]
 pub fn diagnostics_request(
     identity: Identity,

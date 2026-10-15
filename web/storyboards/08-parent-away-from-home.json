@@ -1,6 +1,6 @@
 {
   "title": "The dashboard away from home",
-  "subtitle": "Pair a parent's phone once, then answer from work or mobile data",
+  "subtitle": "Pair an admin's phone once, then answer from work or mobile data",
   "steps": [
     {
       "gateway": {
@@ -17,7 +17,7 @@
       }
     },
     {
-      "say": "Rules sometimes need changing when no one is home. A parent's phone can open this dashboard from anywhere, through the same gateway port."
+      "say": "Rules sometimes need changing when no one is home. An admin's phone can open this dashboard from anywhere, through the same gateway port."
     },
     {
       "show": {
@@ -83,7 +83,7 @@
       "parentView": "robin"
     },
     {
-      "say": "The app opens the same dashboard, signed in as this parent's phone."
+      "say": "The app opens the same dashboard, signed in as this admin's phone."
     },
     {
       "show": {

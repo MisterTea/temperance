@@ -1,6 +1,6 @@
 {
   "title": "Ask for more time",
-  "subtitle": "When the day's time runs out, Riley can ask, and a parent answers from anywhere.",
+  "subtitle": "When the day's time runs out, Riley can ask, and an admin answers from anywhere.",
   "steps": [
     { "profile": { "name": "Riley", "bedtime": { "start": "", "end": "" } } },
     { "used": 120 },
@@ -13,10 +13,10 @@
     { "tap": "ask.30" },
     { "tap": "ask.send" },
     { "show": "ask.pending" },
-    { "say": "The request goes straight to the parents, on the dashboard at home or on a parent's phone." },
+    { "say": "The request goes straight to the admins, on the dashboard at home or on an admin's phone." },
     { "approve": 30 },
     { "refresh": true },
-    { "say": "A parent approves it, and Riley gets the answer right away." },
+    { "say": "An admin approves it, and Riley gets the answer right away." },
     { "show": "alert.approved" },
     { "show": "You're online" },
     { "say": "Thirty more minutes, and the internet is back on." },

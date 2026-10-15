@@ -1,6 +1,6 @@
 //! Pinned-key TLS for QUIC. Each side has an Ed25519 key and a self-signed
 //! certificate derived from it deterministically, so the certificate's hash is
-//! a stable identity: the gateway's is pinned in the pairing link, a parent
+//! a stable identity: the gateway's is pinned in the pairing link, an admin
 //! phone's is recorded when it pairs.
 use std::sync::Arc;
 

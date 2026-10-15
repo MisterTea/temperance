@@ -21,7 +21,7 @@ protocol IdentityStore {
     func load() throws -> Identity?
     func save(_ identity: Identity) throws
 }
-/// Persists a parent phone's pairing, as JSON owned by the shared core (`ParentVault`).
+/// Persists an admin phone's pairing, as JSON owned by the shared core (`ParentVault`).
 protocol ParentStore {
     func load() throws -> String?
     func save(_ identity: String) throws
@@ -71,7 +71,7 @@ struct Vault: IdentityStore {
     func load() throws -> Identity? { try item.read().map { try identityFromJson(json: $0) } }
     func save(_ identity: Identity) throws { try item.write(identityToJson(identity: identity)) }
 }
-/// The parent pairing: the phone's private key and the gateway's pinned key.
+/// The admin pairing: the phone's private key and the gateway's pinned key. The keychain account stays `parent`.
 struct ParentVault: ParentStore {
     var service = "org.temperance.identity"
     var accessGroup = sharedGroup

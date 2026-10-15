@@ -185,7 +185,7 @@ open class TemperanceApp : Application() {
         get() = getSharedPreferences("ui", Context.MODE_PRIVATE).getBoolean("askedLocation", false)
         set(value) { getSharedPreferences("ui", Context.MODE_PRIVATE).edit().putBoolean("askedLocation", value).apply() }
 
-    /** Gathers platform facts; the shared core decides what they mean. Reports changes to parents. */
+    /** Gathers platform facts; the shared core decides what they mean. Reports changes to admins. */
     private fun checkHealth(identity: Identity, policyReachable: Boolean) {
         val handshake = try {
             if (connected) backend.getStatistics(tunnel).let { stats -> stats.peers().maxOfOrNull { stats.peer(it)?.latestHandshakeEpochMillis() ?: 0L } } else null
@@ -222,7 +222,7 @@ open class TemperanceApp : Application() {
         manager.notify(message.hashCode(), Notification.Builder(this, "alerts").setContentText(message).setSmallIcon(R.drawable.ic_notification).setAutoCancel(true).build())
     }
 
-    /** Answers a parent's one-time request with the freshest fix the OS already has. */
+    /** Answers an admin's one-time request with the freshest fix the OS already has. */
     private fun shareLocation(identity: Identity) {
         val request = if (!locationGranted()) {
             locationUnavailableRequest(identity, "location permission not granted")
@@ -236,13 +236,13 @@ open class TemperanceApp : Application() {
         }
         val (code, body) = transport.send(request)
         parseOk(code, body)
-        notifyChild("A parent viewed this device's location")
+        notifyChild("An admin viewed this device's location")
     }
     fun askForTime(minutes: UInt, message: String) {
         val identity = vault.load() ?: error("Enroll first")
         val (code, body) = transport.send(timeRequest(identity, minutes, message))
         parseTimeRequest(code, body)
         refresh()
-        status = "Request sent to your parents."
+        status = "Request sent to your admins."
     }
 }

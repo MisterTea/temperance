@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Only the parent dashboard's local proxy, on this phone's loopback, is plain HTTP;
+<!-- Only the admin dashboard's local proxy, on this phone's loopback, is plain HTTP;
      it reaches home over the gateway's encrypted, key-pinned connection. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />

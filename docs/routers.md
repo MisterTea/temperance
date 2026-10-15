@@ -7,7 +7,7 @@ Temperance tries to do both for you. Check **Settings → Remote access** in the
 - **Port forwarding (UPnP)** is on by default. The gateway asks the router to forward the port, renews the request every 20 minutes and removes it when Temperance stops. If the status line is green, you can skip the router steps below.
 - **Dynamic DNS** keeps a free [Dynu](https://www.dynu.com/) hostname pointed at your home's public address.
 
-Parents' phones that open the dashboard away from home ([parent phones](remote-parents.md)) use the same UDP port, so there is nothing extra to forward for them.
+Admin phones that open the dashboard away from home ([admin devices](remote-parents.md)) use the same UDP port, so there is nothing extra to forward for them.
 
 ## Before you start
 
@@ -18,7 +18,7 @@ Parents' phones that open the dashboard away from home ([parent phones](remote-p
    - Or run the gateway on a small VPS ([remote gateway](deployment.md#remote-gateway-optional)).
 3. **Test from outside your home.** Many routers cannot loop traffic from inside your network back to your own public address. Turn off Wi-Fi on a phone, connect the Temperance app over mobile data, and check that the device shows as active in the dashboard.
 
-The protocol is always **UDP**. A TCP forward does nothing for WireGuard. Use the same number for the external and internal port unless you changed the gateway's listen port. Only if you put Caddy in front of the dashboard for browsers away from home, also forward **TCP 80 and 443**; UPnP only maps the VPN port. Devices and parent phones need only the UDP port.
+The protocol is always **UDP**. A TCP forward does nothing for WireGuard. Use the same number for the external and internal port unless you changed the gateway's listen port. Only if you put Caddy in front of the dashboard for browsers away from home, also forward **TCP 80 and 443**; UPnP only maps the VPN port. Devices and admin phones need only the UDP port.
 
 ## Dynamic DNS with Dynu
 

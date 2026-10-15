@@ -96,7 +96,7 @@ class TemperanceAppTest {
         server.locationRequested = true
         app.refresh()
         assertTrue(bodies("/v1/device/location").last().contains("location permission not granted"))
-        assertEquals("A parent viewed this device's location", notifications().last())
+        assertEquals("An admin viewed this device's location", notifications().last())
 
         shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
         app.refresh()
@@ -128,7 +128,7 @@ class TemperanceAppTest {
         signIn()
         app.askForTime(30u, "homework")
         assertTrue(bodies("/v1/device/requests").single().contains("\"minutes\":30"))
-        assertEquals("Request sent to your parents.", app.status)
+        assertEquals("Request sent to your admins.", app.status)
         assertTrue(app.child!!.pendingRequest)
     }
 }

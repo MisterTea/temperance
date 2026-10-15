@@ -106,7 +106,7 @@ class MenuTest {
         val body = server.requests.first { it.url.endsWith("/v1/device/requests") }.body!!
         assertTrue(body, body.contains("\"minutes\":30") && body.contains("Finishing homework video"))
         eventually { onView(withId(R.id.status_line)).check(matches(withText(R.string.request_sent))) }
-        eventually { onView(withId(R.id.remaining)).check(matches(withText(containsString("waiting for a parent")))) }
+        eventually { onView(withId(R.id.remaining)).check(matches(withText(containsString("waiting for an admin")))) }
         eventually { onView(withId(R.id.ask_time)).check(matches(not(isDisplayed()))) }
     }
 

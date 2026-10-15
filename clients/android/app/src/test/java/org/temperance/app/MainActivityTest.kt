@@ -157,7 +157,7 @@ class MainActivityTest {
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
         app.settle()
         assertTrue(server.requests.last { it.url.endsWith("/v1/device/requests") }.body!!.contains("\"minutes\":30"))
-        assertEquals("Request sent to your parents.", text(R.id.status_line))
+        assertEquals("Request sent to your admins.", text(R.id.status_line))
         assertFalse("a pending request hides the button", visible(R.id.ask_time))
         assertFalse(menu().findItem(R.id.menu_ask_time).isEnabled)
 

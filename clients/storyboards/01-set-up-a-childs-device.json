@@ -1,8 +1,8 @@
 {
   "title": "Set up Riley's {{device}}",
   "subtitle": {
-    "default": "Sign in once with the account a parent made, then allow the family VPN.",
-    "windows": "Sign in once with the account a parent made, and the family VPN turns on."
+    "default": "Sign in once with the account an admin made, then allow the family VPN.",
+    "windows": "Sign in once with the account an admin made, and the family VPN turns on."
   },
   "fresh": true,
   "steps": [
@@ -12,7 +12,7 @@
     { "show": "choose.child" },
     { "say": "This is Riley's, so it installs the family VPN that carries the family's rules." },
     { "tap": "choose.child" },
-    { "say": "Riley signs in with the username and password a parent created on the family dashboard." },
+    { "say": "Riley signs in with the username and password an admin created on the family dashboard." },
     { "type": "signin.server", "text": "{{server}}" },
     { "type": "signin.username", "text": "riley" },
     { "type": "signin.password", "text": "{{password}}", "secret": true },

@@ -14,7 +14,7 @@ class StatusTextTest {
 
     @Test fun `remaining time and pending request, without the rule or the next change`() {
         assertEquals("40 minutes left today", StatusText.remaining(child(40u)))
-        assertEquals("1 minute left today\nYour request is waiting for a parent.",
+        assertEquals("1 minute left today\nYour request is waiting for an admin.",
             StatusText.remaining(child(1u, "Bedtime starts in 5 min", true)))
         assertEquals("No daily limit", StatusText.remaining(child(null)))
     }

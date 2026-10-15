@@ -31,12 +31,12 @@ fn explain(reason: &str) -> String {
     match reason {
         "allowed" => "Your family's filters are active.".into(),
         "unmanaged" => "This device isn't managed by family rules.".into(),
-        "household pause" => "A parent paused the internet for the whole family.".into(),
-        "paused" => "A parent paused your profile.".into(),
-        "device pause" => "A parent paused this device.".into(),
+        "household pause" => "An admin paused the internet for the whole family.".into(),
+        "paused" => "An admin paused your profile.".into(),
+        "device pause" => "An admin paused this device.".into(),
         "bedtime" => "The internet is resting until bedtime ends.".into(),
         "off time" => "A scheduled Off Time is in progress.".into(),
-        "daily limit" => "You've used today's time. Ask a parent for more.".into(),
+        "daily limit" => "You've used today's time. Ask an admin for more.".into(),
         other => format!("Restricted: {other}."),
     }
 }
@@ -97,15 +97,15 @@ fn minutes_until_restriction(state: &DeviceState, at: i64) -> Option<(i64, Strin
 fn reward_message(r: &policy::Reward) -> String {
     match r.kind.as_str() {
         "extra_time" => format!(
-            "A parent gave you {} extra minutes today",
+            "An admin gave you {} extra minutes today",
             r.minutes.unwrap_or(0)
         ),
         "late_bedtime" => format!(
-            "A parent moved bedtime to {} tonight",
+            "An admin moved bedtime to {} tonight",
             r.bedtime.as_deref().unwrap_or("later")
         ),
-        "skip_window" => "A parent skipped a schedule for you today".into(),
-        _ => "A parent sent you a reward".into(),
+        "skip_window" => "An admin skipped a schedule for you today".into(),
+        _ => "An admin sent you a reward".into(),
     }
 }
 

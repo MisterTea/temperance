@@ -98,7 +98,7 @@ import XCTest
         service.locationRequested = true
         await client.refresh()
         XCTAssertTrue(service.bodies("/v1/device/location").last!.contains("location permission not granted"))
-        XCTAssertEqual(notifier.posted.last, "A parent viewed this device's location")
+        XCTAssertEqual(notifier.posted.last, "An admin viewed this device's location")
 
         location.fix = CLLocation(coordinate: CLLocationCoordinate2D(latitude: 41.88, longitude: -87.63), altitude: 0, horizontalAccuracy: 12, verticalAccuracy: 0, timestamp: Date())
         await client.refresh()
@@ -113,7 +113,7 @@ import XCTest
         await client.enroll(home: FakeService.home, username: "alex", password: "correct horse", name: "Mac")
         let sent = await client.askForTime(minutes: 30, message: "homework")
         XCTAssertTrue(sent)
-        XCTAssertEqual(client.status, "Request sent to your parents.")
+        XCTAssertEqual(client.status, "Request sent to your admins.")
         XCTAssertTrue(client.child!.pendingRequest)
         XCTAssertTrue(service.bodies("/v1/device/requests").first!.contains("\"minutes\":30"))
         XCTAssertFalse(client.busy)

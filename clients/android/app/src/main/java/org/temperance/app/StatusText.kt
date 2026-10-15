@@ -16,7 +16,7 @@ object StatusText {
 
     fun remaining(child: ChildStatus): String = listOfNotNull(
         child.remainingMinutes?.let { if (it == 1u) "1 minute left today" else "$it minutes left today" } ?: "No daily limit",
-        if (child.pendingRequest) "Your request is waiting for a parent." else null,
+        if (child.pendingRequest) "Your request is waiting for an admin." else null,
     ).joinToString("\n")
 
     fun needsWifiSignIn(issues: List<Diagnostic>) = issues.any { it.code == "captive_portal" || it.code == "gateway_unreachable" }

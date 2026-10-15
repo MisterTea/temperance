@@ -561,7 +561,7 @@ fn child_alerts_fire_once_on_transitions() {
         vec![
             "12 minutes left today".to_string(),
             "Bedtime starts in 10 min".into(),
-            "A parent gave you 15 extra minutes today".into(),
+            "An admin gave you 15 extra minutes today".into(),
             "Your request for 20 minutes was approved".into(),
         ]
     );
@@ -614,9 +614,9 @@ fn child_alerts_fire_once_on_transitions() {
         child_alerts(Some(asked), done, SUNDAY_1PM + 1300),
         vec![
             "Time's up for today".to_string(),
-            "A parent moved bedtime to 21:30 tonight".into(),
-            "A parent skipped a schedule for you today".into(),
-            "A parent sent you a reward".into(),
+            "An admin moved bedtime to 21:30 tonight".into(),
+            "An admin skipped a schedule for you today".into(),
+            "An admin sent you a reward".into(),
             "Your request for 20 minutes was declined".into(),
         ]
     );

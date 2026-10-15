@@ -42,7 +42,7 @@ environment (`TEMPERANCE_SYSTEST=1` turns them on).
 | --- | --- |
 | `the_fake_internet_is_only_reachable_through_the_tunnel` | isolation holds; enroll, connect, browse |
 | `denied_domains_are_filtered_and_the_parent_sees_the_history` | deny list via the tunnel's DNS and via an outside resolver (intercepted); history reaches the dashboard |
-| `the_daily_limit_blocks_until_a_parent_approves_more_time` | gateway minute accounting, limit blocks, the child's time request, the parent's approval restores access |
+| `the_daily_limit_blocks_until_a_parent_approves_more_time` | gateway minute accounting, limit blocks, the client's time request, the admin's approval restores access |
 | `pause_and_bedtime_block_browsing_until_lifted` | pause and a bedtime window around the current time (server timezone UTC), each lifted again |
 | `a_revoked_device_loses_the_tunnel_and_the_api` | revoking removes the WireGuard peer and the device token |
 

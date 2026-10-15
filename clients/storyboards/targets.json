@@ -54,10 +54,10 @@
     "windows": "/\\d+ min left today/"
   },
   "status.paused": {
-    "android": "/A parent paused/",
-    "ios": "/A parent paused/",
-    "macos": "/A parent paused/",
-    "windows": "/A parent paused/"
+    "android": "/An admin paused/",
+    "ios": "/An admin paused/",
+    "macos": "/An admin paused/",
+    "windows": "/An admin paused/"
   },
   "alert.fifteen": {
     "android": { "regex": "/\\d+ minutes left today/", "shade": true },
@@ -72,16 +72,16 @@
     "windows": "Your request for 30 minutes was approved"
   },
   "alert.extra": {
-    "android": "A parent gave you 20 extra minutes today",
-    "ios": "A parent gave you 20 extra minutes today",
-    "macos": "A parent gave you 20 extra minutes today",
-    "windows": "A parent gave you 20 extra minutes today"
+    "android": "An admin gave you 20 extra minutes today",
+    "ios": "An admin gave you 20 extra minutes today",
+    "macos": "An admin gave you 20 extra minutes today",
+    "windows": "An admin gave you 20 extra minutes today"
   },
   "alert.bedtime": {
-    "android": "/A parent moved bedtime to \\d\\d:\\d\\d tonight/",
-    "ios": "/A parent moved bedtime to \\d\\d:\\d\\d tonight/",
-    "macos": "/A parent moved bedtime to \\d\\d:\\d\\d tonight/",
-    "windows": "/A parent moved bedtime to \\d\\d:\\d\\d tonight/"
+    "android": "/An admin moved bedtime to \\d\\d:\\d\\d tonight/",
+    "ios": "/An admin moved bedtime to \\d\\d:\\d\\d tonight/",
+    "macos": "/An admin moved bedtime to \\d\\d:\\d\\d tonight/",
+    "windows": "/An admin moved bedtime to \\d\\d:\\d\\d tonight/"
   },
   "ask.open": {
     "android": "Ask for more time",
@@ -108,10 +108,10 @@
     "windows": null
   },
   "ask.pending": {
-    "android": "/waiting for a parent/",
-    "ios": "/waiting for a parent/",
-    "macos": "/waiting for a parent/",
-    "windows": "/waiting for a parent/"
+    "android": "/waiting for an admin/",
+    "ios": "/waiting for an admin/",
+    "macos": "/waiting for an admin/",
+    "windows": "/waiting for an admin/"
   },
   "pair.scan": {
     "android": "Scan the QR code",

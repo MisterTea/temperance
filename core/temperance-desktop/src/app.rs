@@ -161,7 +161,7 @@ pub struct View {
 pub const UNREACHABLE: &str =
     "Can't reach your family's Temperance right now. The last rules stay in effect.";
 
-pub const REQUEST_SENT: &str = "Request sent to your parents.";
+pub const REQUEST_SENT: &str = "Request sent to your admins.";
 
 pub const DASHBOARD_OPENED: &str = "The family dashboard opened in its own window.";
 
@@ -283,7 +283,7 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
         self.diagnostics = core::diagnose(facts, now());
     }
 
-    /// Sends diagnostics to parents when the set of issues changes; failures retry next refresh.
+    /// Sends diagnostics to admins when the set of issues changes; failures retry next refresh.
     fn report_diagnostics(&mut self) {
         let codes: Vec<String> = self.diagnostics.iter().map(|d| d.code.clone()).collect();
         if self.reported.as_ref() == Some(&codes) {
@@ -434,7 +434,7 @@ impl<T: Transport, W: TunnelControl> App<T, W> {
     }
 
     /// The periodic refresh. Losing the service leaves a plain note that clears
-    /// once it answers again, and "Request sent" clears once a parent answers.
+    /// once it answers again, and "Request sent" clears once an admin answers.
     pub fn background_refresh(&mut self) {
         match self.refresh() {
             Err(_) if !self.policy_reachable => self.status = UNREACHABLE.into(),

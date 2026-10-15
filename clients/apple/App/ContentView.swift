@@ -94,7 +94,7 @@ struct ContentView: View {
                 }
             }
             if child.pendingRequest {
-                Text("Your request for more time is waiting for a parent.")
+                Text("Your request for more time is waiting for an admin.")
             } else if child.canRequestTime {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Need more time?").font(.headline)

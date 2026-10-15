@@ -16,7 +16,7 @@ protocol Notifier {
     func allowed() async -> Bool?
 }
 
-/// One-time location fixes for a parent's request (`LocationResponder`).
+/// One-time location fixes for an admin's request (`LocationResponder`).
 @MainActor protocol LocationSource: AnyObject {
     var allowed: Bool? { get }
     func requestPermission()
@@ -104,7 +104,7 @@ func sendHome(_ request: HttpRequest, throughTunnel: Bool) async throws -> (UInt
             if let identity = try? store.load() { await checkHealth(identity, policyReachable: false) }
         }
     }
-    /// Gathers platform facts; the shared core decides what they mean. Reports changes to parents.
+    /// Gathers platform facts; the shared core decides what they mean. Reports changes to admins.
     private func checkHealth(_ identity: Identity, policyReachable: Bool) async {
         let vpnStatus = await vpn.status()
         let notificationsAllowed = await notifier.allowed()
@@ -133,9 +133,9 @@ func sendHome(_ request: HttpRequest, throughTunnel: Bool) async throws -> (UInt
         }
         let (statusCode, body) = try await send(request)
         try parseOk(status: statusCode, body: body)
-        notifier.post("A parent viewed this device's location")
+        notifier.post("An admin viewed this device's location")
     }
-    /// `true` once the request reached the parents.
+    /// `true` once the request reached the admins.
     @discardableResult func askForTime(minutes: UInt32, message: String) async -> Bool {
         busy = true; defer { busy = false }
         do {
@@ -143,7 +143,7 @@ func sendHome(_ request: HttpRequest, throughTunnel: Bool) async throws -> (UInt
             let (statusCode, body) = try await send(try timeRequest(identity: identity, minutes: minutes, message: message))
             _ = try parseTimeRequest(status: statusCode, body: body)
             await refresh()
-            status = "Request sent to your parents."
+            status = "Request sent to your admins."
             return true
         } catch { status = error.message; return false }
     }

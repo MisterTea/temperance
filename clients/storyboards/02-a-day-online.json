@@ -13,7 +13,7 @@
     { "refresh": true },
     { "say": "With a quarter of an hour to go, Temperance gives Riley a heads-up." },
     { "show": "alert.fifteen" },
-    { "say": "Dinner's ready, so a parent pauses Riley from the dashboard." },
+    { "say": "Dinner's ready, so an admin pauses Riley from the dashboard." },
     { "profile": { "name": "Riley", "paused": true } },
     { "refresh": true },
     { "show": "Internet paused" },

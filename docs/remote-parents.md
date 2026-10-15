@@ -1,6 +1,6 @@
 # Admin devices: the dashboard from anywhere
 
-An admin can make exceptions and change the rules while away from home, at work or on mobile data, without a VPN profile and without setting up HTTPS. They pair a phone or computer once, by scanning a QR code on the dashboard, and the Temperance app then opens the family dashboard wherever it is. For a household that is usually a parent.
+An admin can make exceptions and change the rules while away from home, at work or on mobile data, without a VPN profile and without setting up HTTPS. They pair a phone or computer once, by scanning a QR code on the dashboard, and the Temperance app then opens the family dashboard wherever it is.
 
 There is nothing to configure and nothing extra to forward. Admin-device connections arrive on the same UDP port as the family VPN (51820 unless `TEMPERANCE_VPN_ENDPOINT` names another), which the [router guide](routers.md) already covers. On disk and on the wire this channel is still named `parent` (`parent.key`, `/api/parents`, `TEMPERANCE_REMOTE_PARENTS`).
 

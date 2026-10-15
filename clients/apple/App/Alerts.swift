@@ -18,7 +18,7 @@ struct ChildNotifier: Notifier {
     }
 }
 
-/// Answers a parent's one-time location request with a single fix.
+/// Answers an admin's one-time location request with a single fix.
 @MainActor final class LocationResponder: NSObject, CLLocationManagerDelegate, LocationSource {
     private let manager: CLLocationManager
     private var pending: CheckedContinuation<CLLocation?, Never>?

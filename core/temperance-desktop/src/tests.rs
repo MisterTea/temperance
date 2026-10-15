@@ -225,7 +225,7 @@ fn enrolls_connects_refreshes_and_requests_time() {
         minutes: 15,
         message: "homework".into(),
     });
-    assert_eq!(app.status, "Request sent to your parents.");
+    assert_eq!(app.status, "Request sent to your admins.");
     assert!(child(&app).pending);
 
     fake.reply(Ok((401, r#"{"error":"Invalid or revoked device"}"#.into())));
