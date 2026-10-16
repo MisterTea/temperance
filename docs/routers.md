@@ -4,7 +4,7 @@ Phones and laptops on the family VPN connect to your Temperance machine from any
 
 Temperance tries to do both for you. Check **Settings → Remote access** in the dashboard:
 
-- **Port forwarding (UPnP)** is on by default. The gateway asks the router to forward the port, renews the request every 20 minutes and removes it when Temperance stops. If the status line is green, you can skip the router steps below.
+- **Port forwarding (UPnP)** is on by default. The gateway asks the router to forward the port, checks every 5 minutes that the rule is still there (putting it back if the router lost it), and keeps it when Temperance restarts. Turning UPnP off in Temperance removes it. If the status line is green, you can skip the router steps below.
 - **Dynamic DNS** keeps a free [Dynu](https://www.dynu.com/) hostname pointed at your home's public address.
 
 Admin phones that open the dashboard away from home ([admin devices](remote-parents.md)) use the same UDP port, so there is nothing extra to forward for them.

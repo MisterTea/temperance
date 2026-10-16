@@ -8,11 +8,12 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
-use igd_next::{AddPortError, PortMappingProtocol, SearchError, SearchOptions};
+use igd_next::{AddPortError, PortMappingEntry, PortMappingProtocol, SearchError, SearchOptions};
 use serde::{Deserialize, Serialize};
 
 const LEASE_SECONDS: u32 = 3600;
-const RENEW: Duration = Duration::from_secs(20 * 60);
+/// How often the router's rule is looked up, and put back if it went missing.
+const VERIFY: Duration = Duration::from_secs(5 * 60);
 const RETRY: Duration = Duration::from_secs(5 * 60);
 const CHECK: Duration = Duration::from_secs(5 * 60);
 const REFRESH: Duration = Duration::from_secs(24 * 3600);
@@ -180,6 +181,21 @@ fn valid_hostname(host: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
 }
 
+/// The router's UDP rule for `port`, if it lists one. A router that will not
+/// list its rules is treated as having none.
+fn existing_mapping(gateway: &igd_next::Gateway, port: u16) -> Option<PortMappingEntry> {
+    for index in 0..256 {
+        match gateway.get_generic_port_mapping_entry(index) {
+            Ok(e) if e.protocol == PortMappingProtocol::UDP && e.external_port == port => {
+                return Some(e)
+            }
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 struct Mapping {
     gateway: igd_next::Gateway,
     port: u16,
@@ -285,7 +301,7 @@ impl Reach {
     }
 
     fn upnp(&mut self, enabled: bool, now: Instant) {
-        self.upnp_due = now + RENEW;
+        self.upnp_due = now + VERIFY;
         if !enabled {
             self.external_ip = None;
             self.report_upnp(status(
@@ -347,11 +363,14 @@ impl Reach {
             self.listen.ip()
         };
         let lan = SocketAddr::new(lan_ip, self.listen.port());
+        let in_use = || {
+            format!(
+            "The router already forwards UDP {port} to another device. Remove that rule, or forward the port to this machine by hand."
+        )
+        };
         let refused = |e: AddPortError| {
             match e {
-            AddPortError::PortInUse => format!(
-                "The router already forwards UDP {port} to another device. Remove that rule, or forward the port to this machine by hand."
-            ),
+            AddPortError::PortInUse => in_use(),
             AddPortError::ActionNotAuthorized => format!(
                 "The router refused to forward UDP {port}; its UPnP may be read-only. Forward the port by hand."
             ),
@@ -361,18 +380,49 @@ impl Reach {
             e => format!("The router refused to forward UDP {port}: {e}"),
         }
         };
-        match gateway.add_port(
-            PortMappingProtocol::UDP,
-            port,
-            lan,
-            LEASE_SECONDS,
-            DESCRIPTION,
-        ) {
-            Ok(()) => {}
-            Err(AddPortError::OnlyPermanentLeasesSupported) => gateway
-                .add_port(PortMappingProtocol::UDP, port, lan, 0, DESCRIPTION)
-                .map_err(refused)?,
-            Err(e) => return Err(refused(e)),
+        // Some routers misbehave when a rule is deleted and re-added, so a
+        // permanent rule that already points here is left untouched.
+        let existing = existing_mapping(&gateway, port);
+        let ours = existing.as_ref().is_some_and(|e| {
+            e.enabled && e.internal_port == lan.port() && e.internal_client == lan.ip().to_string()
+        });
+        match existing {
+            Some(e) if ours && e.lease_duration == 0 => {}
+            Some(e) if !ours && e.port_mapping_description != DESCRIPTION => return Err(in_use()),
+            existing => {
+                let found = match &existing {
+                    None => "no rule".to_string(),
+                    Some(e) if ours => format!("a rule with a {} s lease", e.lease_duration),
+                    Some(e) => format!(
+                        "a rule to {}:{}{}",
+                        e.internal_client,
+                        e.internal_port,
+                        if e.enabled { "" } else { " (disabled)" }
+                    ),
+                };
+                eprintln!("UPnP: the router had {found} for UDP {port}; forwarding it to {lan}");
+                if existing.is_some() && !ours {
+                    // This gateway's own rule, left pointing at an old address.
+                    let _ = gateway.remove_port(PortMappingProtocol::UDP, port);
+                }
+                match gateway.add_port(PortMappingProtocol::UDP, port, lan, 0, DESCRIPTION) {
+                    Ok(()) => {}
+                    Err(
+                        e @ (AddPortError::PortInUse
+                        | AddPortError::ActionNotAuthorized
+                        | AddPortError::SamePortValuesRequired),
+                    ) => return Err(refused(e)),
+                    Err(_) => gateway
+                        .add_port(
+                            PortMappingProtocol::UDP,
+                            port,
+                            lan,
+                            LEASE_SECONDS,
+                            DESCRIPTION,
+                        )
+                        .map_err(refused)?,
+                }
+            }
         }
         self.external_ip = match gateway.get_external_ip() {
             Ok(IpAddr::V4(ip)) => Some(ip),
@@ -382,7 +432,7 @@ impl Reach {
         Ok(lan)
     }
 
-    /// Remove the router's port mapping, if this gateway made one.
+    /// Remove the router's port mapping, if this gateway made or adopted one.
     pub fn unmap(&mut self) {
         if let Some(Mapping { gateway, port }) = self.mapping.take() {
             if let Err(e) = gateway.remove_port(PortMappingProtocol::UDP, port) {
@@ -481,6 +531,7 @@ pub enum Command {
 }
 
 /// Run `reach` on its own thread until `Command::Stop` or the sender is dropped.
+/// The port mapping stays on the router so the next start can keep it as is.
 pub fn spawn(mut reach: Reach) -> (mpsc::Sender<Command>, JoinHandle<()>) {
     let (tx, rx) = mpsc::channel();
     let thread = std::thread::Builder::new()
@@ -488,10 +539,7 @@ pub fn spawn(mut reach: Reach) -> (mpsc::Sender<Command>, JoinHandle<()>) {
         .spawn(move || loop {
             match rx.recv_timeout(reach.next_wake(Instant::now())) {
                 Ok(Command::Configure(settings)) => reach.configure(settings, Instant::now()),
-                Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    reach.unmap();
-                    return;
-                }
+                Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
             reach.tick(Instant::now());
@@ -513,6 +561,28 @@ mod tests {
         calls: Arc<Mutex<Vec<String>>>,
         add_errors: Arc<Mutex<VecDeque<u16>>>,
         external_ip: Arc<Mutex<String>>,
+        /// (protocol, external port, internal client, internal port, description, lease)
+        rules: Arc<Mutex<Vec<Rule>>>,
+    }
+
+    type Rule = (String, u16, String, u16, String, u32);
+
+    fn field<'a>(body: &'a str, name: &str) -> &'a str {
+        body.split(&format!("<{name}>"))
+            .nth(1)
+            .and_then(|rest| rest.split(&format!("</{name}>")).next())
+            .unwrap_or("")
+    }
+
+    fn rule(client: &str, description: &str, lease: u32) -> Rule {
+        (
+            "UDP".into(),
+            51821,
+            client.into(),
+            51820,
+            description.into(),
+            lease,
+        )
     }
 
     const SCPD: &str = r#"<?xml version="1.0"?><scpd><actionList>
@@ -532,6 +602,9 @@ mod tests {
 <argument><name>NewProtocol</name><direction>in</direction></argument>
 </argumentList></action>
 <action><name>GetExternalIPAddress</name><argumentList></argumentList></action>
+<action><name>GetGenericPortMappingEntry</name><argumentList>
+<argument><name>NewPortMappingIndex</name><direction>in</direction></argument>
+</argumentList></action>
 </actionList></scpd>"#;
 
     const DESCRIPTION_XML: &str = r#"<?xml version="1.0"?><root><device>
@@ -566,7 +639,13 @@ mod tests {
                     let _ = udp.send_to(reply.as_bytes(), from);
                 }
             });
-            let (log, errors, ip) = (calls.clone(), add_errors.clone(), external_ip.clone());
+            let rules = Arc::new(Mutex::new(Vec::<Rule>::new()));
+            let (log, errors, ip, table) = (
+                calls.clone(),
+                add_errors.clone(),
+                external_ip.clone(),
+                rules.clone(),
+            );
             std::thread::spawn(move || {
                 for stream in http.incoming().flatten() {
                     let mut reader = BufReader::new(stream);
@@ -602,18 +681,52 @@ mod tests {
                         SCPD.to_string()
                     } else {
                         log.lock().unwrap().push(format!("{action} {body}"));
+                        let fault = |code: u16| {
+                            envelope(&format!(
+                            "<s:Fault><detail><UPnPError><errorCode>{code}</errorCode><errorDescription>no</errorDescription></UPnPError></detail></s:Fault>"
+                        ))
+                        };
                         let error = (action == "AddPortMapping")
                             .then(|| errors.lock().unwrap().pop_front())
                             .flatten();
+                        let mut table = table.lock().unwrap();
+                        let key = |body: &str| -> (String, u16) {
+                            (
+                                field(body, "NewProtocol").into(),
+                                field(body, "NewExternalPort").parse().unwrap_or(0),
+                            )
+                        };
                         match error {
-                            Some(code) => envelope(&format!(
-                                "<s:Fault><detail><UPnPError><errorCode>{code}</errorCode><errorDescription>no</errorDescription></UPnPError></detail></s:Fault>"
-                            )),
+                            Some(code) => fault(code),
                             None if action == "GetExternalIPAddress" => envelope(&format!(
                                 "<u:GetExternalIPAddressResponse><NewExternalIPAddress>{}</NewExternalIPAddress></u:GetExternalIPAddressResponse>",
                                 ip.lock().unwrap()
                             )),
-                            None => envelope(&format!("<u:{action}Response></u:{action}Response>")),
+                            None if action == "GetGenericPortMappingEntry" => {
+                                let index: usize =
+                                    field(&body, "NewPortMappingIndex").parse().unwrap();
+                                match table.get(index) {
+                                    Some((protocol, external, client, internal, description, lease)) => envelope(&format!(
+                                        "<u:GetGenericPortMappingEntryResponse><NewRemoteHost></NewRemoteHost><NewExternalPort>{external}</NewExternalPort><NewProtocol>{protocol}</NewProtocol><NewInternalPort>{internal}</NewInternalPort><NewInternalClient>{client}</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>{description}</NewPortMappingDescription><NewLeaseDuration>{lease}</NewLeaseDuration></u:GetGenericPortMappingEntryResponse>"
+                                    )),
+                                    None => fault(713),
+                                }
+                            }
+                            None => {
+                                let (protocol, external) = key(&body);
+                                table.retain(|r| (r.0.as_str(), r.1) != (protocol.as_str(), external));
+                                if action == "AddPortMapping" {
+                                    table.push((
+                                        protocol,
+                                        external,
+                                        field(&body, "NewInternalClient").into(),
+                                        field(&body, "NewInternalPort").parse().unwrap(),
+                                        field(&body, "NewPortMappingDescription").into(),
+                                        field(&body, "NewLeaseDuration").parse().unwrap(),
+                                    ));
+                                }
+                                envelope(&format!("<u:{action}Response></u:{action}Response>"))
+                            }
                         }
                     };
                     let mut stream = reader.into_inner();
@@ -629,6 +742,7 @@ mod tests {
                 calls,
                 add_errors,
                 external_ip,
+                rules,
             }
         }
 
@@ -768,7 +882,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_renews_and_unmaps_the_port() {
+    fn maps_the_port_once_and_unmaps_it_when_turned_off() {
         let router = FakeRouter::start();
         let (mut reach, report) = reach(Endpoints {
             ssdp: router.ssdp,
@@ -784,8 +898,15 @@ mod tests {
         );
         reach.configure(Settings::default(), t0);
         reach.tick(t0);
-        assert_eq!(router.actions(), ["AddPortMapping", "GetExternalIPAddress"]);
-        let call = router.calls.lock().unwrap()[0].clone();
+        assert_eq!(
+            router.actions(),
+            [
+                "GetGenericPortMappingEntry",
+                "AddPortMapping",
+                "GetExternalIPAddress"
+            ]
+        );
+        let call = router.calls.lock().unwrap()[1].clone();
         assert!(
             call.contains("<NewExternalPort>51821</NewExternalPort>"),
             "{call}"
@@ -799,7 +920,7 @@ mod tests {
             "{call}"
         );
         assert!(
-            call.contains("<NewLeaseDuration>3600</NewLeaseDuration>"),
+            call.contains("<NewLeaseDuration>0</NewLeaseDuration>"),
             "{call}"
         );
         let s = upnp_status(&report);
@@ -813,30 +934,167 @@ mod tests {
             s.message
         );
 
-        // Same settings again: nothing new until the renewal is due.
+        // Same settings again: nothing new until the next check, which only looks.
         reach.configure(Settings::default(), t0);
         reach.tick(t0 + Duration::from_secs(60));
-        assert_eq!(router.actions().len(), 2);
-        assert_eq!(reach.next_wake(t0), RENEW);
-        reach.tick(t0 + RENEW);
-        assert_eq!(router.actions().len(), 4);
+        assert_eq!(router.actions().len(), 3);
+        assert_eq!(reach.next_wake(t0), VERIFY);
+        reach.tick(t0 + VERIFY);
+        assert_eq!(
+            router.actions()[3..],
+            ["GetGenericPortMappingEntry", "GetExternalIPAddress"]
+        );
+
+        // The router forgot the rule (say, after a reboot): the next check puts it back.
+        router.rules.lock().unwrap().clear();
+        reach.tick(t0 + VERIFY * 2);
+        assert_eq!(
+            router.actions()[5..],
+            [
+                "GetGenericPortMappingEntry",
+                "AddPortMapping",
+                "GetExternalIPAddress"
+            ]
+        );
+        assert_eq!(
+            router.rules.lock().unwrap()[..],
+            [rule("127.0.0.1", DESCRIPTION, 0)]
+        );
 
         reach.configure(
             Settings {
                 upnp: false,
                 ddns: None,
             },
-            t0 + RENEW,
+            t0 + VERIFY * 2,
         );
         assert_eq!(router.actions().last().unwrap(), "DeletePortMapping");
-        reach.tick(t0 + RENEW);
+        assert!(router.rules.lock().unwrap().is_empty());
+        reach.tick(t0 + VERIFY * 2);
         assert_eq!(upnp_status(&report).state, Level::Off);
     }
 
     #[test]
-    fn falls_back_to_permanent_leases_and_warns_about_double_nat() {
+    fn keeps_an_existing_rule_across_restarts() {
         let router = FakeRouter::start();
-        router.add_errors.lock().unwrap().push_back(725);
+        router.rules.lock().unwrap().extend([
+            (
+                "TCP".into(),
+                51821,
+                "192.0.2.5".into(),
+                51821,
+                "Other".into(),
+                0,
+            ),
+            rule("127.0.0.1", DESCRIPTION, 0),
+        ]);
+        let (reach, report) = reach(Endpoints {
+            ssdp: router.ssdp,
+            trusted: vec![[127, 0, 0, 1].into()],
+            ..Endpoints::default()
+        });
+        let (tx, thread) = spawn(reach);
+        tx.send(Command::Configure(Settings::default())).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while report.lock().unwrap().upnp.is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(upnp_status(&report).state, Level::Ok);
+        tx.send(Command::Stop).unwrap();
+        thread.join().unwrap();
+        assert_eq!(
+            router.actions(),
+            [
+                "GetGenericPortMappingEntry",
+                "GetGenericPortMappingEntry",
+                "GetExternalIPAddress"
+            ]
+        );
+        assert_eq!(router.rules.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn makes_a_leased_rule_permanent_in_place() {
+        let router = FakeRouter::start();
+        router
+            .rules
+            .lock()
+            .unwrap()
+            .push(rule("127.0.0.1", DESCRIPTION, 3600));
+        let (mut reach, _) = reach(Endpoints {
+            ssdp: router.ssdp,
+            trusted: vec![[127, 0, 0, 1].into()],
+            ..Endpoints::default()
+        });
+        reach.configure(Settings::default(), Instant::now());
+        reach.tick(Instant::now());
+        assert_eq!(
+            router.actions(),
+            [
+                "GetGenericPortMappingEntry",
+                "AddPortMapping",
+                "GetExternalIPAddress"
+            ]
+        );
+        assert_eq!(
+            router.rules.lock().unwrap()[..],
+            [rule("127.0.0.1", DESCRIPTION, 0)]
+        );
+    }
+
+    #[test]
+    fn moves_its_own_stale_rule_but_not_another_devices() {
+        let router = FakeRouter::start();
+        router
+            .rules
+            .lock()
+            .unwrap()
+            .push(rule("192.0.2.9", DESCRIPTION, 0));
+        let (mut reach, report) = reach(Endpoints {
+            ssdp: router.ssdp,
+            trusted: vec![[127, 0, 0, 1].into()],
+            ..Endpoints::default()
+        });
+        reach.configure(Settings::default(), Instant::now());
+        reach.tick(Instant::now());
+        assert_eq!(
+            router.actions(),
+            [
+                "GetGenericPortMappingEntry",
+                "DeletePortMapping",
+                "AddPortMapping",
+                "GetExternalIPAddress"
+            ]
+        );
+        assert_eq!(
+            router.rules.lock().unwrap()[..],
+            [rule("127.0.0.1", DESCRIPTION, 0)]
+        );
+        assert_eq!(upnp_status(&report).state, Level::Ok);
+
+        let router = FakeRouter::start();
+        router
+            .rules
+            .lock()
+            .unwrap()
+            .push(rule("192.0.2.9", "Plex", 0));
+        let (mut other, report) = super::tests::reach(Endpoints {
+            ssdp: router.ssdp,
+            trusted: vec![[127, 0, 0, 1].into()],
+            ..Endpoints::default()
+        });
+        other.configure(Settings::default(), Instant::now());
+        other.tick(Instant::now());
+        assert_eq!(router.actions(), ["GetGenericPortMappingEntry"]);
+        let s = upnp_status(&report);
+        assert_eq!(s.state, Level::Error);
+        assert!(s.message.contains("another device"), "{}", s.message);
+    }
+
+    #[test]
+    fn falls_back_to_a_lease_and_warns_about_double_nat() {
+        let router = FakeRouter::start();
+        router.add_errors.lock().unwrap().push_back(402);
         *router.external_ip.lock().unwrap() = "100.72.1.2".into();
         let (mut reach, report) = reach(Endpoints {
             ssdp: router.ssdp,
@@ -848,16 +1106,17 @@ mod tests {
         reach.tick(t0);
         let calls = router.calls.lock().unwrap().clone();
         assert!(
-            calls[1].contains("<NewLeaseDuration>0</NewLeaseDuration>"),
+            calls[2].contains("<NewLeaseDuration>3600</NewLeaseDuration>"),
             "{}",
-            calls[1]
+            calls[2]
         );
         let s = upnp_status(&report);
         assert_eq!(s.state, Level::Warning);
         assert!(s.message.contains("carrier-grade NAT"), "{}", s.message);
-        // The stop path removes the mapping too.
-        reach.unmap();
-        assert_eq!(router.actions().last().unwrap(), "DeletePortMapping");
+        // A leased rule is renewed in place, never deleted first.
+        reach.tick(t0 + VERIFY);
+        assert!(!router.actions().contains(&"DeletePortMapping".to_string()));
+        assert_eq!(router.actions()[5], "AddPortMapping");
     }
 
     #[test]
@@ -867,7 +1126,7 @@ mod tests {
             .add_errors
             .lock()
             .unwrap()
-            .extend([718, 606, 724, 501]);
+            .extend([718, 606, 724, 501, 501]);
         let (mut reach, report) = reach(Endpoints {
             ssdp: router.ssdp,
             trusted: vec![[127, 0, 0, 1].into()],
@@ -1067,6 +1326,10 @@ mod tests {
         assert_eq!(upnp_status(&report).state, Level::Ok);
         tx.send(Command::Stop).unwrap();
         thread.join().unwrap();
-        assert_eq!(router.actions().last().unwrap(), "DeletePortMapping");
+        assert!(!router.actions().contains(&"DeletePortMapping".to_string()));
+        assert_eq!(
+            router.rules.lock().unwrap()[..],
+            [rule("127.0.0.1", DESCRIPTION, 0)]
+        );
     }
 }

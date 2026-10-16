@@ -814,7 +814,6 @@ impl Gateway {
             runtime.shutdown_timeout(Duration::from_secs(1));
             let _ = self.shared.route_home(true);
         }
-        // Removes the router's port mapping before the process exits.
         if let Some(tx) = self.shared.reach.lock().expect("reach lock").take() {
             let _ = tx.send(reach::Command::Stop);
         }
