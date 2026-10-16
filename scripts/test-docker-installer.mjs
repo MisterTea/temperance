@@ -62,5 +62,22 @@ esac
   assert.match(settings, /^TEMPERANCE_IMAGE=mistertea\/temperance:candidate-synthetic$/m);
   assert.match(settings, /^TEMPERANCE_UPDATE_CHANNEL=beta$/m);
   assert.match(settings, /^TEMPERANCE_BACKUP_PASSPHRASE=\S{30,}$/m);
+  assert.match(settings, /^TEMPERANCE_DASHBOARD_ADDRESS=127\.0\.0\.1$/m);
+  assert.match(settings, /^TEMPERANCE_DASHBOARD_PORT=8788$/m);
   console.log('PASS: fresh installer persists the selected image, channel and recovery passphrase');
+
+  const bridged = join(directory, 'bridged'); mkdirSync(bridged);
+  writeFileSync(join(bridged, 'compose.yml'), 'name: temperance\nservices: {}\n');
+  writeFileSync(join(bridged, '.env'), 'TEMPERANCE_UPDATER_TOKEN=synthetic-token\nCOMPOSE_PROFILES=cloudflared\nTEMPERANCE_DASHBOARD_PORT=0.0.0.0:9000\n');
+  const upgrade = spawnSync('sh', [join(source, 'install.sh')], { encoding: 'utf8', env: {
+    PATH: bin + ':' + process.env.PATH, HOME: bridged, TEMPERANCE_DIR: bridged,
+    QA_FAILURE: '', QA_RUNNING: '', QA_LOG: join(bridged, 'docker.log'),
+  }, timeout: 20_000 });
+  assert.equal(upgrade.status, 0, upgrade.stderr);
+  const migrated = readFileSync(join(bridged, '.env'), 'utf8');
+  assert.match(migrated, /^TEMPERANCE_DASHBOARD_ADDRESS=0\.0\.0\.0$/m);
+  assert.match(migrated, /^TEMPERANCE_DASHBOARD_PORT=9000$/m);
+  assert.doesNotMatch(migrated, /:9000/);
+  assert.match(upgrade.stdout, /route the tunnel's hostname to http:\/\/localhost:9000/);
+  console.log('PASS: upgrading a bridged install splits the dashboard address and flags the tunnel route');
 } finally { rmSync(directory, { recursive: true, force: true }); }

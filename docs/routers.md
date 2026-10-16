@@ -85,11 +85,11 @@ The router's internet (WAN) address is on the **Advanced** tab's home page.
 
 ## Docker hosts
 
-UPnP works from the container only with `network_mode: host` on a Linux host. With the default bridge network or Docker Desktop on macOS and Windows, the router cannot see the container, so forward the port by hand to the Docker host's LAN address as described in [Run with Docker](../README.md#port-forwarding-with-docker). Dynamic DNS works in every setup.
+The Docker setup runs Temperance with host networking (`network_mode: host`), so UPnP works from the container on a Linux host. Docker Desktop on macOS and Windows runs containers in a VM the router cannot see, and a custom setup on Docker's bridge network hides the host's LAN address; forward the port by hand to the Docker host's LAN address there, as described in [Run with Docker](../README.md#port-forwarding-with-docker). Dynamic DNS works in every setup.
 
 ## Still not connecting?
 
-- The dashboard's **Remote access** status explains what the router said. "No UPnP router answered" means UPnP is off on the router, the machine is on a different network segment, or it runs in Docker bridge networking.
+- The dashboard's **Remote access** status explains what the router said. "No UPnP router answered" means UPnP is off on the router, the machine is on a different network segment, or it runs on Docker Desktop or Docker's bridge network instead of host networking.
 - "Already forwards UDP 51820 to another device" means an old rule exists. Delete it in the router's port forwarding list, or point it at the Temperance machine.
 - If the status warns about a private internet address, see step 2 of [Before you start](#before-you-start).
 - Make sure the machine's own firewall allows UDP 51820 in. The Windows installer adds this rule; on Linux check `ufw` or `firewalld`.

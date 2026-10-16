@@ -1,6 +1,10 @@
 # Temperance in Docker. Settings live in .env next to this file (see .env.example,
 # or let install.sh write it). Upgrade from the dashboard (Settings → Software updates)
 # with the updater below, or with `docker compose pull && docker compose up -d`.
+#
+# Temperance uses the host's network so its UPnP request reaches the router and
+# names this machine's LAN address. That needs a Linux host; Docker Desktop must
+# have host networking turned on, and its router cannot be reached by UPnP.
 name: temperance
 services:
   temperance:
@@ -10,21 +14,22 @@ services:
     labels:
       com.centurylinklabs.watchtower.enable: "true"
       com.centurylinklabs.watchtower.scope: temperance
+    network_mode: host
     environment:
       TEMPERANCE_DATA_DIR: /data
-      TEMPERANCE_GATEWAY_LISTEN: 0.0.0.0:51820
-    ports:
+      # WireGuard, the UDP port your router forwards (UPnP sets it up when it can).
+      TEMPERANCE_GATEWAY_LISTEN: 0.0.0.0:${TEMPERANCE_WIREGUARD_PORT:-51820}
       # Plain HTTP: keep it on 127.0.0.1 and reach it through Caddy or Cloudflare below.
-      - ${TEMPERANCE_DASHBOARD_PORT:-127.0.0.1:8788}:3000
-      # WireGuard, the port your router forwards. UDP only.
-      - ${TEMPERANCE_WIREGUARD_PORT:-51820}:51820/udp
+      HOSTNAME: ${TEMPERANCE_DASHBOARD_ADDRESS:-127.0.0.1}
+      PORT: ${TEMPERANCE_DASHBOARD_PORT:-8788}
+      TEMPERANCE_UPDATER_URL: http://127.0.0.1:${TEMPERANCE_UPDATER_PORT:-8790}
     volumes: [temperance-data:/data]
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     healthcheck:
-      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/readiness', {headers:{Authorization:'Bearer '+(process.env.TEMPERANCE_ADMIN_PASSWORD||process.env.TEMPERANCE_ADMIN_TOKEN)}}).then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:'+process.env.PORT+'/api/readiness', {headers:{Authorization:'Bearer '+(process.env.TEMPERANCE_ADMIN_PASSWORD||process.env.TEMPERANCE_ADMIN_TOKEN)}}).then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 30s
       start_period: 20s
 
@@ -33,17 +38,18 @@ services:
     image: caddy:2
     profiles: [caddy]
     restart: unless-stopped
-    command: caddy reverse-proxy --from ${TEMPERANCE_PUBLIC_URL:-https://localhost} --to temperance:3000
-    ports: ["80:80", "443:443"]
+    network_mode: host
+    command: caddy reverse-proxy --from ${TEMPERANCE_PUBLIC_URL:-https://localhost} --to 127.0.0.1:${TEMPERANCE_DASHBOARD_PORT:-8788}
     volumes: [caddy-data:/data]
     depends_on: [temperance]
 
   # COMPOSE_PROFILES=cloudflared: no inbound TCP ports. In the Cloudflare dashboard, route
-  # the tunnel's public hostname to http://temperance:3000.
+  # the tunnel's public hostname to http://localhost:8788 (TEMPERANCE_DASHBOARD_PORT).
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: [cloudflared]
     restart: unless-stopped
+    network_mode: host
     command: tunnel --no-autoupdate run
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
@@ -51,12 +57,13 @@ services:
 
   # COMPOSE_PROFILES=updater: Watchtower pulls a new Temperance image and recreates the
   # container when the dashboard asks (TEMPERANCE_UPDATER_TOKEN must be set).
-  # It needs the Docker socket, so it is a
-  # separate container; Temperance itself never gets it. Its API is not published.
+  # It needs the Docker socket, so it is a separate container; Temperance itself
+  # never gets it. Its token-protected API is published on this machine's loopback only.
   updater:
     image: nickfedor/watchtower:latest
     profiles: [updater]
     restart: unless-stopped
+    ports: ["127.0.0.1:${TEMPERANCE_UPDATER_PORT:-8790}:8080"]
     volumes: [/var/run/docker.sock:/var/run/docker.sock]
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"

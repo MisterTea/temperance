@@ -47,29 +47,28 @@ The installer asks for your public hostname, timezone and HTTPS method. It write
 Client devices and admin phones reach home only through the gateway's UDP port, so HTTPS is optional. To also open the dashboard in any browser away from home, `.env` picks a front end with `COMPOSE_PROFILES`:
 
 - `caddy`: Caddy gets a Let's Encrypt certificate for `TEMPERANCE_PUBLIC_URL`.
-- `cloudflared`: a Cloudflare Tunnel; route its public hostname to `http://temperance:3000`.
+- `cloudflared`: a Cloudflare Tunnel; route its public hostname to `http://localhost:8788`.
 - Empty (the default if you don't need it): no front end, or point your own reverse proxy at the dashboard port.
 
-The dashboard stays on `127.0.0.1:8788`.
+The containers use the host's network (`network_mode: host`), so the gateway's UPnP request reaches the router and names the host's LAN address. The dashboard stays on `127.0.0.1:8788` (`TEMPERANCE_DASHBOARD_ADDRESS` and `TEMPERANCE_DASHBOARD_PORT`), and the updater's API on `127.0.0.1:8790`. Host networking needs a Linux host; on Docker Desktop for macOS or Windows, turn on **Settings → Resources → Network → Enable host networking** first.
 
 ### Port forwarding with Docker
 
-Phones and laptops reach the gateway from outside your home, so their packets go from your router to the Docker host and then to the container:
+Phones and laptops reach the gateway from outside your home, so their packets go from your router to the Docker host, where the container listens directly:
 
 ```
-internet ──UDP 51820──▶ router ──UDP 51820──▶ Docker host (192.168.1.20) ──▶ container :51820
+internet ──UDP 51820──▶ router ──UDP 51820──▶ Docker host (192.168.1.20) = container :51820
 ```
 
 1. **Give the Docker host a fixed LAN address.** Reserve one in your router's DHCP settings. With Docker Desktop on macOS or Windows, this is the Mac's or PC's own address, not the address of Docker's internal VM.
-2. **Forward UDP 51820 on the router** to that address. The protocol must be UDP; TCP forwarding does nothing for WireGuard. With `COMPOSE_PROFILES=caddy`, also forward TCP 80 and 443 for the certificate and HTTPS. A Cloudflare Tunnel needs no inbound TCP ports. The gateway's automatic UPnP forwarding cannot reach the router from Docker's default bridge network or from Docker Desktop; it works only with `network_mode: host` on a Linux host. Otherwise forward the port by hand: the [router guide](docs/routers.md) covers TP-Link, eero and Netgear.
-3. **Publish the same UDP port from the container.** `compose.yml` maps `${TEMPERANCE_WIREGUARD_PORT}:51820/udp`. With plain `docker run`, write `-p 51820:51820/udp`; without `/udp`, Docker publishes TCP only.
-4. **Advertise the outside port.** `TEMPERANCE_VPN_ENDPOINT` must be your public hostname (or IPv4 address) with the port the *router* exposes. If 51820 is taken, set `TEMPERANCE_WIREGUARD_PORT=51821`, forward UDP 51821 on the router, and use `home.example.net:51821`. The container always listens on 51820 inside.
-5. **Allow it through the host firewall.** Docker adds its own iptables rules for published ports, and those bypass `ufw` and `firewalld` zones. That is why the dashboard is published on `127.0.0.1` only. On Windows, allow Docker Desktop through Windows Firewall when it asks.
-6. **Check it.** `docker compose logs temperance` should print `Temperance gateway on udp 0.0.0.0:51820`. Then turn off Wi-Fi on a phone, connect with the app over mobile data, and confirm the device shows as active in the dashboard. Many routers cannot loop traffic from your own LAN back to the public address, so test from outside the home network.
+2. **Let UPnP forward UDP 51820, or forward it by hand** to that address. On a Linux host the gateway asks the router itself; **Settings → Remote access** in the dashboard shows whether that worked. Docker Desktop's VM cannot reach the router by UPnP, so forward the port by hand there. The protocol must be UDP; TCP forwarding does nothing for WireGuard. With `COMPOSE_PROFILES=caddy`, also forward TCP 80 and 443 for the certificate and HTTPS. A Cloudflare Tunnel needs no inbound TCP ports. The [router guide](docs/routers.md) covers TP-Link, eero and Netgear.
+3. **Advertise the outside port.** `TEMPERANCE_VPN_ENDPOINT` must be your public hostname (or IPv4 address) with the port the *router* exposes. If 51820 is taken, set `TEMPERANCE_WIREGUARD_PORT=51821` (the gateway then listens on 51821) and use `home.example.net:51821`.
+4. **Allow it through the host firewall.** With host networking, `ufw` and `firewalld` apply to Temperance like any other program: allow UDP 51820 (for example `sudo ufw allow 51820/udp`). The dashboard listens on `127.0.0.1` only. On Windows, allow Docker Desktop through Windows Firewall when it asks.
+5. **Check it.** `docker compose logs temperance` should print `Temperance gateway on udp 0.0.0.0:51820`. Then turn off Wi-Fi on a phone, connect with the app over mobile data, and confirm the device shows as active in the dashboard. Many routers cannot loop traffic from your own LAN back to the public address, so test from outside the home network.
 
-Port forwarding cannot work if the router's WAN address is private (`10.x`, `100.64–127.x`, `172.16–31.x`, `192.168.x`), which happens behind carrier-grade NAT or a second router. Bridge the ISP modem, ask the ISP for a public IPv4 address, or run the gateway on a VPS (see [docs/deployment.md](docs/deployment.md#remote-gateway-optional)). Rootless Docker and Podman also work. UDP port forwarding behaves the same, but use a port above 1024.
+Port forwarding cannot work if the router's WAN address is private (`10.x`, `100.64–127.x`, `172.16–31.x`, `192.168.x`), which happens behind carrier-grade NAT or a second router. Bridge the ISP modem, ask the ISP for a public IPv4 address, or run the gateway on a VPS (see [docs/deployment.md](docs/deployment.md#remote-gateway-optional)). Podman also works, including rootless Podman; keep the ports above 1024. Rootless Docker does not: its host network is a private namespace that the LAN cannot reach.
 
-The home-network DNS and router modes identify TVs and consoles by their LAN address. For those modes, run the container with `network_mode: host`, and for router mode also `user: "0"` and `cap_add: [NET_ADMIN]`. Host networking makes Docker skip the port mappings, so the router forwards straight to the host.
+The home-network DNS and router modes identify TVs and consoles by their LAN address, which host networking already provides. Router mode also needs `user: "0"` and `cap_add: [NET_ADMIN]`.
 
 DNS and packet filtering cannot stop access through mobile data, other VPNs or DNS-over-HTTPS on devices that are not routed through the gateway. [docs/architecture.md](docs/architecture.md) describes what each control measures and its enforcement limits.
 

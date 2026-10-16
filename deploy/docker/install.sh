@@ -91,9 +91,14 @@ TEMPERANCE_IMAGE=${TEMPERANCE_IMAGE:-mistertea/temperance:latest}
 # passphrase to separate safe storage; keeping them only here is not recovery.
 TEMPERANCE_BACKUP_PASSPHRASE=$(secret 36)
 
-# Host side of the published ports. Forward UDP $TEMPERANCE_HOSTNAME:${TEMPERANCE_WIREGUARD_PORT:-51820} on your router to this machine.
-TEMPERANCE_DASHBOARD_PORT=127.0.0.1:8788
+# Temperance uses this machine's network. It asks the router to forward UDP
+# ${TEMPERANCE_WIREGUARD_PORT:-51820} with UPnP; without UPnP, forward it to this machine by hand.
+# The dashboard is plain HTTP on TEMPERANCE_DASHBOARD_ADDRESS:TEMPERANCE_DASHBOARD_PORT.
+TEMPERANCE_DASHBOARD_ADDRESS=127.0.0.1
+TEMPERANCE_DASHBOARD_PORT=8788
 TEMPERANCE_WIREGUARD_PORT=${TEMPERANCE_WIREGUARD_PORT:-51820}
+# Loopback port of the updater container's API.
+TEMPERANCE_UPDATER_PORT=8790
 
 # Leave empty for SQLite in the temperance-data volume, or use postgres://user:pass@host:5432/temperance
 TEMPERANCE_DATABASE_URL=
@@ -111,6 +116,17 @@ elif ! grep -q '^TEMPERANCE_UPDATER_TOKEN=.' .env; then
     echo "Turned on dashboard updates in $dir/.env"
   fi
 fi
+# Installs from before host networking published the dashboard as address:port.
+published=$(sed -n 's/^TEMPERANCE_DASHBOARD_PORT=//p' .env | tail -1)
+case $published in
+  *:*)
+    umask 077
+    sed -i.bak '/^TEMPERANCE_DASHBOARD_PORT=/d' .env && rm -f .env.bak
+    printf 'TEMPERANCE_DASHBOARD_ADDRESS=%s\nTEMPERANCE_DASHBOARD_PORT=%s\n' "${published%:*}" "${published##*:}" >> .env
+    echo "Split TEMPERANCE_DASHBOARD_PORT=$published into an address and a port in $dir/.env"
+    ;;
+esac
+bridged=; if [ -f compose.yml ] && ! grep -q 'network_mode: host' compose.yml; then bridged=1; fi
 
 if [ -f compose.yml ] && [ -n "$(docker compose ps -q --status running temperance)" ]; then
   echo "Creating an encrypted recovery snapshot before replacing this server."
@@ -137,12 +153,25 @@ echo
 [ "$state" = healthy ] || { docker compose logs --tail 30 temperance; fail "Temperance did not become healthy"; }
 
 setting() { sed -n "s/^$1=//p" .env | tail -1; }
+address=$(setting TEMPERANCE_DASHBOARD_ADDRESS); address=${address:-127.0.0.1}
+port=$(setting TEMPERANCE_DASHBOARD_PORT); port=${port:-8788}
+if [ "$address" = 0.0.0.0 ]; then dashboard=127.0.0.1:$port; else dashboard=$address:$port; fi
+if command -v curl > /dev/null && ! curl -fsS -m 5 -o /dev/null "http://$dashboard/healthz" 2> /dev/null; then
+  echo "warning: the dashboard is not answering on http://$dashboard from this machine." >&2
+  echo "  Docker Desktop: turn on Settings > Resources > Network > Enable host networking, then rerun this installer." >&2
+fi
+if [ -n "$bridged" ]; then
+  case ",$(setting COMPOSE_PROFILES)," in
+    *,cloudflared,*) echo "Action needed: in the Cloudflare dashboard, route the tunnel's hostname to http://localhost:$port (it was http://temperance:3000)." ;;
+  esac
+fi
 cat << EOF
 Temperance is running from $dir.
-  Dashboard:  $(setting TEMPERANCE_PUBLIC_URL) (and http://$(setting TEMPERANCE_DASHBOARD_PORT) on this machine)
+  Dashboard:  $(setting TEMPERANCE_PUBLIC_URL) (and http://$dashboard on this machine)
   Password:   TEMPERANCE_ADMIN_PASSWORD in $dir/.env
   Recovery:   save the passphrase from .env separately; copy encrypted archives off this server
-  Router:     forward UDP port $(setting TEMPERANCE_WIREGUARD_PORT) to this machine$( [ "$(setting COMPOSE_PROFILES)" = caddy ] && echo ", plus TCP 80 and 443 for Caddy")
+  Router:     Temperance asks the router to forward UDP port $(setting TEMPERANCE_WIREGUARD_PORT) with UPnP; see Settings > Remote access.
+              Without UPnP, forward it to this machine by hand$( [ "$(setting COMPOSE_PROFILES)" = caddy ] && echo ", plus TCP 80 and 443 for Caddy")
               (how-to for TP-Link, eero and Netgear: https://github.com/MisterTea/temperance/blob/main/docs/routers.md)
   Upgrade:    $(case ",$(setting COMPOSE_PROFILES)," in *,updater,*) echo "Settings > Software updates in the dashboard, or rerun this installer" ;; *) echo "rerun this installer, or: cd $dir && docker compose pull && docker compose up -d" ;; esac)
 EOF
