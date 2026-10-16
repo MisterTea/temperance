@@ -336,7 +336,12 @@ mod tests {
         let buckets: BTreeSet<&str> = counters.values().map(|(_, b)| b.as_str()).collect();
         assert_eq!(
             buckets,
-            BTreeSet::from(["category:video", "site:youtube.com", "total"])
+            BTreeSet::from([
+                "category:video",
+                "category:youtube",
+                "site:youtube.com",
+                "total"
+            ])
         );
         assert!(counters.values().all(|(device, _)| device == "tv"));
         // Destination rules come before the lease check so blocked hosts drop even for leased devices.

@@ -6,7 +6,8 @@ use std::net::Ipv4Addr;
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use temperance_core::policy::{
-    access_reason_at, active_windows, classify, domain_reason_at, matches, zone, Profile,
+    access_reason_at, active_windows, categories_of, classify, domain_reason_at, matches, zone,
+    Profile,
 };
 
 use crate::net::{Net, TUNNEL};
@@ -323,7 +324,11 @@ impl Policy {
             }
             let mut buckets = BTreeSet::from(["total".to_string()]);
             for host in counted {
-                buckets.insert(format!("category:{}", self.category(host)));
+                buckets.extend(
+                    categories_of(&self.category(host))
+                        .into_iter()
+                        .map(|c| format!("category:{c}")),
+                );
                 buckets.insert(format!("site:{host}"));
                 buckets.extend(
                     p.site_limits
@@ -441,10 +446,12 @@ mod tests {
             panic!("allowed")
         };
         assert_eq!(device, "d1");
+        // YouTube counts toward its own category and the video one it sits within.
         assert_eq!(
             buckets.into_iter().collect::<Vec<_>>(),
             [
                 "category:video",
+                "category:youtube",
                 "group:fun",
                 "site:www.youtube.com",
                 "site:youtube.com",
@@ -549,7 +556,12 @@ mod tests {
         };
         assert_eq!(
             buckets.into_iter().collect::<Vec<_>>(),
-            ["category:video", "site:youtubei.googleapis.com", "total"]
+            [
+                "category:video",
+                "category:youtube",
+                "site:youtubei.googleapis.com",
+                "total"
+            ]
         );
         let (blocked, _, entry) = open.evaluate(peer, "mesu.apple.com", NOON);
         assert!(!blocked);

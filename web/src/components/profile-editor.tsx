@@ -270,7 +270,8 @@ export function ProfileEditor({
           </div>
           <small>
             Preset blocks apply too. Category coverage comes from starter
-            domains and operator-imported feeds.
+            domains and operator-imported feeds. YouTube is part of Video &amp;
+            streaming: blocking video blocks YouTube too.
           </small>
         </fieldset>
         <div className="checks">
@@ -575,6 +576,10 @@ export function ProfileEditor({
               </label>
             ))}
           </div>
+          <small>
+            YouTube minutes count toward both YouTube and Video &amp; streaming,
+            so YouTube can have a smaller budget inside the video one.
+          </small>
         </fieldset>
         <fieldset>
           <legend>Site/app budgets</legend>

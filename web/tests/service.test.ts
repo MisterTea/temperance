@@ -485,7 +485,11 @@ describe("free domains", () => {
       "mask.icloud.com",
     ])
       expect(FREE_DOMAINS, media).not.toContain(media);
-    for (const media of [...CATALOG.video.domains, ...CATALOG.social.domains])
+    for (const media of [
+      ...CATALOG.video.domains,
+      ...CATALOG.youtube.domains,
+      ...CATALOG.social.domains,
+    ])
       expect(
         FREE_DOMAINS.filter((d) => matches(media, d) || matches(d, media)),
         media,

@@ -12,7 +12,14 @@ const AGES = [
   { value: "teen", label: "Teen", limit: 180, games: 90 },
   { value: "adult", label: "Adult", limit: 0, games: 0 },
 ] as const;
-const OPTIONAL: Category[] = ["social", "video", "gaming", "shopping", "ads"];
+const OPTIONAL: Category[] = [
+  "social",
+  "video",
+  "youtube",
+  "gaming",
+  "shopping",
+  "ads",
+];
 type Age = (typeof AGES)[number]["value"];
 const minutes = (text: string) => (text === "" ? "" : Number(text));
 

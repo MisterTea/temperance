@@ -50,19 +50,6 @@ pub const CATALOG: &[(&str, &[&str])] = &[
     (
         "video",
         &[
-            "youtube.com",
-            "youtu.be",
-            "yt.be",
-            "youtube-nocookie.com",
-            "youtubekids.com",
-            "youtubei.googleapis.com",
-            "youtube.googleapis.com",
-            "youtubeembeddedplayer.googleapis.com",
-            "googlevideo.com",
-            "ytimg.com",
-            "yt3.ggpht.com",
-            "yt4.ggpht.com",
-            "yt3.googleusercontent.com",
             "netflix.com",
             "netflix.net",
             "nflxvideo.net",
@@ -166,6 +153,24 @@ pub const CATALOG: &[(&str, &[&str])] = &[
             "kocowa.com",
             "bilibili.com",
             "bilivideo.com",
+        ],
+    ),
+    (
+        "youtube",
+        &[
+            "youtube.com",
+            "youtu.be",
+            "yt.be",
+            "youtube-nocookie.com",
+            "youtubekids.com",
+            "youtubei.googleapis.com",
+            "youtube.googleapis.com",
+            "youtubeembeddedplayer.googleapis.com",
+            "googlevideo.com",
+            "ytimg.com",
+            "yt3.ggpht.com",
+            "yt4.ggpht.com",
+            "yt3.googleusercontent.com",
         ],
     ),
     (
@@ -402,6 +407,26 @@ fn in_window(start: &str, end: &str, days: &[u8], at: i64, tz: Tz) -> bool {
         || (days.contains(&((l.weekday + 6) % 7)) && l.clock.as_str() < end)
 }
 
+/// Categories that sit within another and also count as it: their minutes
+/// count toward both budgets, and blocking or allowing the outer category
+/// covers them. Keep in step with `within` in web/src/lib/policy.ts.
+pub const WITHIN: &[(&str, &str)] = &[("youtube", "video")];
+
+/// `category` followed by every category it sits within (YouTube, then video).
+pub fn categories_of(category: &str) -> Vec<String> {
+    let mut all = vec![category.to_string()];
+    while let Some((_, outer)) = WITHIN
+        .iter()
+        .find(|(inner, _)| *inner == all[all.len() - 1])
+    {
+        if all.iter().any(|c| c == outer) {
+            break;
+        }
+        all.push(outer.to_string());
+    }
+    all
+}
+
 pub fn classify(host: &str, extra: &HashMap<String, Vec<String>>) -> String {
     let mut best = ("other".to_string(), 0usize);
     let mut consider = |name: &str, domain: &str| {
@@ -538,12 +563,13 @@ pub fn domain_reason_at(
     if reason != "allowed" {
         return reason;
     }
-    let category = classify(host, extra);
+    let categories = categories_of(&classify(host, extra));
     let focused = active_windows(p, at, tz)
         .into_iter()
         .filter(|w| w.mode == "focus")
         .any(|w| {
-            !w.allow.iter().any(|d| matches(host, d)) && !w.allowed_categories.contains(&category)
+            !w.allow.iter().any(|d| matches(host, d))
+                && !categories.iter().any(|c| w.allowed_categories.contains(c))
         });
     if focused {
         return "focus time".into();
@@ -551,7 +577,7 @@ pub fn domain_reason_at(
     if p.filter_level == "none" {
         return "allowed".into();
     }
-    let mut scopes = vec![format!("category:{category}")];
+    let mut scopes: Vec<String> = categories.iter().map(|c| format!("category:{c}")).collect();
     let mut sites: Vec<&String> = p.site_limits.keys().filter(|d| matches(host, d)).collect();
     sites.sort();
     scopes.extend(sites.into_iter().map(|d| format!("site:{d}")));
@@ -576,10 +602,10 @@ pub fn domain_reason_at(
     if p.allow_only {
         return "allow-list only".into();
     }
-    if preset(&p.filter_level).contains(&category.as_str()) || p.categories.contains(&category) {
-        return category;
-    }
-    "allowed".into()
+    categories
+        .into_iter()
+        .find(|c| preset(&p.filter_level).contains(&c.as_str()) || p.categories.contains(c))
+        .unwrap_or_else(|| "allowed".into())
 }
 
 /// Why the whole profile is (or is not) allowed online at `at` (Unix seconds).

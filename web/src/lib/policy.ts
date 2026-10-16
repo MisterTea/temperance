@@ -5,8 +5,10 @@ export const DAYS = [0, 1, 2, 3, 4, 5, 6];
  * Every entry also covers its subdomains. Apps fetch video and images from
  * their own CDN domains, so list those alongside the brand name, but never a
  * shared CDN (cloudfront.net, akamaized.net) or a parent that also serves
- * other things (amazon.com, roku.com, ggpht.com). Keep in step with CATALOG in
- * core/temperance-core/src/policy.rs.
+ * other things (amazon.com, roku.com, ggpht.com). A category `within` another
+ * also counts as that one: its minutes count toward both budgets, and blocking
+ * or allowing the outer category covers it. Keep in step with CATALOG and
+ * WITHIN in core/temperance-core/src/policy.rs.
  */
 export const CATALOG = {
   social: {
@@ -45,19 +47,6 @@ export const CATALOG = {
   video: {
     name: "Video & streaming",
     domains: [
-      "youtube.com",
-      "youtu.be",
-      "yt.be",
-      "youtube-nocookie.com",
-      "youtubekids.com",
-      "youtubei.googleapis.com",
-      "youtube.googleapis.com",
-      "youtubeembeddedplayer.googleapis.com",
-      "googlevideo.com",
-      "ytimg.com",
-      "yt3.ggpht.com",
-      "yt4.ggpht.com",
-      "yt3.googleusercontent.com",
       "netflix.com",
       "netflix.net",
       "nflxvideo.net",
@@ -161,6 +150,25 @@ export const CATALOG = {
       "kocowa.com",
       "bilibili.com",
       "bilivideo.com",
+    ],
+  },
+  youtube: {
+    name: "YouTube",
+    within: "video",
+    domains: [
+      "youtube.com",
+      "youtu.be",
+      "yt.be",
+      "youtube-nocookie.com",
+      "youtubekids.com",
+      "youtubei.googleapis.com",
+      "youtube.googleapis.com",
+      "youtubeembeddedplayer.googleapis.com",
+      "googlevideo.com",
+      "ytimg.com",
+      "yt3.ggpht.com",
+      "yt4.ggpht.com",
+      "yt3.googleusercontent.com",
     ],
   },
   gaming: {
@@ -335,7 +343,7 @@ export const profileSchema = z
 /** Usage buckets whose limits apply to `host`, in evaluation order. */
 export function limitScopes(p: Profile, host: string, category: string) {
   return [
-    "category:" + category,
+    ...categoriesOf(category).map((c) => "category:" + c),
     ...Object.keys(p.site_limits)
       .filter((d) => matches(host, d))
       .map((d) => "site:" + d),
@@ -413,6 +421,17 @@ export function classify(host: string, extra: Record<string, string[]> = {}) {
         longest = d.length;
       }
   return category;
+}
+/** `category` followed by every category it sits within (YouTube, then video). */
+export function categoriesOf(category: string): string[] {
+  const all = [category];
+  for (
+    let c = (CATALOG as Record<string, { within?: string }>)[category]?.within;
+    c && !all.includes(c);
+    c = (CATALOG as Record<string, { within?: string }>)[c]?.within
+  )
+    all.push(c);
+  return all;
 }
 export function dailyLimit(
   p: Profile,
@@ -531,11 +550,12 @@ export function domainReason(
     (s) => s.mode === "focus",
   );
   const category = classify(host, extra);
+  const categories = categoriesOf(category) as Category[];
   if (
     focuses.some(
       (s) =>
         !s.allow.some((d) => matches(host, d)) &&
-        !s.allowed_categories.includes(category as Category),
+        !categories.some((c) => s.allowed_categories.includes(c)),
     )
   )
     return "focus time";
@@ -548,9 +568,6 @@ export function domainReason(
   if (p.allow.some((d) => matches(host, d))) return "allowed";
   if (p.deny.some((d) => matches(host, d))) return "custom rule";
   if (p.allow_only) return "allow-list only";
-  if (
-    [...PRESETS[p.filter_level], ...p.categories].includes(category as Category)
-  )
-    return category;
-  return "allowed";
+  const blocks = [...PRESETS[p.filter_level], ...p.categories];
+  return categories.find((c) => blocks.includes(c)) ?? "allowed";
 }
