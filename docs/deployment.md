@@ -1,4 +1,4 @@
-> Beta reference setup: Linux with Docker and SQLite. Other deployment modes below remain experimental until their acceptance records pass. See [beta operations and recovery](beta-operations.md).
+> Beta reference setup: the Linux server package (`.deb` or `.rpm`) with SQLite on a dedicated machine. Docker on an existing Linux server or NAS is supported for the VPN, UPnP and dynamic DNS. Other deployment modes below remain experimental until their acceptance records pass. See [beta operations and recovery](beta-operations.md).
 
 # Run Temperance at home
 
@@ -6,7 +6,7 @@ Temperance is one program: the Next.js dashboard and policy API with the WireGua
 
 ## 1. Install
 
-### Linux: release packages
+### Linux: release packages (recommended)
 
 Each [GitHub release](https://github.com/MisterTea/temperance/releases) has ready-to-run builds for x64 and arm64 (Raspberry Pi 4/5 with a 64-bit OS). They include their own Node.js and need glibc 2.28 or newer: Debian 10+, Ubuntu 20.04+, RHEL/Rocky/Alma 8+, Fedora, openSUSE Leap 15.3+, Raspberry Pi OS (64-bit) and most others. Alpine (musl) is not supported; use the container image there.
 
@@ -18,9 +18,9 @@ Each [GitHub release](https://github.com/MisterTea/temperance/releases) has read
 
 All of them run the same service. The packages and the tarball install to `/opt/temperance`, start `temperance.service` as an unprivileged dynamic user, and create `/etc/temperance/temperance.env` with a generated admin password on first install. Upgrades keep your settings, data and gateway key, and so does removal. Verify downloads against the release's `SHA256SUMS`.
 
-### Docker (any OS, NAS boxes)
+### Docker (an existing Linux server or NAS)
 
-`sh -c "$(curl -fsSL https://raw.githubusercontent.com/MisterTea/temperance/main/deploy/docker/install.sh)"` installs the `mistertea/temperance` image (amd64 and arm64) with Docker Compose in `~/temperance`. It can also run Caddy or a Cloudflare Tunnel for HTTPS. See [Run with Docker](../README.md#run-with-docker) in the README for the manual setup and for port forwarding through Docker. Data, including the gateway key, lives in the `temperance-data` volume (`/data` in the container). To build the image from a checkout instead, run `docker compose -f deploy/docker/compose.yml -f deploy/docker/compose.build.yml up -d --build`.
+`sh -c "$(curl -fsSL https://raw.githubusercontent.com/MisterTea/temperance/main/deploy/docker/install.sh)"` installs the `mistertea/temperance` image (amd64 and arm64) with Docker Compose in `~/temperance`. It covers the VPN, UPnP and dynamic DNS; the access point and router modes need the Linux package. It can also run Caddy or a Cloudflare Tunnel for HTTPS. See [Run with Docker](../README.md#run-with-docker) in the README for the manual setup and for port forwarding through Docker. Data, including the gateway key, lives in the `temperance-data` volume (`/data` in the container). To build the image from a checkout instead, run `docker compose -f deploy/docker/compose.yml -f deploy/docker/compose.build.yml up -d --build`.
 
 ### Any OS: from a checkout
 

@@ -4,13 +4,13 @@
 
 Open source family VPN and DNS controls. Manage clients, devices, filters, pauses, bedtime and schedules, and daily time budgets from one program you run at home. Phones and computers are enforced through its built-in WireGuard VPN wherever they are; TVs and consoles on the home network are enforced through its DNS or (on Linux) router mode. There is no Temperance cloud service or telemetry.
 
-**Status: beta preparation; release acceptance is still pending.** The reference setup is Linux with Docker and SQLite, with device apps for macOS, Windows, Android, and iOS. Other server and home-network modes are experimental. See the [release checklist](docs/beta-readiness.md) and [operations guide](docs/beta-operations.md). Temperance uses original code and a distinct interface.
+**Status: beta preparation; release acceptance is still pending.** The reference setup is the Linux server package (`.deb` or `.rpm`) with SQLite on a dedicated machine such as a Raspberry Pi or mini PC, with device apps for macOS, Windows, Android, and iOS. Docker on an existing Linux server or NAS is supported for the VPN, UPnP and dynamic DNS. Other server and home-network modes are experimental. See the [release checklist](docs/beta-readiness.md) and [operations guide](docs/beta-operations.md). Temperance uses original code and a distinct interface.
 
 ## VPN apps and policy service
 
 Temperance is one home program: the authenticated Next.js dashboard and policy service with a WireGuard gateway written in Rust embedded as a native add-on, plus device applications for **macOS, Windows, Android, and iOS**. It runs on Linux, macOS or Windows with a single forwarded UDP port. Admins update clients and create their sign-ins in the admin-password-protected dashboard. Devices generate VPN keys locally and install a full tunnel. The gateway applies DNS filters plus per-connection pauses, bedtime, and observed-network-minute budgets, re-checking policy every few seconds. A 15-second policy lease stops forwarding if enforcement stops.
 
-- [Run Temperance at home](docs/deployment.md) (Linux `.deb`/`.rpm`/tarball releases; installers for Linux, macOS and Windows; port forwarding; HTTPS), or [with Docker](#run-with-docker)
+- [Run Temperance at home](docs/deployment.md): the Linux `.deb`/`.rpm` package on a dedicated machine is the recommended setup; also tarball releases, installers for macOS and Windows, port forwarding and HTTPS. On an existing Linux server or NAS you can [use Docker](#run-with-docker) instead.
 - [Router guide](docs/routers.md): automatic UPnP port forwarding, Dynu dynamic DNS, and manual steps for TP-Link, eero and Netgear routers
 - [Admin devices](docs/remote-parents.md): open the family dashboard from work or mobile data, paired with a QR code, over the same UDP port and without a VPN or HTTPS setup
 - [Build/install the device apps](clients/README.md)
@@ -34,9 +34,19 @@ npm run dev
 
 Open **http://127.0.0.1:3000**, sign in with `TEMPERANCE_ADMIN_PASSWORD`, then add profiles and devices. To run the VPN gateway too, build the add-on once (`npm run build:gateway`, needs Rust) and set `TEMPERANCE_GATEWAY_LISTEN=0.0.0.0:51820`. See [docs/deployment.md](docs/deployment.md) to install it as a service, including DNS and router modes for devices on a home network.
 
+## Run at home
+
+The recommended setup is a dedicated, always-on Linux machine, such as a Raspberry Pi 4/5 with a 64-bit OS or a mini PC, running the server package from a [GitHub release](https://github.com/MisterTea/temperance/releases):
+
+```sh
+sudo apt install ./temperance_<version>_arm64.deb   # or _amd64; .rpm and a tarball are there too
+```
+
+It runs as a systemd service, creates `/etc/temperance/temperance.env` with a generated admin password, and supports every feature, including the Wi-Fi access point and router modes for TVs and consoles. [docs/deployment.md](docs/deployment.md) covers configuration, updates, port forwarding and HTTPS, plus native installers for macOS and Windows.
+
 ## Run with Docker
 
-If the home machine already runs Docker (a Linux box, a NAS such as Synology, Unraid or TrueNAS, or Docker Desktop), install the published image (amd64 and arm64) with Docker Compose:
+If you already run a Linux server or a NAS with Docker (Synology, Unraid, TrueNAS), you can install the published image (amd64 and arm64) with Docker Compose instead. It covers the VPN, UPnP and dynamic DNS; the access point and router modes need the server package.
 
 ```sh
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/MisterTea/temperance/main/deploy/docker/install.sh)"

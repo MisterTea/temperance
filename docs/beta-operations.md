@@ -1,10 +1,10 @@
 # Beta operations
 
-The reference beta setup is **one household, Linux, Docker Compose, SQLite**. Android, iOS, macOS and Windows apps are beta targets, pending the physical-device and signed-build evidence in [release readiness](beta-readiness.md). Other server platforms, remote gateways and home-network modes remain experimental.
+The reference beta setup is **one household, Linux, the server package (`.deb` or `.rpm`), SQLite**, on a dedicated machine. Docker Compose on an existing Linux server or NAS is supported for the VPN, UPnP and dynamic DNS; the commands below give both where they differ. Android, iOS, macOS and Windows apps are beta targets, pending the physical-device and signed-build evidence in [release readiness](beta-readiness.md). Other server platforms, remote gateways and home-network modes remain experimental.
 
 ## Installation and first device
 
-1. Install using the Docker instructions in the README. Keep the data volume persistent and reserve the server's LAN address in your router. Do not use `10.77.0.0/24` on the host, LAN or remote device networks.
+1. Install the Linux package as described in [Run Temperance at home](deployment.md), or Docker as described in the README. Keep the data directory (`/var/lib/temperance`, or the Docker data volume) persistent and reserve the server's LAN address in your router. Do not use `10.77.0.0/24` on the host, LAN or remote device networks.
 2. Forward the configured UDP port. Container UPnP status alone does not establish internet reachability. CGNAT may require a public address from the ISP or a different deployment; a local green check cannot solve it.
 3. Open the dashboard, sign in with the generated admin password and create the first client, password and starting rules in the wizard.
 4. Install a designated beta app, scan/paste the Devices setup code, sign in and allow the VPN. Do not substitute unsigned Apple builds or Android debug builds for beta distribution.
@@ -43,15 +43,14 @@ The worker checks hourly. It refuses empty, malformed and unexpectedly shrunken 
 
 Configuration export (`/api/export`) is plaintext and omits gateway key files. Treat it as sensitive and use it only for policy migration. Disaster recovery format **`temperance-recovery`, schema 1**, is separate: a consistent SQLite snapshot, `gateway.key`, `parent.key`, and `TEMPERANCE_*` operator settings, authenticated with AES-256-GCM and a scrypt-derived key. It excludes the recovery passphrase, transient forward secret, old data/database paths and build-version override. Non-Temperance environment values and Docker/front-end settings still require a separate protected copy of the installation `.env` and Compose file.
 
-Set `TEMPERANCE_BACKUP_PASSPHRASE` to a unique passphrase of at least 16 characters and restart. Fresh Docker installs generate it. Keep a copy in a password manager separate from the archives. Daily snapshots keep the most recent seven archives under `/data/backups`, mode 600. **The volume is not offsite storage**: copy archives elsewhere. Backups and encryption run in a separate process to avoid blocking policy refresh. PostgreSQL recovery is not included; use `pg_dump` and separately protect gateway identity and configuration.
+Set `TEMPERANCE_BACKUP_PASSPHRASE` to a unique passphrase of at least 16 characters and restart. For the Linux package, add it to `/etc/temperance/temperance.env`; fresh Docker installs generate it. Keep a copy in a password manager separate from the archives. Daily snapshots keep the most recent seven archives under `backups` in the data directory (`/var/lib/temperance/backups`, or `/data/backups` in Docker), mode 600. **The data directory is not offsite storage**: copy archives elsewhere. Backups and encryption run in a separate process to avoid blocking policy refresh. PostgreSQL recovery is not included; use `pg_dump` and separately protect gateway identity and configuration.
 
-Create one manually:
+Create one manually with **Settings → Disaster recovery → Download encrypted recovery**, or in Docker:
 
 ```sh
 docker compose exec -T temperance node scripts/recovery.cjs backup
 ```
-
-Or download an encrypted archive from Settings. To restore, use Node 24+ and the recovery tool from the same release on a trusted machine:
+ To restore, use Node 24+ and the recovery tool from the same release on a trusted machine:
 
 ```sh
 read -rs TEMPERANCE_BACKUP_PASSPHRASE
@@ -62,11 +61,13 @@ unset TEMPERANCE_BACKUP_PASSPHRASE
 
 The target must not exist. The tool authenticates the archive, checks database integrity and household schema, stages files with restrictive permissions, and refuses to replace existing data. It restores into `/safe/new-data` with `recovery.env` alongside the database and keys. Keep that file private; its dollar escaping targets Docker Compose. Review and merge its settings into a separate installation `.env`, retain the new host's paths/ports/front-end configuration, and supply the separately saved recovery passphrase.
 
-Run a **matching server version** against the restored directory. For Docker, mount it at `/data` and give the container's UID 10001 read/write ownership; do this only on the restored directory. Preserve the public endpoint or update DNS to the replacement host. Never run the original and replacement gateways simultaneously with the same identity. Review changes since the snapshot, especially revoked devices and rotated credentials: an older snapshot restores their earlier state. Revoke or rotate them again before reopening public access. Verify device reconnection, pause/resume, requests, usage and admin pairing before retiring the original. A restore test that merely opens SQLite does not satisfy physical-device acceptance.
+Run a **matching server version** against the restored directory. For the Linux package, stop `temperance.service`, replace the contents of `/var/lib/temperance` with the restored database and keys, and merge the settings into `/etc/temperance/temperance.env`; systemd hands the files to the service's user when it starts. For Docker, mount it at `/data` and give the container's UID 10001 read/write ownership; do this only on the restored directory. Preserve the public endpoint or update DNS to the replacement host. Never run the original and replacement gateways simultaneously with the same identity. Review changes since the snapshot, especially revoked devices and rotated credentials: an older snapshot restores their earlier state. Revoke or rotate them again before reopening public access. Verify device reconnection, pause/resume, requests, usage and admin pairing before retiring the original. A restore test that merely opens SQLite does not satisfy physical-device acceptance.
 
 ## Updates and rollback
 
-The primary image is [`mistertea/temperance`](https://hub.docker.com/r/mistertea/temperance) on Docker Hub. Releases also publish `ghcr.io/mistertea/temperance` as a mirror; existing installations can continue using it. Both registries receive the same multi-platform build and stable/beta tagging rules.
+For the Linux package, download an encrypted recovery archive from Settings first, then install the new package over the old one; settings, data and the gateway key are kept. To roll back, reinstall the previous package and, if it cannot use the newer data, restore the archive taken before the upgrade.
+
+For Docker, the primary image is [`mistertea/temperance`](https://hub.docker.com/r/mistertea/temperance) on Docker Hub. Releases also publish `ghcr.io/mistertea/temperance` as a mirror; existing installations can continue using it. Both registries receive the same multi-platform build and stable/beta tagging rules.
 
 The `:latest` image, the default, always points to the newest release, stable or beta, and the dashboard offers every release to it. To receive only stable releases, set `TEMPERANCE_IMAGE=mistertea/temperance:stable` with `TEMPERANCE_UPDATE_CHANNEL=stable`; for only betas, `:beta` with `beta`. An explicit image version disables dashboard auto-update; a mismatched image/channel also disables it. A tag moves only when its release is the newest of that kind, so publishing an older patch never moves `:latest` backwards.
 

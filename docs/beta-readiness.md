@@ -8,7 +8,7 @@ Owners below are accountable roles to assign before qualification, not claims th
 
 | Priority | Workstream / owner | Implementation and remaining evidence | Depends on |
 | --- | --- | --- | --- |
-| P0 | Promise / product maintainer | Docker/SQLite reference scope, network-minute wording, outage and filtering disclosures; verify every app/store listing agrees. | Supported scope |
+| P0 | Promise / product maintainer | Linux package/SQLite reference scope (Docker for existing Linux servers and NAS boxes), network-minute wording, outage and filtering disclosures; verify every app/store listing agrees. | Supported scope |
 | P0 | Setup / server maintainer | Atomic first-client rules + sign-in; readiness, gateway lease and subnet checks. Still qualify fresh-host install and external UDP reachability. | Release artifacts |
 | P0 | Distribution / release maintainer | Android no longer uses debug signing for release; signed-build tooling and version inputs. Actual certificates, entitlements, notarization, beta channels and installation/upgrade/uninstall evidence required. | Developer accounts and signing credentials |
 | P0 | Device reliability / device QA | Existing traffic tests plus shared policy tests. Complete the physical-device matrix below using signed artifacts. | Signed builds, supported server |
