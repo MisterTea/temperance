@@ -3,8 +3,8 @@ export type UsageDay = {
   profiles: Record<string, Record<string, number>>;
 };
 
-/** A domain is left off the pie when it is under this share of domain minutes. */
-export const DOMAIN_MIN_SHARE = 0.05;
+/** Show this many named domains, followed by an aggregate of the rest. */
+export const DOMAIN_SLICE_LIMIT = 5;
 
 export function eachDay(start: string, end: string) {
   const days: string[] = [];
@@ -28,7 +28,7 @@ export function dailyTotals(days: UsageDay[], start: string, end: string) {
   }));
 }
 
-/** Site minutes in the period, without domains that are only a sliver of the pie. */
+/** Site minutes in the period, keeping every minute in the pie. */
 export function domainShares(days: UsageDay[]) {
   const totals = new Map<string, number>();
   for (const day of days)
@@ -39,13 +39,19 @@ export function domainShares(days: UsageDay[]) {
             bucket.slice(5),
             (totals.get(bucket.slice(5)) ?? 0) + minutes,
           );
-  const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  const sum = ranked.reduce((total, [, minutes]) => total + minutes, 0);
-  if (!sum) return { slices: [], omitted: 0 };
-  const kept = ranked.filter(([, minutes]) => minutes / sum >= DOMAIN_MIN_SHARE);
-  const chosen = kept.length ? kept : ranked.slice(0, 1);
+  const ranked = [...totals.entries()].sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+  );
+  const chosen = ranked.slice(0, DOMAIN_SLICE_LIMIT);
+  const rest = ranked.slice(DOMAIN_SLICE_LIMIT);
+  const slices = chosen.map(([name, minutes]) => ({ name, minutes }));
+  if (rest.length)
+    slices.push({
+      name: "Other",
+      minutes: rest.reduce((sum, [, minutes]) => sum + minutes, 0),
+    });
   return {
-    slices: chosen.map(([name, minutes]) => ({ name, minutes })),
-    omitted: ranked.length - chosen.length,
+    slices,
+    grouped: rest.length,
   };
 }

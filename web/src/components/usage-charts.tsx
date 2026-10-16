@@ -1,4 +1,9 @@
-import { dailyTotals, domainShares, type UsageDay } from "@/lib/usage-charts";
+import {
+  dailyTotals,
+  DOMAIN_SLICE_LIMIT,
+  domainShares,
+  type UsageDay,
+} from "@/lib/usage-charts";
 
 const COLORS = [
   "#2B3675",
@@ -168,7 +173,7 @@ export function UsageCharts({
   const series = dailyTotals(days, start, end);
   const total = series.reduce((sum, point) => sum + point.minutes, 0);
   if (!total) return null;
-  const { slices, omitted } = domainShares(days);
+  const { slices, grouped } = domainShares(days);
   return (
     <div className="usage-charts">
       <article>
@@ -181,8 +186,8 @@ export function UsageCharts({
         {slices.length ? (
           <>
             <p>
-              {omitted
-                ? "Domains under 5% of this period are left off."
+              {grouped
+                ? `Top ${DOMAIN_SLICE_LIMIT} domains, with the rest grouped as Other.`
                 : "Share of observed domain minutes."}
             </p>
             <DomainPie slices={slices} />

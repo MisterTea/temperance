@@ -1198,6 +1198,34 @@ export function Dashboard() {
                         ))}
                       </ul>
                     ) : null}
+                    {Object.values(p.category_limits).some((n) => n) ? (
+                      <ul
+                        className="app-groups"
+                        aria-label={`${label} category budgets`}
+                      >
+                        {Object.keys(CATALOG)
+                          .filter(
+                            (key) =>
+                              p.category_limits[key as keyof typeof CATALOG],
+                          )
+                          .map((key) => (
+                            <li key={key}>
+                              {categoryName(key)}{" "}
+                              <span>
+                                {p.bucket_usage["category:" + key] ?? 0} /{" "}
+                                {dailyLimit(
+                                  p,
+                                  Date.now() / 1000,
+                                  state.timezone,
+                                  p.rewards,
+                                  "category:" + key,
+                                )}{" "}
+                                min
+                              </span>
+                            </li>
+                          ))}
+                      </ul>
+                    ) : null}
                     {Object.keys(p.site_limits).length ? (
                       <ul
                         className="app-groups"
