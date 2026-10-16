@@ -43,7 +43,7 @@ jobs:
       - name: Validate candidate version
         run: node -e 'if(!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.(0|[1-9]\d*)$/.test(process.env.VERSION))process.exit(1)'
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile
