@@ -131,8 +131,8 @@ impl Wireguard {
         peers.by_index.get(&(index >> 8)).cloned()
     }
 
-    /// Receive datagrams forever, handing decrypted IPv4 packets from each
-    /// peer's own tunnel address to `inbound`.
+    /// Receive datagrams forever, handing decrypted packets from each peer's
+    /// own tunnel address (`10.77.0.N` or `fd77::N`) to `inbound`.
     pub async fn receive(self: Arc<Self>, inbound: mpsc::Sender<(Ipv4Addr, Vec<u8>)>) {
         let mut datagram = vec![0; 65536];
         let mut out = vec![0; 65536];
@@ -165,6 +165,11 @@ impl Wireguard {
                     TunnResult::WriteToTunnelV4(p, src) if src == peer.ip => {
                         packet = Some(p.to_vec())
                     }
+                    TunnResult::WriteToTunnelV6(p, src)
+                        if crate::net::peer_v6(peer.ip) == Some(src) =>
+                    {
+                        packet = Some(p.to_vec())
+                    }
                     TunnResult::Err(_) => continue,
                     _ => {}
                 }
@@ -181,9 +186,9 @@ impl Wireguard {
         }
     }
 
-    /// Encrypt an IPv4 packet to the peer that owns its destination address.
+    /// Encrypt a packet to the peer that owns its destination address.
     pub async fn send(&self, packet: &[u8]) {
-        let Some(dst) = crate::net::destination(packet) else {
+        let Some(dst) = crate::net::tunnel_peer(packet) else {
             return;
         };
         let Some(peer) = self

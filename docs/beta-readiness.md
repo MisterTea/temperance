@@ -19,7 +19,7 @@ Owners below are accountable roles to assign before qualification, not claims th
 | P1 | UX / product QA | Settings operations panel and guided first sign-in; complete keyboard, screen-reader, large-text, offline/revoked and schedule usability review. | Candidate apps and dashboard |
 | P1 | Support / maintainer | Redacted support report, bug template, recovery/troubleshooting guide, dependency updates. Assign response expectations and publish known issues for every release. | Maintainer availability |
 | P1 | Beta / beta coordinator | Recruit 5–10 assisted households, expand to 20–30 after gates pass; no household participation has been recorded. | P0 qualification |
-| P2 | Network / gateway maintainer | IPv6 internet forwarding remains unimplemented; validate dual-stack, MTU, carriers, meshes and restrictive networks. | Traffic-policy regression matrix |
+| P2 | Network / gateway maintainer | VPN clients forward public IPv6; home-router IPv6 is still not enforced and LAN DNS withholds AAAA. Validate dual-stack, MTU, carriers, meshes and restrictive networks. | Traffic-policy regression matrix |
 | P2 | Capacity / gateway maintainer | Run concurrent traffic and sustained-load tests on Raspberry Pi-class and x64 hardware; measure SQLite contention, storage growth and device-address exhaustion before choosing migrations/reuse. | Reproducible benchmarks |
 | P2 | Stable operations / release maintainer | Native push, production app distribution, dependency notices/support policy, 4-week expanded beta evidence. | Successful beta |
 | P3 | Additional modes / respective maintainer | Qualify Linux packages, NAS variants, macOS/Windows servers, remote gateway, router/AP modes independently. | Reference beta stable |

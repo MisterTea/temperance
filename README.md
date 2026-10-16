@@ -108,6 +108,6 @@ Gateway layout (`core/temperance-gateway`): `wg.rs` runs WireGuard peers, `gatew
 
 Settings includes server readiness, redacted support reports, SMTP delivery tests and failed-notice retry, recovery downloads and feed freshness. Update progress and outcomes survive dashboard reloads. Encrypted recovery runs daily when configured and before dashboard updates. Stable and beta update channels are separate.
 
-Physical-device qualification, signed distribution, independent security review, household trials, IPv6 forwarding, and native push remain tracked in the [release checklist](docs/beta-readiness.md). Automated tests do not satisfy those release gates.
+Physical-device qualification, signed distribution, independent security review, household trials, IPv6 network qualification, and native push remain tracked in the [release checklist](docs/beta-readiness.md). Automated tests do not satisfy those release gates.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).
