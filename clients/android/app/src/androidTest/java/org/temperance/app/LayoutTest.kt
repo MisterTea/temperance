@@ -7,7 +7,6 @@ import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.action.ViewActions.scrollTo
-import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.After
@@ -136,12 +135,14 @@ class LayoutTest {
             openActionBarOverflowOrOptionsMenu(TestSupport.instrumentation.targetContext)
             settle()
             TestSupport.screenshot("layout-$name-menu")
-            val about = TestSupport.app.getString(R.string.menu_about)
-            if (device.findObject(androidx.test.uiautomator.By.text(about)) == null) {
-                androidx.test.uiautomator.UiScrollable(androidx.test.uiautomator.UiSelector().scrollable(true))
-                    .scrollIntoView(androidx.test.uiautomator.UiSelector().text(about))
+            device.pressBack()
+            // MenuTest covers navigation. Open the real handler directly here
+            // so display-change accessibility-tree lag cannot skip dialog audits.
+            onActivity(scenario) { activity ->
+                val menu = android.widget.PopupMenu(activity, activity.window.decorView).menu
+                activity.onCreateOptionsMenu(menu)
+                activity.onOptionsItemSelected(menu.findItem(R.id.menu_about))
             }
-            onView(withText(R.string.menu_about)).perform(click())
             audit(scenario, "$name-about-dialog", dialog = true)
             onActivity(scenario) { it.dialog!!.dismiss() }
             onView(withId(R.id.emergency_unlock)).perform(scrollTo(), click())
