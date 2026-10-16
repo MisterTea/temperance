@@ -135,10 +135,10 @@ class LayoutTest {
             openActionBarOverflowOrOptionsMenu(TestSupport.instrumentation.targetContext)
             settle()
             TestSupport.screenshot("layout-$name-menu")
-            device.pressBack()
             // MenuTest covers navigation. Open the real handler directly here
             // so display-change accessibility-tree lag cannot skip dialog audits.
             onActivity(scenario) { activity ->
+                activity.closeOptionsMenu()
                 val menu = android.widget.PopupMenu(activity, activity.window.decorView).menu
                 activity.onCreateOptionsMenu(menu)
                 activity.onOptionsItemSelected(menu.findItem(R.id.menu_about))
