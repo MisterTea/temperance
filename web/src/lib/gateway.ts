@@ -5,6 +5,7 @@ import { randomToken } from "./auth";
 import { dataDir, mutate, repository, type Repository } from "./database";
 import { account, gatewaySeen, gatewayState, vpnEndpoint } from "./service";
 import { accessPoint } from "./home-lan";
+import type { State } from "./model";
 import { gatewayHealth } from "./gateway-health";
 
 // The embedded WireGuard gateway (Rust, Node-API). State, config and activity are JSON strings.
@@ -117,27 +118,55 @@ export function gatewayConfig(env: Env, privateKey: string) {
   };
 }
 
-/** Report usage since the last sync, then hand the gateway a fresh policy. */
-export async function syncGateway(handle: GatewayHandle, repo: Repository) {
-  const batch = JSON.parse(handle.drainActivity());
-  const state = await mutate(repo, (s) => {
-    if (
-      batch.activity?.length ||
-      batch.history?.length ||
-      batch.network ||
-      (batch.remote && batch.remote.pin !== s.remote_pin)
-    ) {
-      // A rejected batch must never keep the policy from refreshing.
-      try {
-        account(s, batch);
-      } catch (error) {
-        console.error("Gateway activity rejected", error);
-      }
+// Every save rewrites the whole household document, which wears out SD cards.
+const SAVE_INTERVAL_MS = 60_000;
+
+/** Activity drained from the gateway but not yet saved. */
+export interface PendingActivity {
+  batches: unknown[];
+  savedAt: number;
+}
+
+function accountPending(state: State, pending: PendingActivity) {
+  pending.batches = pending.batches.filter((batch) => {
+    // A rejected batch must never keep the policy from refreshing.
+    try {
+      account(state, batch);
+      return true;
+    } catch (error) {
+      console.error("Gateway activity rejected", error);
+      return false;
     }
-    gatewaySeen(s);
-    return gatewayState(s);
   });
-  handle.applyState(JSON.stringify(state));
+}
+
+/** Report usage since the last sync, then hand the gateway a fresh policy. */
+export async function syncGateway(
+  handle: GatewayHandle,
+  repo: Repository,
+  pending: PendingActivity = { batches: [], savedAt: 0 },
+  saveIntervalMs = SAVE_INTERVAL_MS,
+) {
+  const batch = JSON.parse(handle.drainActivity());
+  let { state } = await repo.read();
+  const urgent =
+    !!batch.network ||
+    (!!batch.remote && batch.remote.pin !== state.remote_pin);
+  if (urgent || batch.activity?.length || batch.history?.length)
+    pending.batches.push(batch);
+  if (urgent || Date.now() - pending.savedAt >= saveIntervalMs) {
+    state = await mutate(repo, (s) => {
+      accountPending(s, pending);
+      gatewaySeen(s);
+      return s;
+    });
+    pending.batches = [];
+    pending.savedAt = Date.now();
+  } else {
+    // Budgets must count unsaved minutes, so policy comes from a copy that includes them.
+    accountPending(state, pending);
+  }
+  handle.applyState(JSON.stringify(gatewayState(state)));
   const health = gatewayHealth();
   health.applied_at = Date.now();
   health.syncs++;
@@ -171,9 +200,10 @@ export async function startGateway({
   const handle = addon.GatewayHandle.start(
     JSON.stringify(gatewayConfig(env, key)),
   );
+  const pending: PendingActivity = { batches: [], savedAt: 0 };
   let running: Promise<void> | undefined;
   const tick = () =>
-    (running ??= syncGateway(handle, repo)
+    (running ??= syncGateway(handle, repo, pending)
       .catch(() => {
         gatewayHealth().sync_failures++;
         console.error(

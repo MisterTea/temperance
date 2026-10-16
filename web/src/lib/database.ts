@@ -12,6 +12,9 @@ export interface Repository {
   read(): Promise<{ state: State; revision: number }>;
   commit(state: State, revision: number): Promise<boolean>;
 }
+// NORMAL is crash-safe in WAL mode and skips a flush per commit; a power cut can lose the last commit.
+const PRAGMAS =
+  "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;";
 // node:sqlite behind Kysely's SQLite driver interface; better-sqlite3 already matches it.
 function sqliteDatabase(path: string): SqliteDatabase {
   let db: import("node:sqlite").DatabaseSync;
@@ -23,10 +26,10 @@ function sqliteDatabase(path: string): SqliteDatabase {
     const BetterSqlite = createRequire(process.cwd() + "/")("better-sqlite3");
     const fallback: SqliteDatabase & { exec(sql: string): void } =
       new BetterSqlite(path);
-    fallback.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
+    fallback.exec(PRAGMAS);
     return fallback;
   }
-  db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
+  db.exec(PRAGMAS);
   return {
     close: () => db.close(),
     prepare(sql) {

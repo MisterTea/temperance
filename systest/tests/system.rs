@@ -21,6 +21,8 @@ const GAMES_IP: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 11);
 const OUTSIDE_DNS: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 53);
 const TUNNEL_DNS: Ipv4Addr = Ipv4Addr::new(10, 77, 0, 1);
 const POLICY_DELAY: Duration = Duration::from_secs(30);
+/// The server saves gateway activity at most once a minute.
+const ACTIVITY_DELAY: Duration = Duration::from_secs(90);
 
 /// Returns the shared tunnel lock, or `None` (skip) outside the Compose environment.
 fn environment() -> Option<MutexGuard<'static, ()>> {
@@ -465,7 +467,7 @@ fn denied_domains_are_filtered_and_the_parent_sees_the_history() {
 
     wait_for(
         "browsing history to reach the dashboard",
-        POLICY_DELAY,
+        ACTIVITY_DELAY,
         || {
             let history = admin(
                 "GET",
@@ -498,7 +500,7 @@ fn the_daily_limit_blocks_until_a_parent_approves_more_time() {
     assert_eq!(activity.len(), 128 * 1024);
     wait_for(
         "the gateway to count a minute",
-        Duration::from_secs(90),
+        Duration::from_secs(90) + ACTIVITY_DELAY,
         || {
             let _ = fetch_path(ALLOWED_IP, ALLOWED, "/activity.bin");
             (child.current()["used"].as_u64().unwrap_or(0) >= 1).then_some(())

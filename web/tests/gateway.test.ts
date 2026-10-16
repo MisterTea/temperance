@@ -162,12 +162,46 @@ describe("embedded gateway loop", () => {
       history: [],
     });
     await gateway.tick();
+    const profile = (fake.applied.at(-1)!.profiles as { used: number }[])[0];
+    expect(profile.used).toBe(1);
+    expect((await repo.read()).state.usage).toEqual({});
+    vi.setSystemTime(Date.now() + 60_000);
+    await gateway.tick();
     const { state } = await repo.read();
     const usage = Object.values(state.usage)[0][1];
     expect(usage.total).toEqual([minute]);
     expect(usage["category:video"]).toEqual([minute]);
-    const profile = (fake.applied.at(-1)!.profiles as { used: number }[])[0];
-    expect(profile.used).toBe(1);
+    gateway.stop();
+  });
+
+  it("saves at most once a minute while devices are busy", async () => {
+    const fake = fakeAddon();
+    const repo = new TestRepository();
+    await enrolled(repo, derive("private-key"));
+    const gateway = await startGateway({ env, addon: fake.addon, repo });
+    const peer = (fake.applied[0].peers as { id: string }[])[0];
+    const commit = vi.spyOn(repo, "commit");
+    for (let second = 0; second < 60; second += 5) {
+      vi.setSystemTime(
+        new Date("2026-10-11T18:00:00Z").getTime() + second * 1000,
+      );
+      fake.report({
+        active_devices: [],
+        activity: [
+          {
+            device_id: peer.id,
+            minute: Math.floor(Date.now() / 60_000),
+            buckets: ["total"],
+          },
+        ],
+        history: [],
+      });
+      await gateway.tick();
+    }
+    expect(commit).not.toHaveBeenCalled();
+    vi.setSystemTime(new Date("2026-10-11T18:01:00Z"));
+    await gateway.tick();
+    expect(commit).toHaveBeenCalledOnce();
     gateway.stop();
   });
 
