@@ -4,9 +4,11 @@ import { handle } from "../src/lib/http";
 import * as service from "../src/lib/service";
 import {
   accessReason,
+  CATALOG,
   domainReason,
   inWindow,
   localTime,
+  matches,
   normalizeDomain,
   profileSchema,
 } from "../src/lib/policy";
@@ -483,6 +485,11 @@ describe("free domains", () => {
       "mask.icloud.com",
     ])
       expect(FREE_DOMAINS, media).not.toContain(media);
+    for (const media of [...CATALOG.video.domains, ...CATALOG.social.domains])
+      expect(
+        FREE_DOMAINS.filter((d) => matches(media, d) || matches(d, media)),
+        media,
+      ).toEqual([]);
   });
   it("saves an edited list and restores the built-in one", () => {
     const state = emptyState();

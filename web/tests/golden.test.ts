@@ -1,13 +1,35 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import cases from "../../specs/policy-cases.json";
 import {
   accessReason,
+  CATALOG,
   domainReason,
   localTime,
   profileSchema,
   type Reward,
   type Usage,
 } from "../src/lib/policy";
+it("category domains match the Rust core the gateway classifies with", () => {
+  const source = readFileSync(
+    new URL("../../core/temperance-core/src/policy.rs", import.meta.url),
+    "utf8",
+  );
+  const catalog = source.match(/pub const CATALOG[^=]*=([\s\S]*?)\n\];/)![1];
+  const rust = Object.fromEntries(
+    [...catalog.matchAll(/\(\s*"(\w+)",\s*&\[([^\]]*)\]/g)].map(
+      ([, key, list]) => [
+        key,
+        [...list.matchAll(/"([^"]+)"/g)].map((m) => m[1]),
+      ],
+    ),
+  );
+  expect(rust).toEqual(
+    Object.fromEntries(
+      Object.entries(CATALOG).map(([key, c]) => [key, [...c.domains]]),
+    ),
+  );
+});
 describe("shared service/gateway policy contract", () => {
   for (const entry of cases)
     it(entry.name, () => {

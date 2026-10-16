@@ -549,7 +549,7 @@ mod tests {
         };
         assert_eq!(
             buckets.into_iter().collect::<Vec<_>>(),
-            ["category:other", "site:youtubei.googleapis.com", "total"]
+            ["category:video", "site:youtubei.googleapis.com", "total"]
         );
         let (blocked, _, entry) = open.evaluate(peer, "mesu.apple.com", NOON);
         assert!(!blocked);
