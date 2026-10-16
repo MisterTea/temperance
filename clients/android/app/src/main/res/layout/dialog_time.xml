@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+<LinearLayout
     android:id="@+id/time_dialog"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -30,3 +33,5 @@
         android:maxLength="300"
         android:imeOptions="flagNoExtractUi" />
 </LinearLayout>
+
+</ScrollView>

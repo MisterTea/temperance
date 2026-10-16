@@ -71,6 +71,8 @@ jobs:
       - name: Policy service with the embedded gateway, for the real-server test
         working-directory: web
         run: npm ci && npm run build:gateway && npm run build
+      - name: Build instrumented apps before booting the emulator
+        run: clients/android/gradlew -p clients/android assembleDebug assembleDebugAndroidTest
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

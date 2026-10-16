@@ -32,7 +32,7 @@ class LayoutTest {
     private val displays = listOf(
         Display("phone", 411) { phoneDisplay() },
         Display("small-phone", 360) { shell("wm size 720x1280"); shell("wm density 320") },
-        Display("landscape", null) { device.setOrientationLeft() },
+        Display("landscape", 640) { shell("wm size 320x640"); shell("wm density 160"); device.setOrientationLeft() },
         Display("large-text", 411, 1.3f) { phoneDisplay(); shell("settings put system font_scale 1.3") },
         Display("largest-text", 411, 2.0f) { phoneDisplay(); shell("settings put system font_scale 2.0") },
         Display("tablet", 800) { shell("wm size 1600x2560"); shell("wm density 320") },

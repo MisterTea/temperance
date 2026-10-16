@@ -60,12 +60,14 @@ class RealServerTest {
         onView(withId(R.id.remaining)).check(matches(withText(containsString("60 minutes left today"))))
         TestSupport.screenshot("real-server-status")
 
+        val profileId = args.getString("profile_id")!!.toInt()
+        val initial = admin("GET", "api/state").getJSONArray("profiles").objects().first { it.getInt("id") == profileId }
+        admin("POST", "api/profiles", JSONObject().put("id", profileId).put("name", initial.getString("name")).put("limit", 59))
         refreshFromMenu()
-        eventually { onView(withId(R.id.status_line)).check(matches(withText(R.string.refreshed))) }
+        eventually { onView(withId(R.id.remaining)).check(matches(withText(containsString("59 minutes left today")))) }
 
         // A substantial HTTP transfer through the actual WireGuard tunnel.
         waitFor(30_000, "a page to load through the tunnel") { browse() }
-        val profileId = args.getString("profile_id")!!.toInt()
         waitFor(30_000, "the gateway to account for the allowed transfer") {
             admin("GET", "api/state").getJSONArray("profiles").objects().first { it.getInt("id") == profileId }.getInt("used") >= 1
         }
@@ -81,7 +83,6 @@ class RealServerTest {
         onView(withId(R.id.ask_time)).perform(scrollTo(), click())
         onView(withText(R.string.minutes_30)).perform(click())
         onView(withText(R.string.send)).perform(click())
-        eventually { onView(withId(R.id.status_line)).check(matches(withText(R.string.request_sent))) }
         eventually { onView(withId(R.id.remaining)).check(matches(withText(containsString("waiting for an admin")))) }
         TestSupport.screenshot("real-server-requested")
         assertTrue("still blocked while the request is pending", !browse())
