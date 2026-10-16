@@ -113,6 +113,7 @@ export function gatewayConfig(env: Env, privateKey: string) {
         }
       : null,
     ap: ap ? { ...ap, dns: dnsSetting !== "off" } : null,
+    destinations_file: path.join(dataDir(env), "destinations.json"),
   };
 }
 

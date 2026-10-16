@@ -273,7 +273,12 @@ describe("gateway configuration", () => {
       public_port: 51820,
       remote: null,
       ap: null,
+      destinations_file: expect.stringMatching(/destinations\.json$/),
     });
+    expect(
+      gatewayConfig({ TEMPERANCE_DATA_DIR: "/srv/temperance" }, "k")
+        .destinations_file,
+    ).toBe(path.join("/srv/temperance", "destinations.json"));
     expect(() =>
       gatewayConfig({ TEMPERANCE_GATEWAY_ROUTER: "eth0" }, "k"),
     ).toThrow(/lan_interface/);

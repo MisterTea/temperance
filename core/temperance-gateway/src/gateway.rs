@@ -79,6 +79,9 @@ pub struct Config {
     /// Wi-Fi interface to run as an access point. Linux only.
     #[serde(default)]
     pub ap: Option<crate::ap::AccessPoint>,
+    /// Where the hosts each device resolved are kept across restarts.
+    #[serde(default)]
+    pub destinations_file: Option<std::path::PathBuf>,
 }
 
 pub struct Flow {
@@ -128,7 +131,7 @@ pub struct Shared {
     usage: Mutex<BTreeMap<(String, i64), MinuteUse>>,
     flows: Mutex<HashMap<u64, Arc<Flow>>>,
     next_flow: AtomicU64,
-    router_counters: Mutex<home::Counters>,
+    router_counters: Mutex<(home::Counters, home::Seen)>,
     reach: Mutex<Option<std::sync::mpsc::Sender<reach::Command>>>,
     reach_report: Arc<Mutex<reach::Report>>,
     parents: Option<Arc<Parents>>,
@@ -257,6 +260,15 @@ impl Shared {
             .values()
             .cloned()
             .collect();
+        {
+            // An open flow is in use: its addresses keep their hosts past the TTL,
+            // so a reconnect from a cached DNS answer is still attributed.
+            let mut destinations = self.destinations.lock().expect("destinations lock");
+            let now = Instant::now();
+            for flow in &flows {
+                destinations.keep(flow.src, flow.dst, now);
+            }
+        }
         for flow in flows {
             let mut hosts = flow.hosts.clone();
             hosts.extend(self.hosts(flow.src, flow.dst));
@@ -273,6 +285,16 @@ impl Shared {
 
     pub fn open_flows(&self) -> usize {
         self.flows.lock().expect("flows lock").len()
+    }
+
+    fn save_destinations(&self) {
+        let Some(path) = &self.config.destinations_file else {
+            return;
+        };
+        let destinations = self.destinations.lock().expect("destinations lock");
+        if let Err(e) = destinations.save(path, Instant::now(), crate::now()) {
+            eprintln!("Could not save {}: {e}", path.display());
+        }
     }
 
     fn apply(&self, state: &str) -> Result<(), String> {
@@ -312,19 +334,29 @@ impl Shared {
         let Some(policy) = self.policy.read().expect("policy lock").clone() else {
             return Ok(());
         };
-        let mut counters = self.router_counters.lock().expect("counters lock");
-        for (device, samples) in home::activity(&counters) {
+        let mut installed = self.router_counters.lock().expect("counters lock");
+        let (counters, seen) = &*installed;
+        let bytes = if counters.is_empty() && seen.is_empty() {
+            HashMap::new()
+        } else {
+            home::counter_bytes()
+        };
+        for (device, samples) in home::activity(counters, &bytes) {
             for (bucket, bytes) in samples {
                 self.note(&device, &bucket, bytes);
             }
         }
         let script = {
-            let destinations = self.destinations.lock().expect("destinations lock");
+            let mut destinations = self.destinations.lock().expect("destinations lock");
+            let now = Instant::now();
+            for (client, address) in home::in_use(seen, &bytes) {
+                destinations.keep(client, address, now);
+            }
             home::script(router, &policy, &destinations, expired)?
         };
-        home::install(script.as_ref().map(|(s, _)| s.as_str()))?;
+        home::install(script.as_ref().map(|(s, _, _)| s.as_str()))?;
         home::accept_through_docker(&self.config.lan_networks);
-        *counters = script.map(|(_, c)| c).unwrap_or_default();
+        *installed = script.map(|(_, c, s)| (c, s)).unwrap_or_default();
         Ok(())
     }
 
@@ -662,9 +694,14 @@ async fn run(shared: Arc<Shared>) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(2));
         let mut was_live = false;
+        let mut ticks = 0u64;
         loop {
             tick.tick().await;
             ticking.reevaluate();
+            ticks += 1;
+            if ticks % 30 == 0 {
+                ticking.save_destinations();
+            }
             let live = ticking.live();
             if was_live && !live {
                 let _ = ticking.route_home(true);
@@ -752,13 +789,18 @@ impl Gateway {
             }
             None => None,
         };
+        let destinations = config
+            .destinations_file
+            .as_deref()
+            .map(|path| Destinations::load(path, Instant::now(), crate::now()))
+            .unwrap_or_default();
         let shared = Arc::new(Shared {
             wg,
             parents,
             config,
             policy: RwLock::default(),
             applied: Mutex::default(),
-            destinations: Mutex::default(),
+            destinations: Mutex::new(destinations),
             history: Mutex::default(),
             usage: Mutex::default(),
             flows: Mutex::default(),
@@ -813,6 +855,7 @@ impl Gateway {
         if let Some(runtime) = self.runtime.take() {
             runtime.shutdown_timeout(Duration::from_secs(1));
             let _ = self.shared.route_home(true);
+            self.shared.save_destinations();
         }
         if let Some(tx) = self.shared.reach.lock().expect("reach lock").take() {
             let _ = tx.send(reach::Command::Stop);

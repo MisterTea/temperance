@@ -4,7 +4,10 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::Path;
 use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
@@ -156,13 +159,88 @@ pub fn addresses(p: &[u8]) -> Vec<(Ipv4Addr, u32)> {
     parse().unwrap_or_default()
 }
 
-/// Which hosts each client resolved to each address, until the answer's TTL.
+/// How long an address keeps its hosts after the client last used it. A
+/// stream outlives its DNS answer's TTL, and apps reuse cached answers.
+const LINGER: Duration = Duration::from_secs(10 * 60);
+
+#[derive(Serialize, Deserialize)]
+struct Saved {
+    client: Ipv4Addr,
+    address: Ipv4Addr,
+    /// Host and when its attribution expires, in Unix seconds.
+    hosts: Vec<(String, f64)>,
+}
+
+/// Which hosts each client resolved to each address, until the answer's TTL
+/// or, while the client keeps using the address, longer.
 #[derive(Default)]
 pub struct Destinations {
     map: HashMap<(Ipv4Addr, Ipv4Addr), HashMap<String, Instant>>,
 }
 
 impl Destinations {
+    /// `client` is still exchanging traffic with `address`: keep the hosts it
+    /// resolved there (those live a moment ago) for another `LINGER`.
+    pub fn keep(&mut self, client: Ipv4Addr, address: Ipv4Addr, now: Instant) {
+        let Some(hosts) = self.map.get_mut(&(client, address)) else {
+            return;
+        };
+        let until = now + LINGER;
+        for expires in hosts.values_mut() {
+            if *expires + Duration::from_secs(30) > now && *expires < until {
+                *expires = until;
+            }
+        }
+    }
+
+    /// Write the live entries to `path` so a restart keeps attributing traffic.
+    pub fn save(&self, path: &Path, now: Instant, wall: f64) -> io::Result<()> {
+        let saved: Vec<Saved> = self
+            .map
+            .iter()
+            .map(|((client, address), hosts)| Saved {
+                client: *client,
+                address: *address,
+                hosts: hosts
+                    .iter()
+                    .filter(|(_, expires)| **expires > now)
+                    .map(|(h, expires)| (h.clone(), wall + (*expires - now).as_secs_f64()))
+                    .collect(),
+            })
+            .filter(|s| !s.hosts.is_empty())
+            .collect();
+        let temporary = path.with_extension("tmp");
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&temporary)?;
+        std::io::Write::write_all(&mut file, &serde_json::to_vec(&saved)?)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, path)
+    }
+
+    /// The entries `save` wrote that have not expired; empty if there are none.
+    pub fn load(path: &Path, now: Instant, wall: f64) -> Destinations {
+        let saved: Vec<Saved> = std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        let mut d = Destinations::default();
+        for s in saved {
+            let hosts: HashMap<String, Instant> = s
+                .hosts
+                .into_iter()
+                .filter(|(_, at)| *at > wall && at.is_finite())
+                .map(|(h, at)| (h, now + Duration::from_secs_f64((at - wall).min(86_400.0))))
+                .collect();
+            if !hosts.is_empty() {
+                d.map.insert((s.client, s.address), hosts);
+            }
+        }
+        d
+    }
+
     pub fn observe(
         &mut self,
         client: Ipv4Addr,
@@ -429,5 +507,75 @@ mod tests {
             ["b.example"]
         );
         assert!(d.hosts(Ipv4Addr::new(10, 77, 0, 3), addr, now).is_empty());
+    }
+
+    #[test]
+    fn destinations_in_use_outlive_their_ttl() {
+        let mut d = Destinations::default();
+        let (client, addr) = (
+            Ipv4Addr::new(192, 168, 50, 2),
+            Ipv4Addr::new(23, 246, 13, 203),
+        );
+        let now = Instant::now();
+        d.observe(client, "video.example", &[(addr, 30)], now);
+        d.observe(
+            client,
+            "old.example",
+            &[(addr, 30)],
+            now - Duration::from_secs(120),
+        );
+        // Still streaming after the TTL: the live host is kept, a long-expired one is not revived.
+        let later = now + Duration::from_secs(25);
+        d.keep(client, addr, later);
+        let after_ttl = now + Duration::from_secs(5 * 60);
+        assert_eq!(d.hosts(client, addr, after_ttl), ["video.example"]);
+        // Once the client stops, the host lapses LINGER after the last use.
+        assert!(d
+            .hosts(client, addr, later + LINGER + Duration::from_secs(1))
+            .is_empty());
+        // Unknown pairs are ignored.
+        d.keep(client, Ipv4Addr::new(1, 1, 1, 1), later);
+        assert!(d.hosts(client, Ipv4Addr::new(1, 1, 1, 1), later).is_empty());
+    }
+
+    #[test]
+    fn destinations_survive_a_restart() {
+        let dir = std::env::temp_dir().join(format!("temperance-dest-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("destinations.json");
+        let (client, addr) = (Ipv4Addr::new(10, 77, 0, 2), Ipv4Addr::new(142, 250, 1, 1));
+        let now = Instant::now();
+        let wall = 1_800_000_000.0;
+        let mut d = Destinations::default();
+        d.observe(client, "rr1.googlevideo.com", &[(addr, 600)], now);
+        d.observe(
+            client,
+            "gone.example",
+            &[(addr, 30)],
+            now - Duration::from_secs(60),
+        );
+        d.save(&path, now, wall).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // Forty seconds of downtime later, the attribution is still there with the rest of its TTL.
+        let (start, back) = (Instant::now(), wall + 40.0);
+        let restored = Destinations::load(&path, start, back);
+        assert_eq!(restored.hosts(client, addr, start), ["rr1.googlevideo.com"]);
+        assert!(restored
+            .hosts(client, addr, start + Duration::from_secs(561))
+            .is_empty());
+        // Nothing to load, or a damaged file, starts empty.
+        assert!(Destinations::load(&dir.join("missing.json"), start, back)
+            .entries(client, start)
+            .is_empty());
+        std::fs::write(&path, b"{not json").unwrap();
+        assert!(Destinations::load(&path, start, back)
+            .entries(client, start)
+            .is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

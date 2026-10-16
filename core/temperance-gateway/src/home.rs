@@ -20,6 +20,10 @@ pub struct Router {
 /// Counter name → (device id, usage bucket).
 pub type Counters = HashMap<String, (String, String)>;
 
+/// Counter name → (device address, destination address) of a per-destination
+/// rule, so attribution can outlive the DNS answer while traffic continues.
+pub type Seen = HashMap<String, (Ipv4Addr, Ipv4Addr)>;
+
 fn interface(name: &str) -> Result<&str, String> {
     let ok = (1..=15).contains(&name.len())
         && name
@@ -57,7 +61,7 @@ pub fn script(
     policy: &Policy,
     destinations: &Destinations,
     expired: bool,
-) -> Result<Option<(String, Counters)>, String> {
+) -> Result<Option<(String, Counters, Seen)>, String> {
     let (lan, uplink) = (
         interface(&router.lan_interface)?,
         interface(&router.uplink)?,
@@ -81,6 +85,7 @@ pub fn script(
         lease_set("home_lease", &live),
     ];
     let mut counters = Counters::new();
+    let mut seen = Seen::new();
     // Destination rules precede the lease check; per-device accepts follow it.
     let (mut outbound, mut inbound) = (Vec::new(), Vec::new());
     let (mut device_out, mut device_in) = (Vec::new(), Vec::new());
@@ -92,6 +97,11 @@ pub fn script(
                     format!("ip saddr {} ip daddr {address}", d.ip),
                     format!("ip daddr {} ip saddr {address}", d.ip),
                 );
+                // Counted on drops too, so a device retrying a blocked address stays blocked.
+                let used = format!("seen_{}_{}", u32::from(d.ip), u32::from(address));
+                objects.push(format!(" counter {used} {{ }}"));
+                seen.insert(used.clone(), (d.ip, address));
+                let out = format!("{out} counter name \"{used}\"");
                 match policy.flow(d.ip, &hosts, at) {
                     Verdict::Drop => {
                         outbound.push(format!("  {out} drop"));
@@ -184,7 +194,7 @@ pub fn script(
         " }".into(),
         "}".into(),
     ]);
-    Ok(Some((lines.join("\n") + "\n", counters)))
+    Ok(Some((lines.join("\n") + "\n", counters, seen)))
 }
 
 #[cfg(target_os = "linux")]
@@ -261,30 +271,51 @@ fn iptables(args: &[&str]) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Read and reset nothing: counters restart whenever the table is replaced.
-pub fn activity(counters: &Counters) -> HashMap<String, Vec<(String, u64)>> {
-    let mut active: HashMap<String, Vec<(String, u64)>> = HashMap::new();
-    if counters.is_empty() {
-        return active;
-    }
+/// Bytes on each named counter of our table, read once per update. Nothing is
+/// reset: counters restart whenever the table is replaced.
+pub fn counter_bytes() -> HashMap<String, u64> {
     let Ok(raw) = nft(&["-j", "list", "table", "inet", "temperance_home"], None) else {
-        return active;
+        return HashMap::new();
     };
-    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
-    for item in parsed["nftables"].as_array().into_iter().flatten() {
-        let counter = &item["counter"];
-        let bytes = counter["bytes"].as_u64().unwrap_or(0);
-        if bytes == 0 {
-            continue;
-        }
-        if let Some((device, bucket)) = counter["name"].as_str().and_then(|n| counters.get(n)) {
+    parse_counters(&raw)
+}
+
+fn parse_counters(raw: &str) -> HashMap<String, u64> {
+    let parsed: serde_json::Value = serde_json::from_str(raw).unwrap_or_default();
+    parsed["nftables"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let counter = &item["counter"];
+            let bytes = counter["bytes"].as_u64().filter(|b| *b > 0)?;
+            Some((counter["name"].as_str()?.to_string(), bytes))
+        })
+        .collect()
+}
+
+pub fn activity(
+    counters: &Counters,
+    bytes: &HashMap<String, u64>,
+) -> HashMap<String, Vec<(String, u64)>> {
+    let mut active: HashMap<String, Vec<(String, u64)>> = HashMap::new();
+    for (name, (device, bucket)) in counters {
+        if let Some(bytes) = bytes.get(name) {
             active
                 .entry(device.clone())
                 .or_default()
-                .push((bucket.clone(), bytes));
+                .push((bucket.clone(), *bytes));
         }
     }
     active
+}
+
+/// The (device, destination) pairs that carried traffic since the last update.
+pub fn in_use(seen: &Seen, bytes: &HashMap<String, u64>) -> Vec<(Ipv4Addr, Ipv4Addr)> {
+    seen.iter()
+        .filter(|(name, _)| bytes.contains_key(*name))
+        .map(|(_, pair)| *pair)
+        .collect()
 }
 
 #[cfg(test)]
@@ -324,9 +355,21 @@ mod tests {
             &[("142.250.1.1".parse().unwrap(), 300)],
             Instant::now(),
         );
-        let (script, counters) = script(&router(), &policy(json!({}), false), &d, false)
+        let (script, counters, seen) = script(&router(), &policy(json!({}), false), &d, false)
             .unwrap()
             .unwrap();
+        let used = "seen_3232235826_2398748929";
+        assert!(script.contains(&format!(" counter {used} {{ }}")));
+        assert!(script.contains(&format!(
+            "ip saddr 192.168.1.50 ip daddr 142.250.1.1 counter name \"{used}\" counter name"
+        )));
+        assert_eq!(
+            seen[used],
+            (
+                "192.168.1.50".parse().unwrap(),
+                "142.250.1.1".parse().unwrap()
+            )
+        );
         assert!(script.contains("set home_lease { type ipv4_addr; flags timeout; timeout 15s; elements = { 192.168.1.50 }; }"));
         assert!(script.contains("ip saddr 192.168.1.50 counter name \"home_3232235826\" accept"));
         assert!(script.contains(
@@ -355,7 +398,7 @@ mod tests {
     fn paused_or_expired_devices_lose_the_internet() {
         let d = Destinations::default();
         for (paused, expired) in [(true, false), (false, true)] {
-            let (script, _) = script(&router(), &policy(json!({}), paused), &d, expired)
+            let (script, _, _) = script(&router(), &policy(json!({}), paused), &d, expired)
                 .unwrap()
                 .unwrap();
             assert!(
@@ -367,6 +410,57 @@ mod tests {
                 "{script}"
             );
         }
+    }
+
+    #[test]
+    fn blocked_destinations_are_watched_for_retries() {
+        let mut d = Destinations::default();
+        d.observe(
+            "192.168.1.50".parse().unwrap(),
+            "www.youtube.com",
+            &[("142.250.1.1".parse().unwrap(), 300)],
+            Instant::now(),
+        );
+        let limited =
+            json!({"category_limits": {"youtube": 30}, "bucket_usage": {"category:youtube": 30}});
+        let (script, _, seen) = script(&router(), &policy(limited, false), &d, false)
+            .unwrap()
+            .unwrap();
+        assert!(script.contains(
+            "ip saddr 192.168.1.50 ip daddr 142.250.1.1 counter name \"seen_3232235826_2398748929\" drop"
+        ));
+        assert_eq!(seen.len(), 1);
+    }
+
+    #[test]
+    fn reads_counters_and_the_destinations_in_use() {
+        let raw = r#"{"nftables": [
+            {"metainfo": {"version": "1.0.6"}},
+            {"counter": {"family": "inet", "name": "home_3232235826", "table": "temperance_home", "packets": 9, "bytes": 4000}},
+            {"counter": {"family": "inet", "name": "seen_3232235826_2398748929", "table": "temperance_home", "packets": 3, "bytes": 900}},
+            {"counter": {"family": "inet", "name": "seen_3232235826_16843009", "table": "temperance_home", "packets": 0, "bytes": 0}}
+        ]}"#;
+        let bytes = parse_counters(raw);
+        assert_eq!(bytes.len(), 2, "idle counters are left out");
+        let counters = Counters::from([(
+            "home_3232235826".to_string(),
+            ("tv".to_string(), "total".to_string()),
+        )]);
+        assert_eq!(
+            activity(&counters, &bytes)["tv"],
+            [("total".to_string(), 4000)]
+        );
+        let (tv, google, idle) = (
+            "192.168.1.50".parse().unwrap(),
+            "142.250.1.1".parse().unwrap(),
+            "1.1.1.1".parse().unwrap(),
+        );
+        let seen = Seen::from([
+            ("seen_3232235826_2398748929".to_string(), (tv, google)),
+            ("seen_3232235826_16843009".to_string(), (tv, idle)),
+        ]);
+        assert_eq!(in_use(&seen, &bytes), [(tv, google)]);
+        assert!(parse_counters("not json").is_empty());
     }
 
     #[test]
