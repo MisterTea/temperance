@@ -1,0 +1,87 @@
+name: Container candidate qualification
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Candidate version (no v prefix)
+        default: 0.6.0-beta.1
+        required: true
+        type: string
+      publish_candidate:
+        description: Publish qualified container under candidate-<commit>, never beta or latest
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  qualify:
+    name: Container installation and recovery (${{ matrix.arch }})
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, arch: amd64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ inputs.version || '0.6.0-beta.1' }}
+      IMAGE: mistertea/temperance:candidate-${{ github.sha }}-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Installer recovery and failure injection
+        run: node scripts/test-docker-installer.mjs
+      - name: Validate candidate version
+        run: node -e 'if(!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.(0|[1-9]\d*)$/.test(process.env.VERSION))process.exit(1)'
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          load: true
+          tags: ${{ env.IMAGE }}
+          build-args: TEMPERANCE_VERSION=${{ env.VERSION }}
+          cache-from: type=gha,scope=container-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=container-${{ matrix.arch }}
+      - name: Fresh volumes, container replacement and disaster recovery
+        run: node scripts/qualify-container.mjs "$IMAGE" container-report.json
+        env:
+          TEMPERANCE_EXPECT_VERSION: ${{ env.VERSION }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-qualification-${{ matrix.arch }}
+          path: container-report.json
+          if-no-files-found: warn
+      - uses: docker/login-action@v3
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_candidate
+        with:
+          username: mistertea
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish only the tested candidate image
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_candidate
+        run: docker push "$IMAGE"
+  manifest:
+    name: Publish candidate manifest (customer release gates remain separate)
+    needs: qualify
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_candidate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: mistertea
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Combine the two qualified images
+        env:
+          CANDIDATE: mistertea/temperance:candidate-${{ github.sha }}
+        run: docker buildx imagetools create --tag "$CANDIDATE" "$CANDIDATE-amd64" "$CANDIDATE-arm64"

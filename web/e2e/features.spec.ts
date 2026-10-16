@@ -422,7 +422,11 @@ test("clients and settings manage client users, retention, and feeds", async ({
 
   await openTab(page, "Settings");
   await page.getByLabel("History retention (days)").fill("14");
+  const settingsSaved = page.waitForResponse((response) =>
+    response.url().endsWith("/api/settings") && response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "Save settings" }).click();
+  expect((await settingsSaved).ok()).toBeTruthy();
   await expect(page.locator("footer")).toContainText("Policy version");
   await page.reload();
   await openTab(page, "Settings");
@@ -450,7 +454,7 @@ test("clients and settings manage client users, retention, and feeds", async ({
   await page
     .getByLabel("Category", { exact: true })
     .selectOption({ label: "Gaming" });
-  await page.getByLabel("Domains").fill("chess.com\nlichess.org");
+  await page.getByLabel("Domains", { exact: true }).fill("chess.com\nlichess.org");
   await page.getByRole("button", { name: "Import feed" }).click();
   await expect(page.locator("p.error")).toHaveCount(0);
   clean();

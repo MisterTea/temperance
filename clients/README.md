@@ -59,7 +59,7 @@ Tests (from `clients/android`):
 
 - `./gradlew testDebugUnitTest`: JVM unit tests for sign-in and status text, running against a host build of the shared Rust core.
 - `./gradlew connectedDebugAndroidTest`: on a booted emulator or device, runs the setup flow, including Android's real VPN consent dialog and a live WireGuard tunnel, plus every menu item. A layout audit fails on clipped or ellipsized text, content under the action bar, system bars, or keyboard, overlapping views, and tap targets under 48dp. It runs on phone, small phone, landscape, 130% and 200% text, and tablet. Screenshots are written to `/data/local/tmp/temperance-shots` on the device.
-- `e2e/real-server.sh`: needs `npm run build` in `web/` first. It starts a fresh local policy service with its embedded gateway, signs in through the UI with the dashboard's setup code over the gateway's UDP port, connects, and checks the result on the server.
+- `e2e/real-server.sh`: on disposable Linux CI, set `TEMPERANCE_DISPOSABLE_TEST=1` to use the deterministic 128 KiB traffic fixture. For a developer machine, supply `TEMPERANCE_TEST_SITE_URL` pointing to a reachable endpoint returning at least 64 KiB. Needs `npm run build` in `web/` first. It starts a fresh local policy service with its embedded gateway, signs in through the UI with the dashboard's setup code over the gateway's UDP port, connects, and checks the result on the server.
 
 ## Windows and Linux
 

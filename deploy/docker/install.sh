@@ -30,10 +30,16 @@ tty=; if (: < /dev/tty) 2> /dev/null; then tty=1; fi
 
 mkdir -p "$dir"
 cd "$dir"
+# Stage configuration until validation, recovery and image pulls have succeeded.
+# A failed upgrade must leave the operator's active Compose file intact.
+trap 'rm -f compose.yml.next' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 if [ -n "$here" ] && [ -f "$here/compose.yml" ] && [ "$here" != "$dir" ]; then
-  cp "$here/compose.yml" compose.yml
+  cp "$here/compose.yml" compose.yml.next
 else
-  curl -fsSL "$raw/compose.yml" -o compose.yml.new && mv compose.yml.new compose.yml
+  curl -fsSL "$raw/compose.yml" -o compose.yml.next
 fi
 
 if [ ! -f .env ]; then
@@ -75,11 +81,12 @@ TEMPERANCE_TIMEZONE=$TEMPERANCE_TIMEZONE
 COMPOSE_PROFILES=$profiles
 CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
 
-# Shared by Temperance and the updater container. TEMPERANCE_AUTO_UPDATE=true also
-# updates every night at 3:00 (TEMPERANCE_AUTO_UPDATE_SCHEDULE, a 6-field cron).
+# Shared by Temperance and the updater container. Updates run only when
+# requested through the dashboard, after a successful encrypted recovery snapshot.
 TEMPERANCE_UPDATER_TOKEN=$updater_token
 TEMPERANCE_AUTO_UPDATE=false
-TEMPERANCE_UPDATE_CHANNEL=stable
+TEMPERANCE_UPDATE_CHANNEL=${TEMPERANCE_UPDATE_CHANNEL:-stable}
+TEMPERANCE_IMAGE=${TEMPERANCE_IMAGE:-mistertea/temperance:latest}
 # Recovery runs daily and before dashboard updates. Copy archives and this
 # passphrase to separate safe storage; keeping them only here is not recovery.
 TEMPERANCE_BACKUP_PASSPHRASE=$(secret 36)
@@ -105,13 +112,20 @@ elif ! grep -q '^TEMPERANCE_UPDATER_TOKEN=.' .env; then
   fi
 fi
 
-if [ -n "$(docker compose ps -q --status running temperance)" ]; then
+if [ -f compose.yml ] && [ -n "$(docker compose ps -q --status running temperance)" ]; then
   echo "Creating an encrypted recovery snapshot before replacing this server."
   docker compose exec -T temperance node scripts/recovery.cjs backup || fail "Recovery failed. Follow docs/beta-operations.md before upgrading an older installation."
 fi
-docker compose config --quiet
-docker compose pull --quiet || fail "Could not pull the requested images; existing containers were not replaced."
-docker compose up -d --remove-orphans
+docker compose -f compose.yml.next config --quiet
+docker compose -f compose.yml.next pull --quiet || fail "Could not pull the requested images; existing containers and Compose configuration were not replaced."
+if [ -f compose.yml ]; then
+  cp -p compose.yml compose.yml.previous
+fi
+mv compose.yml.next compose.yml
+if ! docker compose up -d --remove-orphans; then
+  if [ -f compose.yml.previous ]; then cp -p compose.yml.previous compose.yml; fi
+  fail "Server replacement failed. The previous Compose file was restored; follow the recovery guide before restarting."
+fi
 
 printf 'Waiting for Temperance to start'
 for _ in $(seq 60); do

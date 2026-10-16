@@ -2,6 +2,7 @@ package org.temperance.app
 
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.closeSoftKeyboard
+import androidx.test.espresso.Espresso.openActionBarOverflowOrOptionsMenu
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.replaceText
@@ -26,12 +27,14 @@ class LayoutTest {
     /** [widthDp] and [fontScale] are what the activity must report before it is audited. */
     private class Display(val name: String, val widthDp: Int?, val fontScale: Float = 1f, val apply: () -> Unit)
 
+    private fun phoneDisplay() { shell("wm size 1080x2400"); shell("wm density 420") }
+
     private val displays = listOf(
-        Display("phone", 411) {},
+        Display("phone", 411) { phoneDisplay() },
         Display("small-phone", 360) { shell("wm size 720x1280"); shell("wm density 320") },
-        Display("landscape", null) { device.setOrientationLeft() },
-        Display("large-text", 411, 1.3f) { shell("settings put system font_scale 1.3") },
-        Display("largest-text", 411, 2.0f) { shell("settings put system font_scale 2.0") },
+        Display("landscape", 640) { shell("wm size 320x640"); shell("wm density 160"); device.setOrientationLeft() },
+        Display("large-text", 411, 1.3f) { phoneDisplay(); shell("settings put system font_scale 1.3") },
+        Display("largest-text", 411, 2.0f) { phoneDisplay(); shell("settings put system font_scale 2.0") },
         Display("tablet", 800) { shell("wm size 1600x2560"); shell("wm density 320") },
     )
 
@@ -95,8 +98,8 @@ class LayoutTest {
         val scenario = TestSupport.launch()
         eachDisplay(scenario, MainActivity.Screen.SETUP) { name ->
             audit(scenario, "$name-setup")
-            onView(withId(R.id.server)).perform(replaceText(FakeServer.HOME))
-            onView(withId(R.id.password)).perform(replaceText("wrong"))
+            onView(withId(R.id.server)).perform(scrollTo(), replaceText(FakeServer.HOME))
+            onView(withId(R.id.password)).perform(scrollTo(), replaceText("wrong"))
             closeSoftKeyboard()
             onView(withId(R.id.sign_in)).perform(scrollTo(), click())
             settle()
@@ -129,11 +132,21 @@ class LayoutTest {
             onView(withId(R.id.ask_time)).perform(scrollTo(), click())
             audit(scenario, "$name-time-dialog", dialog = true)
             onActivity(scenario) { it.dialog!!.dismiss() }
-            onActivity(scenario) { it.openOptionsMenu() }
+            openActionBarOverflowOrOptionsMenu(TestSupport.instrumentation.targetContext)
             settle()
             TestSupport.screenshot("layout-$name-menu")
-            device.findObject(androidx.test.uiautomator.By.text(TestSupport.app.getString(R.string.menu_about))).click()
+            // MenuTest covers navigation. Open the real handler directly here
+            // so display-change accessibility-tree lag cannot skip dialog audits.
+            onActivity(scenario) { activity ->
+                activity.closeOptionsMenu()
+                val menu = android.widget.PopupMenu(activity, activity.window.decorView).menu
+                activity.onCreateOptionsMenu(menu)
+                activity.onOptionsItemSelected(menu.findItem(R.id.menu_about))
+            }
             audit(scenario, "$name-about-dialog", dialog = true)
+            onActivity(scenario) { it.dialog!!.dismiss() }
+            onView(withId(R.id.emergency_unlock)).perform(scrollTo(), click())
+            audit(scenario, "$name-emergency-dialog", dialog = true)
             onActivity(scenario) { it.dialog!!.dismiss() }
         }
     }

@@ -389,10 +389,7 @@ mod tests {
         let pinned = a_answer(&q, end, &[(Ipv4Addr::new(216, 239, 38, 120), 60)]);
         assert_eq!(u16_at(&pinned, 2), Some(0x8180));
         assert_eq!(u16_at(&pinned, 6), Some(1), "one address");
-        assert_eq!(
-            addresses(&pinned),
-            [(Ipv4Addr::new(216, 239, 38, 120), 60)]
-        );
+        assert_eq!(addresses(&pinned), [(Ipv4Addr::new(216, 239, 38, 120), 60)]);
         let lookup = a_query(&[0x12, 0x34], "forcesafesearch.google.com");
         assert_eq!(
             question(&lookup),

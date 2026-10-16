@@ -6,16 +6,18 @@ COPY specs/ specs/
 RUN cd core && cargo build --release -p temperance-gateway --features node --lib
 
 FROM node:24-bookworm-slim AS build
+ARG TEMPERANCE_VERSION=dev
 WORKDIR /app/web
 COPY web/package*.json ./
 COPY web/gateway-addon/ ./gateway-addon/
 RUN npm ci
 COPY web/ ./
 COPY specs/ /app/specs/
+COPY scripts/ /app/scripts/
 COPY --from=gateway /src/core/target/release/libtemperance_gateway.so ./gateway-addon/
 RUN mv gateway-addon/libtemperance_gateway.so \
       "gateway-addon/temperance-gateway.$(node -p 'process.platform + "-" + process.arch').node" \
-  && npm run build
+  && TEMPERANCE_VERSION="$TEMPERANCE_VERSION" npm run build
 
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app

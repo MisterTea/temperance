@@ -10,6 +10,9 @@ for site in $SITES; do
   ip address add "$address/24" dev "$iface"
   mkdir -p "/www/$name"
   echo "$name" > "/www/$name/index.html"
+  # A real transfer for observed-network-minute accounting. Tiny probe pages
+  # must stay below the gateway's 32 KiB idle-traffic threshold.
+  dd if=/dev/zero of="/www/$name/activity.bin" bs=65536 count=2 2>/dev/null
   httpd -f -p "$address:80" -h "/www/$name" &
   records="$records --address=/$name/$address"
 done
