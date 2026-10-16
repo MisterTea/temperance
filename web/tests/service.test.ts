@@ -168,6 +168,33 @@ describe("authoritative policy and enrollment", () => {
     ).json();
     expect(state.policy.used).toBe(1);
   });
+  it("does not charge a minute twice when a restarted gateway reports it again", async () => {
+    const repo = new TestRepository(),
+      device = await enrollFixture(repo);
+    const minute = Math.floor(Date.now() / 60000);
+    const report = {
+      activity: [
+        {
+          device_id: device.device_id,
+          minute,
+          buckets: ["total", "category:video", "category:youtube"],
+        },
+      ],
+    };
+    // Before the restart, then again from the new process with a fresh minute counter.
+    for (let i = 0; i < 2; i++)
+      expect(
+        (await request(repo, "v1/gateway/activity", report, GATEWAY)).status,
+      ).toBe(200);
+    const usage = await (
+      await request(repo, "api/state", undefined, ADMIN)
+    ).json();
+    expect(usage.profiles[0].bucket_usage).toEqual({
+      total: 1,
+      "category:video": 1,
+      "category:youtube": 1,
+    });
+  });
   it("supports child requests, approval, cancellation and revocation", async () => {
     const repo = new TestRepository(),
       device = await enrollFixture(repo);

@@ -150,7 +150,7 @@ pub fn addresses(p: &[u8]) -> Vec<(Ipv4Addr, u32)> {
             if kind == 1 && class == 1 && len == 4 {
                 out.push((
                     Ipv4Addr::new(data[0], data[1], data[2], data[3]),
-                    ttl.clamp(30, 3600),
+                    ttl.clamp(30, MAX_TTL as u32),
                 ));
             }
         }
@@ -162,6 +162,9 @@ pub fn addresses(p: &[u8]) -> Vec<(Ipv4Addr, u32)> {
 /// How long an address keeps its hosts after the client last used it. A
 /// stream outlives its DNS answer's TTL, and apps reuse cached answers.
 const LINGER: Duration = Duration::from_secs(10 * 60);
+
+/// The longest a DNS answer is believed, in seconds.
+const MAX_TTL: u64 = 3600;
 
 #[derive(Serialize, Deserialize)]
 struct Saved {
@@ -221,7 +224,10 @@ impl Destinations {
     }
 
     /// The entries `save` wrote that have not expired; empty if there are none.
+    /// No entry outlives the longest TTL plus `LINGER` from now, whatever the
+    /// clock said when it was saved (a Raspberry Pi has no hardware clock).
     pub fn load(path: &Path, now: Instant, wall: f64) -> Destinations {
+        let longest = (MAX_TTL + LINGER.as_secs()) as f64;
         let saved: Vec<Saved> = std::fs::read(path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -232,7 +238,7 @@ impl Destinations {
                 .hosts
                 .into_iter()
                 .filter(|(_, at)| *at > wall && at.is_finite())
-                .map(|(h, at)| (h, now + Duration::from_secs_f64((at - wall).min(86_400.0))))
+                .map(|(h, at)| (h, now + Duration::from_secs_f64((at - wall).min(longest))))
                 .collect();
             if !hosts.is_empty() {
                 d.map.insert((s.client, s.address), hosts);
@@ -567,6 +573,15 @@ mod tests {
         assert_eq!(restored.hosts(client, addr, start), ["rr1.googlevideo.com"]);
         assert!(restored
             .hosts(client, addr, start + Duration::from_secs(561))
+            .is_empty());
+        // Booting with a clock a day behind cannot stretch an entry past the longest TTL.
+        let mut stretched = Destinations::default();
+        stretched.observe(client, "rr2.googlevideo.com", &[(addr, 600)], now);
+        stretched.save(&path, now, wall).unwrap();
+        let capped = Destinations::load(&path, start, wall - 86_400.0);
+        assert_eq!(capped.hosts(client, addr, start), ["rr2.googlevideo.com"]);
+        assert!(capped
+            .hosts(client, addr, start + Duration::from_secs(MAX_TTL) + LINGER)
             .is_empty());
         // Nothing to load, or a damaged file, starts empty.
         assert!(Destinations::load(&dir.join("missing.json"), start, back)

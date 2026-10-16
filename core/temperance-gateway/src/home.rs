@@ -97,17 +97,18 @@ pub fn script(
                     format!("ip saddr {} ip daddr {address}", d.ip),
                     format!("ip daddr {} ip saddr {address}", d.ip),
                 );
-                // Counted on drops too, so a device retrying a blocked address stays blocked.
-                let used = format!("seen_{}_{}", u32::from(d.ip), u32::from(address));
-                objects.push(format!(" counter {used} {{ }}"));
-                seen.insert(used.clone(), (d.ip, address));
-                let out = format!("{out} counter name \"{used}\"");
                 match policy.flow(d.ip, &hosts, at) {
+                    // Retries do not extend a block past its DNS answer: a shared
+                    // address must not keep an allowed site locked out.
                     Verdict::Drop => {
                         outbound.push(format!("  {out} drop"));
                         inbound.push(format!("  {back} drop"));
                     }
                     Verdict::Allow { buckets, .. } => {
+                        let used = format!("seen_{}_{}", u32::from(d.ip), u32::from(address));
+                        objects.push(format!(" counter {used} {{ }}"));
+                        seen.insert(used.clone(), (d.ip, address));
+                        let out = format!("{out} counter name \"{used}\"");
                         let names: Vec<String> = buckets
                             .iter()
                             .map(|b| {
@@ -413,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn blocked_destinations_are_watched_for_retries() {
+    fn blocked_destinations_lapse_with_their_dns_answer() {
         let mut d = Destinations::default();
         d.observe(
             "192.168.1.50".parse().unwrap(),
@@ -426,10 +427,10 @@ mod tests {
         let (script, _, seen) = script(&router(), &policy(limited, false), &d, false)
             .unwrap()
             .unwrap();
-        assert!(script.contains(
-            "ip saddr 192.168.1.50 ip daddr 142.250.1.1 counter name \"seen_3232235826_2398748929\" drop"
-        ));
-        assert_eq!(seen.len(), 1);
+        assert!(script.contains("ip saddr 192.168.1.50 ip daddr 142.250.1.1 drop"));
+        // Retrying a blocked address is not use, so the block ends with its DNS answer.
+        assert!(seen.is_empty());
+        assert!(!script.contains("seen_"));
     }
 
     #[test]
