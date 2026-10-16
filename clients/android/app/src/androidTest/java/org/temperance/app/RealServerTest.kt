@@ -12,6 +12,8 @@ import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URL
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
@@ -101,7 +103,22 @@ class RealServerTest {
     }
 
     private fun browse(): Boolean = runCatching {
-        val connection = URL(args.getString("site")!!).openConnection() as HttpURLConnection
+        val url = URL(args.getString("site")!!)
+        if (url.protocol == "http") {
+            // The controlled fixture tests raw TCP through WireGuard. Keep the
+            // production HTTP client's cleartext restrictions intact.
+            return@runCatching Socket().use { socket ->
+                socket.connect(InetSocketAddress(url.host, if (url.port < 0) 80 else url.port), 4_000)
+                socket.soTimeout = 4_000
+                socket.getOutputStream().write(("GET ${url.file.ifEmpty { "/" }} HTTP/1.0\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
+                val response = socket.getInputStream().readNBytes(1024 * 1024)
+                val text = response.toString(Charsets.ISO_8859_1)
+                val headerEnd = text.indexOf("\r\n\r\n")
+                headerEnd >= 0 && Regex("HTTP/1\\.[01] [23][0-9]{2} .*", RegexOption.DOT_MATCHES_ALL).matches(text) &&
+                    response.size - headerEnd - 4 >= 64 * 1024
+            }
+        }
+        val connection = url.openConnection() as HttpURLConnection
         connection.connectTimeout = 4_000
         connection.readTimeout = 4_000
         connection.useCaches = false

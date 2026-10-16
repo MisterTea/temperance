@@ -283,7 +283,8 @@ class MainActivity : Activity() {
     private fun emergencyUnlockDialog() {
         val input = EditText(this).apply {
             id = android.R.id.edit
-            hint = "Household admin password"
+            hint = "Password"
+            contentDescription = "Household admin password"
             minimumHeight = (48 * resources.displayMetrics.density).toInt()
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
