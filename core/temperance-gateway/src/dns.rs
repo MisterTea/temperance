@@ -3,7 +3,7 @@
 //! answered address to the host it was resolved for.
 use std::collections::HashMap;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -112,8 +112,8 @@ pub fn a_answer(packet: &[u8], end: usize, records: &[(Ipv4Addr, u32)]) -> Vec<u
     out
 }
 
-/// IPv4 addresses in the answer section with TTLs clamped to 30 s – 1 h.
-pub fn addresses(p: &[u8]) -> Vec<(Ipv4Addr, u32)> {
+/// A and AAAA addresses in the answer section with TTLs clamped to 30 s – 1 h.
+pub fn addresses(p: &[u8]) -> Vec<(IpAddr, u32)> {
     fn skip_name(p: &[u8], mut at: usize) -> Option<usize> {
         for _ in 0..128 {
             let len = *p.get(at)?;
@@ -131,7 +131,7 @@ pub fn addresses(p: &[u8]) -> Vec<(Ipv4Addr, u32)> {
         }
         None
     }
-    let parse = || -> Option<Vec<(Ipv4Addr, u32)>> {
+    let parse = || -> Option<Vec<(IpAddr, u32)>> {
         let (questions, answers) = (u16_at(p, 4)?, u16_at(p, 6)?);
         let mut at = 12;
         for _ in 0..questions {
@@ -147,11 +147,15 @@ pub fn addresses(p: &[u8]) -> Vec<(Ipv4Addr, u32)> {
             at += 10;
             let data = p.get(at..at + len)?;
             at += len;
+            let ttl = ttl.clamp(30, MAX_TTL as u32);
             if kind == 1 && class == 1 && len == 4 {
                 out.push((
-                    Ipv4Addr::new(data[0], data[1], data[2], data[3]),
-                    ttl.clamp(30, MAX_TTL as u32),
+                    IpAddr::V4(Ipv4Addr::new(data[0], data[1], data[2], data[3])),
+                    ttl,
                 ));
+            } else if kind == AAAA && class == 1 && len == 16 {
+                let octets: [u8; 16] = data.try_into().ok()?;
+                out.push((IpAddr::V6(octets.into()), ttl));
             }
         }
         Some(out)
@@ -169,7 +173,7 @@ const MAX_TTL: u64 = 3600;
 #[derive(Serialize, Deserialize)]
 struct Saved {
     client: Ipv4Addr,
-    address: Ipv4Addr,
+    address: IpAddr,
     /// Host and when its attribution expires, in Unix seconds.
     hosts: Vec<(String, f64)>,
 }
@@ -178,13 +182,14 @@ struct Saved {
 /// or, while the client keeps using the address, longer.
 #[derive(Default)]
 pub struct Destinations {
-    map: HashMap<(Ipv4Addr, Ipv4Addr), HashMap<String, Instant>>,
+    map: HashMap<(Ipv4Addr, IpAddr), HashMap<String, Instant>>,
 }
 
 impl Destinations {
     /// `client` is still exchanging traffic with `address`: keep the hosts it
     /// resolved there (those live a moment ago) for another `LINGER`.
-    pub fn keep(&mut self, client: Ipv4Addr, address: Ipv4Addr, now: Instant) {
+    pub fn keep(&mut self, client: Ipv4Addr, address: impl Into<IpAddr>, now: Instant) {
+        let address = address.into();
         let Some(hosts) = self.map.get_mut(&(client, address)) else {
             return;
         };
@@ -251,7 +256,7 @@ impl Destinations {
         &mut self,
         client: Ipv4Addr,
         host: &str,
-        answers: &[(Ipv4Addr, u32)],
+        answers: &[(IpAddr, u32)],
         now: Instant,
     ) {
         self.map.retain(|_, hosts| {
@@ -278,7 +283,7 @@ impl Destinations {
     }
 
     /// Every live (address, hosts) pair `client` resolved, in address order.
-    pub fn entries(&self, client: Ipv4Addr, now: Instant) -> Vec<(Ipv4Addr, Vec<String>)> {
+    pub fn entries(&self, client: Ipv4Addr, now: Instant) -> Vec<(IpAddr, Vec<String>)> {
         let mut out: Vec<_> = self
             .map
             .keys()
@@ -290,7 +295,8 @@ impl Destinations {
         out
     }
 
-    pub fn hosts(&self, client: Ipv4Addr, address: Ipv4Addr, now: Instant) -> Vec<String> {
+    pub fn hosts(&self, client: Ipv4Addr, address: impl Into<IpAddr>, now: Instant) -> Vec<String> {
+        let address = address.into();
         let mut hosts: Vec<String> = self
             .map
             .get(&(client, address))
@@ -367,19 +373,34 @@ pub async fn resolve(shared: &Shared, packet: &[u8], ip: Ipv4Addr, tcp: bool) ->
             .await
             {
                 Ok(Ok(response)) => {
-                    let found = addresses(&response);
+                    let found: Vec<(Ipv4Addr, u32)> = addresses(&response)
+                        .into_iter()
+                        .filter_map(|(addr, ttl)| match addr {
+                            IpAddr::V4(addr) => Some((addr, ttl)),
+                            IpAddr::V6(_) => None,
+                        })
+                        .collect();
                     if found.is_empty() {
                         return failure(packet, SERVFAIL, Some(end));
                     }
-                    shared.observe(ip, &host, &found);
+                    shared.observe(
+                        ip,
+                        &host,
+                        &found
+                            .iter()
+                            .map(|(addr, ttl)| (IpAddr::V4(*addr), *ttl))
+                            .collect::<Vec<_>>(),
+                    );
                     return a_answer(packet, end, &found);
                 }
                 _ => return failure(packet, SERVFAIL, Some(end)),
             }
         }
     }
-    // IPv6 never leaves the tunnel; an empty answer avoids a slow fallback.
-    if u16_at(packet, end - 4) == Some(AAAA) {
+    // Home-network devices are enforced with IPv4 rules. An AAAA answer would
+    // send them around those rules, so they get an empty reply and use IPv4.
+    // Tunnel clients are forwarded: their IPv6 flows pass through this gateway.
+    if u16_at(packet, end - 4) == Some(AAAA) && !TUNNEL.contains(ip) {
         return failure(packet, NOERROR, Some(end));
     }
     match timeout(
@@ -473,7 +494,10 @@ mod tests {
         let pinned = a_answer(&q, end, &[(Ipv4Addr::new(216, 239, 38, 120), 60)]);
         assert_eq!(u16_at(&pinned, 2), Some(0x8180));
         assert_eq!(u16_at(&pinned, 6), Some(1), "one address");
-        assert_eq!(addresses(&pinned), [(Ipv4Addr::new(216, 239, 38, 120), 60)]);
+        assert_eq!(
+            addresses(&pinned),
+            [(IpAddr::V4(Ipv4Addr::new(216, 239, 38, 120)), 60)]
+        );
         let lookup = a_query(&[0x12, 0x34], "forcesafesearch.google.com");
         assert_eq!(
             question(&lookup),
@@ -490,10 +514,20 @@ mod tests {
         assert_eq!(
             addresses(&r),
             [
-                (Ipv4Addr::new(93, 184, 216, 34), 30),
-                (Ipv4Addr::new(93, 184, 216, 35), 3600)
+                (IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)), 30),
+                (IpAddr::V4(Ipv4Addr::new(93, 184, 216, 35)), 3600)
             ]
         );
+        let mut aaaa = query("example.com", AAAA);
+        aaaa[2] = 0x81;
+        aaaa[3] = 0x80;
+        aaaa[7] = 1;
+        let v6: std::net::Ipv6Addr = "2001:db8::1".parse().unwrap();
+        aaaa.extend([0xc0, 0x0c, 0, 28, 0, 1]);
+        aaaa.extend(5u32.to_be_bytes());
+        aaaa.extend(16u16.to_be_bytes());
+        aaaa.extend(v6.octets());
+        assert_eq!(addresses(&aaaa), [(IpAddr::V6(v6), 30)]);
         assert!(
             addresses(&r[..r.len() - 2]).is_empty(),
             "truncated replies are ignored"
@@ -503,7 +537,10 @@ mod tests {
     #[test]
     fn destinations_expire() {
         let mut d = Destinations::default();
-        let (client, addr) = (Ipv4Addr::new(10, 77, 0, 2), Ipv4Addr::new(93, 184, 216, 34));
+        let (client, addr) = (
+            Ipv4Addr::new(10, 77, 0, 2),
+            IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+        );
         let now = Instant::now();
         d.observe(client, "a.example", &[(addr, 30)], now);
         d.observe(client, "b.example", &[(addr, 60)], now);
@@ -520,7 +557,7 @@ mod tests {
         let mut d = Destinations::default();
         let (client, addr) = (
             Ipv4Addr::new(192, 168, 50, 2),
-            Ipv4Addr::new(23, 246, 13, 203),
+            IpAddr::V4(Ipv4Addr::new(23, 246, 13, 203)),
         );
         let now = Instant::now();
         d.observe(client, "video.example", &[(addr, 30)], now);
@@ -549,7 +586,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("temperance-dest-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("destinations.json");
-        let (client, addr) = (Ipv4Addr::new(10, 77, 0, 2), Ipv4Addr::new(142, 250, 1, 1));
+        let (client, addr) = (
+            Ipv4Addr::new(10, 77, 0, 2),
+            IpAddr::V4(Ipv4Addr::new(142, 250, 1, 1)),
+        );
         let now = Instant::now();
         let wall = 1_800_000_000.0;
         let mut d = Destinations::default();

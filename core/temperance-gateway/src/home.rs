@@ -2,7 +2,7 @@
 //! enforced by LAN address with nftables when this machine is their default
 //! router. DNS mode needs none of this; it only answers DNS (see `home_dns`).
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Instant;
 
 use serde::Deserialize;
@@ -93,6 +93,9 @@ pub fn script(
         let now = Instant::now();
         for d in home {
             for (address, hosts) in destinations.entries(d.ip, now) {
+                let IpAddr::V4(address) = address else {
+                    continue;
+                };
                 let (out, back) = (
                     format!("ip saddr {} ip daddr {address}", d.ip),
                     format!("ip daddr {} ip saddr {address}", d.ip),

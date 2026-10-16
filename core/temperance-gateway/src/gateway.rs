@@ -2,7 +2,7 @@
 //! flow, and relays to the real network with per-bucket accounting.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -66,7 +66,7 @@ pub struct Config {
     pub router: Option<Router>,
     /// Rewrite destination addresses after the policy decision (tests, split horizon).
     #[serde(default)]
-    pub connect_map: HashMap<Ipv4Addr, IpAddr>,
+    pub connect_map: HashMap<IpAddr, IpAddr>,
     /// The UDP port the router exposes to the internet; defaults to the listen port.
     #[serde(default)]
     pub public_port: Option<u16>,
@@ -86,7 +86,7 @@ pub struct Config {
 
 pub struct Flow {
     src: Ipv4Addr,
-    dst: Ipv4Addr,
+    dst: IpAddr,
     port: u16,
     hosts: Vec<String>,
     verdict: Mutex<Verdict>,
@@ -160,14 +160,14 @@ impl Shared {
         history.drain(..excess);
     }
 
-    pub fn observe(&self, client: Ipv4Addr, host: &str, answers: &[(Ipv4Addr, u32)]) {
+    pub fn observe(&self, client: Ipv4Addr, host: &str, answers: &[(IpAddr, u32)]) {
         self.destinations
             .lock()
             .expect("destinations lock")
             .observe(client, host, answers, Instant::now());
     }
 
-    fn hosts(&self, client: Ipv4Addr, address: Ipv4Addr) -> Vec<String> {
+    fn hosts(&self, client: Ipv4Addr, address: IpAddr) -> Vec<String> {
         self.destinations
             .lock()
             .expect("destinations lock")
@@ -178,7 +178,7 @@ impl Shared {
         &self,
         policy: Option<&Policy>,
         src: Ipv4Addr,
-        dst: Ipv4Addr,
+        dst: IpAddr,
         port: u16,
         hosts: &[String],
     ) -> Verdict {
@@ -188,7 +188,7 @@ impl Shared {
         }
     }
 
-    fn verdict(&self, src: Ipv4Addr, dst: Ipv4Addr, port: u16) -> (Verdict, Vec<String>) {
+    fn verdict(&self, src: Ipv4Addr, dst: IpAddr, port: u16) -> (Verdict, Vec<String>) {
         let hosts = self.hosts(src, dst);
         (
             self.decide(self.policy().as_deref(), src, dst, port, &hosts),
@@ -196,7 +196,7 @@ impl Shared {
         )
     }
 
-    fn open(&self, src: Ipv4Addr, dst: Ipv4Addr, port: u16) -> Option<(u64, Arc<Flow>)> {
+    fn open(&self, src: Ipv4Addr, dst: IpAddr, port: u16) -> Option<(u64, Arc<Flow>)> {
         let (verdict, hosts) = self.verdict(src, dst, port);
         if verdict == Verdict::Drop {
             return None;
@@ -350,7 +350,7 @@ impl Shared {
             let mut destinations = self.destinations.lock().expect("destinations lock");
             let now = Instant::now();
             for (client, address) in home::in_use(seen, &bytes) {
-                destinations.keep(client, address, now);
+                destinations.keep(client, IpAddr::from(address), now);
             }
             home::script(router, &policy, &destinations, expired)?
         };
@@ -463,13 +463,17 @@ impl AsyncWrite for Device {
     }
 }
 
-/// Decide at the packet level what reaches the stack: IPv4 TCP/UDP from the
-/// peer's own address, DNS, the dashboard, and connections policy allows.
+/// Decide at the packet level what reaches the stack: TCP/UDP from the
+/// peer's own tunnel address, DNS, the dashboard, and connections policy allows.
 fn admit(shared: &Shared, peer: Ipv4Addr, packet: &mut [u8]) -> bool {
     let Some(h) = net::parse(packet) else {
         return false;
     };
-    if h.src != peer || (h.protocol != TCP && h.protocol != UDP) {
+    let own = match h.src {
+        IpAddr::V4(ip) => ip == peer,
+        IpAddr::V6(ip) => net::peer_v6(peer) == Some(ip),
+    };
+    if !own || (h.protocol != TCP && h.protocol != UDP) {
         return false;
     }
     if h.syn {
@@ -478,26 +482,27 @@ fn admit(shared: &Shared, peer: Ipv4Addr, packet: &mut [u8]) -> bool {
     if h.dst_port == 53 {
         return true;
     }
-    if h.dst == GATEWAY_IP {
+    if h.dst == IpAddr::V4(GATEWAY_IP) {
         return h.protocol == TCP && h.dst_port == 80 && shared.config.web.is_some();
     }
-    !h.syn || shared.verdict(h.src, h.dst, h.dst_port).0 != Verdict::Drop
+    !h.syn || shared.verdict(peer, h.dst, h.dst_port).0 != Verdict::Drop
 }
 
-fn v4(addr: SocketAddr) -> Option<SocketAddrV4> {
-    match addr {
-        SocketAddr::V4(a) => Some(a),
-        SocketAddr::V6(_) => None,
+/// Policy and DNS attribution key off the peer's IPv4 tunnel address.
+fn tunnel_client(ip: IpAddr) -> Option<Ipv4Addr> {
+    match ip {
+        IpAddr::V4(ip) => Some(ip),
+        IpAddr::V6(ip) => net::peer_v4(ip),
     }
 }
 
-fn target(shared: &Shared, dst: SocketAddrV4) -> SocketAddr {
+fn target(shared: &Shared, dst: SocketAddr) -> SocketAddr {
     let ip = shared
         .config
         .connect_map
-        .get(dst.ip())
+        .get(&dst.ip())
         .copied()
-        .unwrap_or(IpAddr::V4(*dst.ip()));
+        .unwrap_or(dst.ip());
     SocketAddr::new(ip, dst.port())
 }
 
@@ -572,13 +577,14 @@ async fn connect(addr: SocketAddr) -> Option<TcpStream> {
 }
 
 async fn handle_tcp(shared: Arc<Shared>, stream: IpStackTcpStream) {
-    let (Some(src), Some(dst)) = (v4(stream.local_addr()), v4(stream.peer_addr())) else {
+    let (src, dst) = (stream.local_addr(), stream.peer_addr());
+    let Some(client) = tunnel_client(src.ip()) else {
         return;
     };
     if dst.port() == 53 {
-        return dns::serve_stream(&shared, stream, *src.ip()).await;
+        return dns::serve_stream(&shared, stream, client).await;
     }
-    if *dst.ip() == GATEWAY_IP {
+    if dst.ip() == IpAddr::V4(GATEWAY_IP) {
         if let Some(web) = shared.config.web.filter(|_| dst.port() == 80) {
             if let Some(upstream) = connect(web).await {
                 splice(stream, upstream, &|_| {}, None).await;
@@ -586,7 +592,7 @@ async fn handle_tcp(shared: Arc<Shared>, stream: IpStackTcpStream) {
         }
         return;
     }
-    let Some((id, flow)) = shared.open(*src.ip(), *dst.ip(), dst.port()) else {
+    let Some((id, flow)) = shared.open(client, dst.ip(), dst.port()) else {
         return;
     };
     if let Some(upstream) = connect(target(&shared, dst)).await {
@@ -603,24 +609,30 @@ async fn handle_tcp(shared: Arc<Shared>, stream: IpStackTcpStream) {
 }
 
 async fn handle_udp(shared: Arc<Shared>, mut stream: IpStackUdpStream) {
-    let (Some(src), Some(dst)) = (v4(stream.local_addr()), v4(stream.peer_addr())) else {
+    let (src, dst) = (stream.local_addr(), stream.peer_addr());
+    let Some(client) = tunnel_client(src.ip()) else {
         return;
     };
     let mut inbound = vec![0; 65536];
     if dst.port() == 53 {
         while let Ok(n @ 1..) = stream.read(&mut inbound).await {
-            let response = dns::resolve(&shared, &inbound[..n], *src.ip(), false).await;
+            let response = dns::resolve(&shared, &inbound[..n], client, false).await;
             if !response.is_empty() && stream.write_all(&response).await.is_err() {
                 return;
             }
         }
         return;
     }
-    let Some((id, flow)) = shared.open(*src.ip(), *dst.ip(), dst.port()) else {
+    let Some((id, flow)) = shared.open(client, dst.ip(), dst.port()) else {
         return;
     };
     let relay = async {
-        let sock = UdpSocket::bind("0.0.0.0:0").await.ok()?;
+        let bind = if target(&shared, dst).is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        };
+        let sock = UdpSocket::bind(bind).await.ok()?;
         sock.connect(target(&shared, dst)).await.ok()?;
         let close = closed(Some(flow.close.subscribe()));
         tokio::pin!(close);

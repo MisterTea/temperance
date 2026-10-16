@@ -494,6 +494,7 @@ export function provisioning(device: Device) {
   const octet = Number(device.ip.split(".").at(-1));
   return {
     address: device.ip + "/32",
+    // The gateway derives this same address from the IPv4 octet.
     address_v6: `fd77::${octet.toString(16)}/128`,
     dns: "10.77.0.1",
     endpoint,

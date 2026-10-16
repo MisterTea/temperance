@@ -2,7 +2,7 @@
 //! (boringtun + smoltcp) browses through the gateway to a local server.
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -17,8 +17,11 @@ use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr, IpEndpoint};
 use temperance_gateway::{generate_private_key, public_key, Config, Gateway};
 
 const ALLOWED: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 10);
+const ALLOWED_V6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0xa);
 const PEER: Ipv4Addr = Ipv4Addr::new(10, 77, 0, 2);
+const PEER_V6: Ipv6Addr = Ipv6Addr::new(0xfd77, 0, 0, 0, 0, 0, 0, 2);
 const GATEWAY: Ipv4Addr = Ipv4Addr::new(10, 77, 0, 1);
+const GATEWAY_V6: Ipv6Addr = Ipv6Addr::new(0xfd77, 0, 0, 0, 0, 0, 0, 1);
 
 #[derive(Default)]
 struct Queue {
@@ -137,7 +140,9 @@ impl Phone {
                         self.udp.send_to(d, self.gateway).unwrap();
                     }
                 }
-                TunnResult::WriteToTunnelV4(p, _) => self.device.rx.push_back(p.to_vec()),
+                TunnResult::WriteToTunnelV4(p, _) | TunnResult::WriteToTunnelV6(p, _) => {
+                    self.device.rx.push_back(p.to_vec())
+                }
                 _ => {}
             }
         }
@@ -154,6 +159,16 @@ impl Phone {
             }
         }
         None
+    }
+
+    fn enable_v6(&mut self) {
+        self.iface.update_ip_addrs(|a| {
+            a.push(IpCidr::new(IpAddress::Ipv6(PEER_V6), 128)).unwrap();
+        });
+        self.iface
+            .routes_mut()
+            .add_default_ipv6_route(GATEWAY_V6)
+            .unwrap();
     }
 
     fn port(&mut self) -> u16 {
@@ -199,6 +214,41 @@ impl Phone {
         (reply[3] & 0x0f, answer)
     }
 
+    /// (rcode, first AAAA record) for `host`.
+    fn resolve_aaaa(&mut self, host: &str) -> (u8, Option<Ipv6Addr>) {
+        let buffer = || udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 4096]);
+        let mut socket = udp::Socket::new(buffer(), buffer());
+        let port = self.port();
+        socket.bind(port).unwrap();
+        let handle = self.sockets.add(socket);
+        let mut query = vec![0xab, 0xcd, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        for label in host.split('.') {
+            query.push(label.len() as u8);
+            query.extend(label.as_bytes());
+        }
+        query.extend([0, 0, 28, 0, 1]);
+        self.sockets
+            .get_mut::<udp::Socket>(handle)
+            .send_slice(&query, IpEndpoint::new(IpAddress::Ipv4(GATEWAY), 53))
+            .unwrap();
+        let reply = self
+            .until(10, |p| {
+                p.sockets
+                    .get_mut::<udp::Socket>(handle)
+                    .recv()
+                    .ok()
+                    .map(|(d, _)| d.to_vec())
+            })
+            .expect("DNS reply");
+        self.sockets.remove(handle);
+        let rcode = reply[3] & 0x0f;
+        let answer = (rcode == 0 && reply.len() >= query.len() + 16).then(|| {
+            let start = reply.len() - 16;
+            Ipv6Addr::from(<[u8; 16]>::try_from(&reply[start..]).unwrap())
+        });
+        (rcode, answer)
+    }
+
     fn connect(&mut self, to: Ipv4Addr, port: u16) -> SocketHandle {
         let mut socket = tcp::Socket::new(
             tcp::SocketBuffer::new(vec![0; 65536]),
@@ -207,6 +257,18 @@ impl Phone {
         let local = self.port();
         socket
             .connect(self.iface.context(), (IpAddress::Ipv4(to), port), local)
+            .unwrap();
+        self.sockets.add(socket)
+    }
+
+    fn connect_v6(&mut self, to: Ipv6Addr, port: u16) -> SocketHandle {
+        let mut socket = tcp::Socket::new(
+            tcp::SocketBuffer::new(vec![0; 65536]),
+            tcp::SocketBuffer::new(vec![0; 65536]),
+        );
+        let local = self.port();
+        socket
+            .connect(self.iface.context(), (IpAddress::Ipv6(to), port), local)
             .unwrap();
         self.sockets.add(socket)
     }
@@ -229,6 +291,26 @@ impl Phone {
         self.sockets
             .get_mut::<udp::Socket>(handle)
             .send_slice(message, IpEndpoint::new(IpAddress::Ipv4(to), port))
+            .unwrap();
+        let reply = self.until(5, |p| {
+            p.sockets
+                .get_mut::<udp::Socket>(handle)
+                .recv()
+                .ok()
+                .map(|(d, _)| d.to_vec())
+        });
+        self.sockets.remove(handle);
+        reply.as_deref() == Some(message)
+    }
+
+    fn udp_echo_v6(&mut self, to: Ipv6Addr, port: u16, message: &[u8]) -> bool {
+        let buffer = || udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 4096]);
+        let mut socket = udp::Socket::new(buffer(), buffer());
+        socket.bind(self.port()).unwrap();
+        let handle = self.sockets.add(socket);
+        self.sockets
+            .get_mut::<udp::Socket>(handle)
+            .send_slice(message, IpEndpoint::new(IpAddress::Ipv6(to), port))
             .unwrap();
         let reply = self.until(5, |p| {
             p.sockets
@@ -324,6 +406,65 @@ fn dns_server() -> SocketAddr {
         }
     });
     addr
+}
+
+/// Upstream resolver: A queries return [`ALLOWED`], AAAA queries return [`ALLOWED_V6`].
+fn dns_dual() -> SocketAddr {
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let addr = socket.local_addr().unwrap();
+    thread::spawn(move || {
+        let mut buf = [0; 1500];
+        while let Ok((n, from)) = socket.recv_from(&mut buf) {
+            if n < 4 {
+                continue;
+            }
+            let mut reply = buf[..n].to_vec();
+            reply[2] = 0x81;
+            reply[3] = 0x80;
+            reply[7] = 1;
+            let qtype = u16::from_be_bytes([buf[n - 4], buf[n - 3]]);
+            if qtype == 28 {
+                reply.extend([0xc0, 0x0c, 0, 28, 0, 1, 0, 0, 1, 0, 0, 16]);
+                reply.extend(ALLOWED_V6.octets());
+            } else {
+                reply.extend([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 1, 0, 0, 4]);
+                reply.extend(ALLOWED.octets());
+            }
+            socket.send_to(&reply, from).unwrap();
+        }
+    });
+    addr
+}
+
+fn echo_server_v6() -> u16 {
+    let listener = TcpListener::bind("[::1]:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            thread::spawn(move || {
+                let mut stream = stream;
+                let mut buf = [0; 4096];
+                while let Ok(n @ 1..) = stream.read(&mut buf) {
+                    if stream.write_all(&buf[..n]).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    port
+}
+
+fn udp_echo_server_v6() -> u16 {
+    let socket = UdpSocket::bind("[::1]:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    thread::spawn(move || {
+        let mut buf = [0; 1500];
+        while let Ok((n, from)) = socket.recv_from(&mut buf) {
+            let _ = socket.send_to(&buf[..n], from);
+        }
+    });
+    port
 }
 
 fn state(phone_public: &str, used: u32, rewards: Value) -> String {
@@ -467,6 +608,96 @@ fn browsing_blocking_budget_and_activity_through_the_tunnel() {
         "a revoked device cannot connect"
     );
     gateway.stop();
+}
+
+#[test]
+fn ipv6_flows_are_forwarded_filtered_and_attributed() {
+    let echo_port = echo_server_v6();
+    let udp_port = udp_echo_server_v6();
+    let gateway_key = generate_private_key();
+    let phone_key = generate_private_key();
+    let phone_public = public_key(&phone_key).unwrap();
+    let config: Config = serde_json::from_value(json!({
+        "listen": "127.0.0.1:0",
+        "private_key": gateway_key,
+        "dns_upstream": dns_dual().to_string(),
+        "idle_bytes": 0,
+        "connect_map": {ALLOWED_V6.to_string(): "::1"},
+    }))
+    .unwrap();
+    let mut gateway = Gateway::start(config).unwrap();
+    gateway
+        .apply_state(&state(&phone_public, 0, json!([])))
+        .unwrap();
+    let mut phone = Phone::new(&phone_key, &gateway.public_key(), gateway.local_addr());
+    phone.enable_v6();
+
+    assert_eq!(phone.resolve_aaaa("v6.test"), (0, Some(ALLOWED_V6)));
+    let open = phone.connect_v6(ALLOWED_V6, echo_port);
+    assert!(
+        phone.echo(open, b"hello over ipv6"),
+        "public IPv6 is relayed"
+    );
+    assert!(
+        phone.udp_echo_v6(ALLOWED_V6, udp_port, b"ipv6 datagram"),
+        "IPv6 UDP is relayed per flow"
+    );
+    assert!(
+        !phone.udp_echo_v6("fd00::1".parse().unwrap(), 9, b"ula"),
+        "unique-local destinations are dropped"
+    );
+    assert_eq!(phone.resolve_aaaa("blocked.test"), (3, None));
+
+    let report = gateway.drain_activity();
+    let buckets: Vec<&str> = report["activity"][0]["buckets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b.as_str().unwrap())
+        .collect();
+    assert_eq!(buckets, ["total", "category:other", "site:v6.test"]);
+    gateway.stop();
+}
+
+#[test]
+fn home_dns_withholds_ipv6_answers() {
+    let probe = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+    let config: Config = serde_json::from_value(json!({
+        "listen": "127.0.0.1:0",
+        "private_key": generate_private_key(),
+        "dns_upstream": dns_dual().to_string(),
+        "home_dns": format!("127.0.0.1:{port}"),
+        "lan_networks": ["127.0.0.0/8"],
+    }))
+    .unwrap();
+    let gateway = Gateway::start(config).unwrap();
+    let ask = |kind: u16| {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut query = vec![0x11, 0x22, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        for label in "home.test".split('.') {
+            query.push(label.len() as u8);
+            query.extend(label.as_bytes());
+        }
+        query.push(0);
+        query.extend(kind.to_be_bytes());
+        query.extend(1u16.to_be_bytes());
+        socket.send_to(&query, ("127.0.0.1", port)).unwrap();
+        let mut buf = [0; 1500];
+        let n = socket.recv(&mut buf).expect("DNS reply");
+        buf[..n].to_vec()
+    };
+    let a = ask(1);
+    assert_eq!(a[3] & 0x0f, 0);
+    assert_eq!(&a[a.len() - 4..], &ALLOWED.octets());
+    let aaaa = ask(28);
+    assert_eq!(aaaa[3] & 0x0f, 0, "empty answer, not an error");
+    assert_eq!(u16::from_be_bytes([aaaa[6], aaaa[7]]), 0, "no AAAA records");
+    drop(gateway);
 }
 
 #[test]

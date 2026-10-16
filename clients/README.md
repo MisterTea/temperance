@@ -79,7 +79,7 @@ cd core/temperance-desktop && ../../clients/desktop/node_modules/.bin/tauri buil
 
 The bundles land in `core/target/release/bundle/` (`nsis/` on Windows, `deb/` and `appimage/` on Linux). For development, `tauri dev` from the same directory serves the UI with hot reload; `npm test` in `clients/desktop` runs the UI tests.
 
-The Windows installer is per-machine and the app asks for administrator rights, because installing the tunnel service needs them. The installer installs WireGuard from the official winget package if it is missing and restricts `%ProgramData%\Temperance`, where private keys and device tokens are stored, to SYSTEM and administrators. Uninstalling removes the tunnel service. Device routes capture both IP families; the gateway currently blocks captured IPv6. Full-tunnel WireGuard on Windows applies its default-route firewall semantics.
+The Windows installer is per-machine and the app asks for administrator rights, because installing the tunnel service needs them. The installer installs WireGuard from the official winget package if it is missing and restricts `%ProgramData%\Temperance`, where private keys and device tokens are stored, to SYSTEM and administrators. Uninstalling removes the tunnel service. Device routes capture both IP families. The gateway forwards public IPv6 and drops private and reserved destinations. Full-tunnel WireGuard on Windows applies its default-route firewall semantics.
 
 ## Protocol references
 
