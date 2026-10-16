@@ -2,9 +2,9 @@
 
 [Product website](https://mistertea.github.io/temperance/) · [Privacy policy](https://mistertea.github.io/temperance/privacy.html)
 
-Open source family VPN and DNS controls inspired by [Circle](https://meetcircle.com/pages/features-usage). Manage clients, devices, filters, pauses, bedtime and schedules, and daily time budgets from one program you run at home. Phones and computers are enforced through its built-in WireGuard VPN wherever they are; TVs and consoles on the home network are enforced through its DNS or (on Linux) router mode. There is no Temperance cloud service or telemetry.
+Open source family VPN and DNS controls. Manage clients, devices, filters, pauses, bedtime and schedules, and daily time budgets from one program you run at home. Phones and computers are enforced through its built-in WireGuard VPN wherever they are; TVs and consoles on the home network are enforced through its DNS or (on Linux) router mode. There is no Temperance cloud service or telemetry.
 
-**Status: beta preparation; release acceptance is still pending.** The reference setup is Linux with Docker and SQLite, with device apps for macOS, Windows, Android, and iOS. Other server and home-network modes are experimental. See the [release checklist](docs/beta-readiness.md) and [operations guide](docs/beta-operations.md). Temperance is an independent project and has no affiliation with Circle. It uses original code and a distinct interface.
+**Status: beta preparation; release acceptance is still pending.** The reference setup is Linux with Docker and SQLite, with device apps for macOS, Windows, Android, and iOS. Other server and home-network modes are experimental. See the [release checklist](docs/beta-readiness.md) and [operations guide](docs/beta-operations.md). Temperance uses original code and a distinct interface.
 
 ## VPN apps and policy service
 
