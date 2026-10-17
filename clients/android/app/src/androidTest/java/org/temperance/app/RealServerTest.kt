@@ -57,6 +57,8 @@ class RealServerTest {
         tapSystem("Allow")
         waitForScreen(scenario, MainActivity.Screen.STATUS)
         waitFor(20_000, "the WireGuard tunnel to come up") { app.connected }
+        // The gateway learns a new device's key on its next state update, so the first handshake can go unanswered.
+        waitFor(30_000, "the first WireGuard handshake") { handshakeAt() > 0 }
         onView(withId(R.id.remaining)).check(matches(withText(containsString("60 minutes left today"))))
         TestSupport.screenshot("real-server-status")
 
@@ -68,7 +70,8 @@ class RealServerTest {
 
         // A substantial HTTP transfer through the actual WireGuard tunnel.
         waitFor(30_000, "a page to load through the tunnel") { browse() }
-        waitFor(30_000, "the gateway to account for the allowed transfer") {
+        // The service saves gateway activity at most once a minute.
+        waitFor(90_000, "the gateway to account for the allowed transfer") {
             admin("GET", "api/state").getJSONArray("profiles").objects().first { it.getInt("id") == profileId }.getInt("used") >= 1
         }
 
@@ -94,6 +97,11 @@ class RealServerTest {
         eventually { onView(withId(R.id.headline)).check(matches(not(withText("Time's up for today")))) }
         TestSupport.screenshot("real-server-restored")
     }
+
+    private fun handshakeAt(): Long = runCatching {
+        val stats = app.backend.getStatistics(app.tunnel)
+        stats.peers().maxOfOrNull { stats.peer(it)?.latestHandshakeEpochMillis() ?: 0L } ?: 0L
+    }.getOrDefault(0L)
 
     private fun refreshFromMenu() {
         try { onView(withText(R.string.menu_refresh)).perform(click()) }
