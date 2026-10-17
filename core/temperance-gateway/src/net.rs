@@ -147,6 +147,7 @@ pub struct Header {
     pub protocol: u8,
     pub src: IpAddr,
     pub dst: IpAddr,
+    pub src_port: u16,
     pub dst_port: u16,
     /// A TCP SYN without ACK: the packet that opens a connection.
     pub syn: bool,
@@ -229,10 +230,74 @@ fn header_at(packet: &[u8], transport_at: usize, protocol: u8) -> Option<Header>
         protocol,
         src,
         dst,
+        src_port: u16::from_be_bytes([packet[transport_at], packet[transport_at + 1]]),
         dst_port: u16::from_be_bytes([packet[transport_at + 2], packet[transport_at + 3]]),
         syn: flags & 0x12 == 0x02,
         transport_at,
     })
+}
+
+fn checksum(data: &[u8]) -> u16 {
+    let mut sum: u32 = data
+        .chunks(2)
+        .map(|c| u32::from(u16::from_be_bytes([c[0], *c.get(1).unwrap_or(&0)])))
+        .sum();
+    while sum >> 16 != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    !(sum as u16)
+}
+
+/// The RST|ACK a closed port answers `syn` with, so the device gives up on
+/// this address at once (and tries its next one) rather than timing out.
+pub fn refuse(syn: &[u8]) -> Option<Vec<u8>> {
+    let h = parse(syn)?;
+    if h.protocol != TCP || !h.syn {
+        return None;
+    }
+    let tcp = syn.get(h.transport_at..h.transport_at + 20)?;
+    let end = match syn[0] >> 4 {
+        4 => usize::from(u16::from_be_bytes([syn[2], syn[3]])),
+        _ => 40 + usize::from(u16::from_be_bytes([syn[4], syn[5]])),
+    }
+    .min(syn.len());
+    let data = end.saturating_sub(h.transport_at + usize::from(tcp[12] >> 4) * 4);
+    let seq = u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]);
+    let ack = seq.wrapping_add(1).wrapping_add(data as u32);
+    let mut segment = Vec::with_capacity(20);
+    segment.extend(h.dst_port.to_be_bytes());
+    segment.extend(h.src_port.to_be_bytes());
+    segment.extend(0u32.to_be_bytes());
+    segment.extend(ack.to_be_bytes());
+    segment.extend([0x50, 0x14, 0, 0, 0, 0, 0, 0]);
+    let (mut packet, mut pseudo) = match (h.dst, h.src) {
+        (IpAddr::V4(from), IpAddr::V4(to)) => {
+            let mut ip = vec![0x45, 0, 0, 40, 0, 0, 0x40, 0, 64, TCP, 0, 0];
+            ip.extend(from.octets());
+            ip.extend(to.octets());
+            let sum = checksum(&ip);
+            ip[10..12].copy_from_slice(&sum.to_be_bytes());
+            let pseudo = [&from.octets()[..], &to.octets(), &[0, TCP, 0, 20]].concat();
+            (ip, pseudo)
+        }
+        (IpAddr::V6(from), IpAddr::V6(to)) => {
+            let mut ip = vec![0x60, 0, 0, 0, 0, 20, TCP, 64];
+            ip.extend(from.octets());
+            ip.extend(to.octets());
+            let pseudo = [
+                &from.octets()[..],
+                &to.octets(),
+                &[0, 0, 0, 20, 0, 0, 0, TCP],
+            ]
+            .concat();
+            (ip, pseudo)
+        }
+        _ => return None,
+    };
+    pseudo.extend(&segment);
+    segment[16..18].copy_from_slice(&checksum(&pseudo).to_be_bytes());
+    packet.extend(segment);
+    Some(packet)
 }
 
 /// The enrolled peer a packet returning through the tunnel is addressed to.
@@ -288,17 +353,6 @@ pub fn clamp_mss(packet: &mut [u8], header: &Header) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn checksum(data: &[u8]) -> u16 {
-        let mut sum: u32 = data
-            .chunks(2)
-            .map(|c| u32::from(u16::from_be_bytes([c[0], *c.get(1).unwrap_or(&0)])))
-            .sum();
-        while sum >> 16 != 0 {
-            sum = (sum & 0xffff) + (sum >> 16);
-        }
-        !(sum as u16)
-    }
 
     fn syn(mss: u16) -> Vec<u8> {
         let mut p = vec![
@@ -421,5 +475,35 @@ mod tests {
         let mut fragment = packet.clone();
         fragment[6] = 44;
         assert!(parse(&fragment).is_none(), "fragments are dropped");
+        let reset = refuse(&packet).unwrap();
+        let r = parse(&reset).unwrap();
+        assert_eq!((r.src, r.dst), (IpAddr::V6(dst), IpAddr::V6(src)));
+        assert_eq!((r.src_port, r.dst_port), (80, 0xc350));
+        let mut pseudo = dst.octets().to_vec();
+        pseudo.extend(src.octets());
+        pseudo.extend([0, 0, 0, 20, 0, 0, 0, TCP]);
+        pseudo.extend(&reset[40..]);
+        assert_eq!(checksum(&pseudo), 0, "TCP checksum is valid");
+    }
+
+    #[test]
+    fn refuses_a_syn_with_a_matching_reset() {
+        let p = syn(1460);
+        let reset = refuse(&p).unwrap();
+        assert_eq!(reset.len(), 40);
+        let r = parse(&reset).unwrap();
+        assert_eq!(r.src, IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)));
+        assert_eq!(r.dst, IpAddr::V4(Ipv4Addr::new(10, 77, 0, 2)));
+        assert_eq!((r.src_port, r.dst_port), (80, 0xc350));
+        assert!(!r.syn);
+        assert_eq!(reset[33], 0x14, "RST and ACK");
+        assert_eq!(&reset[24..28], &0u32.to_be_bytes());
+        assert_eq!(&reset[28..32], &2u32.to_be_bytes(), "acknowledges the SYN");
+        assert_eq!(checksum(&reset[..20]), 0, "IPv4 header checksum is valid");
+        let mut pseudo = reset[12..20].to_vec();
+        pseudo.extend([0, TCP, 0, 20]);
+        pseudo.extend(&reset[20..]);
+        assert_eq!(checksum(&pseudo), 0, "TCP checksum is valid");
+        assert!(refuse(&reset).is_none(), "only a SYN is refused");
     }
 }

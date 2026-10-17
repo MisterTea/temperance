@@ -660,6 +660,52 @@ fn ipv6_flows_are_forwarded_filtered_and_attributed() {
 }
 
 #[test]
+fn unreachable_destinations_are_refused_at_once() {
+    let closed = TcpListener::bind("[::1]:0").unwrap();
+    let dead_port = closed.local_addr().unwrap().port();
+    drop(closed);
+    let gateway_key = generate_private_key();
+    let phone_key = generate_private_key();
+    let phone_public = public_key(&phone_key).unwrap();
+    let config: Config = serde_json::from_value(json!({
+        "listen": "127.0.0.1:0",
+        "private_key": gateway_key,
+        "dns_upstream": dns_dual().to_string(),
+        "idle_bytes": 0,
+        "connect_map": {ALLOWED_V6.to_string(): "::1", ALLOWED.to_string(): "127.0.0.1"},
+    }))
+    .unwrap();
+    let mut gateway = Gateway::start(config).unwrap();
+    gateway
+        .apply_state(&state(&phone_public, 0, json!([])))
+        .unwrap();
+    let mut phone = Phone::new(&phone_key, &gateway.public_key(), gateway.local_addr());
+    phone.enable_v6();
+
+    let started = Instant::now();
+    let v6 = phone.connect_v6(ALLOWED_V6, dead_port);
+    let v4 = phone.connect(ALLOWED, dead_port);
+    let refused = phone.until(5, |p| {
+        (p.tcp(v6).state() == tcp::State::Closed && p.tcp(v4).state() == tcp::State::Closed)
+            .then_some(())
+    });
+    assert!(refused.is_some(), "both connections are reset");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "without waiting"
+    );
+    assert_eq!(gateway.open_flows(), 0);
+
+    let echo_port = echo_server_v6();
+    let open = phone.connect_v6(ALLOWED_V6, echo_port);
+    assert!(
+        phone.echo(open, b"still relayed"),
+        "reachable ones still connect"
+    );
+    gateway.stop();
+}
+
+#[test]
 fn home_dns_withholds_ipv6_answers() {
     let probe = UdpSocket::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
