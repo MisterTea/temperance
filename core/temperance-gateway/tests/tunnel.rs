@@ -11,9 +11,9 @@ use boringtun::x25519::{PublicKey, StaticSecret};
 use serde_json::{json, Value};
 use smoltcp::iface::{Config as IfaceConfig, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
-use smoltcp::socket::{tcp, udp};
+use smoltcp::socket::{icmp, tcp, udp};
 use smoltcp::time::Instant as SmolInstant;
-use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr, IpEndpoint};
+use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr, IpEndpoint, IpListenEndpoint};
 use temperance_gateway::{generate_private_key, public_key, Config, Gateway};
 
 const ALLOWED: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 10);
@@ -321,6 +321,37 @@ impl Phone {
         });
         self.sockets.remove(handle);
         reply.as_deref() == Some(message)
+    }
+
+    /// Send one datagram to `to` and wait for an ICMP error about it.
+    fn udp_unreachable(&mut self, to: IpAddress, port: u16) -> bool {
+        let buffer = || udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 4096]);
+        let local = self.port();
+        let mut socket = udp::Socket::new(buffer(), buffer());
+        socket.bind(local).unwrap();
+        let errors =
+            || icmp::PacketBuffer::new(vec![icmp::PacketMetadata::EMPTY; 4], vec![0; 4096]);
+        let mut listener = icmp::Socket::new(errors(), errors());
+        listener
+            .bind(icmp::Endpoint::Udp(IpListenEndpoint::from(local)))
+            .unwrap();
+        let (handle, icmp) = (self.sockets.add(socket), self.sockets.add(listener));
+        self.sockets
+            .get_mut::<udp::Socket>(handle)
+            .send_slice(b"quic initial", IpEndpoint::new(to, port))
+            .unwrap();
+        let reported = self
+            .until(3, |p| {
+                p.sockets
+                    .get_mut::<icmp::Socket>(icmp)
+                    .recv()
+                    .ok()
+                    .map(|_| ())
+            })
+            .is_some();
+        self.sockets.remove(handle);
+        self.sockets.remove(icmp);
+        reported
     }
 
     /// Send `message` and wait for the echo server to return it.
@@ -672,7 +703,13 @@ fn unreachable_destinations_are_refused_at_once() {
         "private_key": gateway_key,
         "dns_upstream": dns_dual().to_string(),
         "idle_bytes": 0,
-        "connect_map": {ALLOWED_V6.to_string(): "::1", ALLOWED.to_string(): "127.0.0.1"},
+        "connect_map": {
+            ALLOWED_V6.to_string(): "::1",
+            ALLOWED.to_string(): "127.0.0.1",
+            // Sending to broadcast without SO_BROADCAST fails like a missing route.
+            "2001:db8::b": "255.255.255.255",
+            "203.0.113.11": "255.255.255.255",
+        },
     }))
     .unwrap();
     let mut gateway = Gateway::start(config).unwrap();
@@ -695,6 +732,18 @@ fn unreachable_destinations_are_refused_at_once() {
         "without waiting"
     );
     assert_eq!(gateway.open_flows(), 0);
+
+    let started = Instant::now();
+    let v6: Ipv6Addr = "2001:db8::b".parse().unwrap();
+    assert!(
+        phone.udp_unreachable(IpAddress::Ipv6(v6), 443),
+        "IPv6 datagrams get an ICMPv6 error"
+    );
+    assert!(
+        phone.udp_unreachable(IpAddress::Ipv4(Ipv4Addr::new(203, 0, 113, 11)), 443),
+        "IPv4 datagrams get an ICMP error"
+    );
+    assert!(started.elapsed() < Duration::from_secs(2));
 
     let echo_port = echo_server_v6();
     let open = phone.connect_v6(ALLOWED_V6, echo_port);

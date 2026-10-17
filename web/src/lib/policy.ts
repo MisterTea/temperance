@@ -68,6 +68,7 @@ export const CATALOG = {
       "disneystreaming.com",
       "dssott.com",
       "bamgrid.com",
+      "dssedge.com",
       "hulu.com",
       "hulustream.com",
       "huluim.com",

@@ -1,10 +1,11 @@
 //! IP header inspection, address classes and TCP MSS clamping.
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer};
 
 pub const GATEWAY_IP: Ipv4Addr = Ipv4Addr::new(10, 77, 0, 1);
+pub const GATEWAY_V6: Ipv6Addr = Ipv6Addr::new(0xfd77, 0, 0, 0, 0, 0, 0, 1);
 pub const TUNNEL: Net = Net {
     addr: 0x0a4d_0000,
     prefix: 24,
@@ -300,11 +301,93 @@ pub fn refuse(syn: &[u8]) -> Option<Vec<u8>> {
     Some(packet)
 }
 
+/// ICMP "network unreachable" from the gateway for a UDP `datagram` the device
+/// sent from `from` to `to`, quoting it so the device's socket sees the error
+/// at once (QUIC then falls back to TCP) instead of waiting out a timeout.
+pub fn unreachable(from: SocketAddr, to: SocketAddr, datagram: &[u8]) -> Option<Vec<u8>> {
+    let length = u16::try_from(8 + datagram.len()).ok()?;
+    let mut udp = Vec::with_capacity(8 + datagram.len());
+    udp.extend(from.port().to_be_bytes());
+    udp.extend(to.port().to_be_bytes());
+    udp.extend(length.to_be_bytes());
+    udp.extend([0, 0]);
+    udp.extend(datagram);
+    let len = length.to_be_bytes();
+    let mut pseudo = match (from.ip(), to.ip()) {
+        (IpAddr::V4(a), IpAddr::V4(b)) => [&a.octets()[..], &b.octets(), &[0, UDP], &len].concat(),
+        (IpAddr::V6(a), IpAddr::V6(b)) => {
+            [&a.octets()[..], &b.octets(), &[0, 0], &len, &[0, 0, 0, UDP]].concat()
+        }
+        _ => return None,
+    };
+    pseudo.extend(&udp);
+    let sum = match checksum(&pseudo) {
+        0 => 0xffff,
+        sum => sum,
+    };
+    udp[6..8].copy_from_slice(&sum.to_be_bytes());
+    match (from.ip(), to.ip()) {
+        (IpAddr::V4(device), IpAddr::V4(dst)) => {
+            let total = u16::try_from(20 + udp.len()).ok()?;
+            let mut quoted = vec![0x45, 0, 0, 0, 0, 0, 0x40, 0, 64, UDP, 0, 0];
+            quoted[2..4].copy_from_slice(&total.to_be_bytes());
+            quoted.extend(device.octets());
+            quoted.extend(dst.octets());
+            let sum = checksum(&quoted);
+            quoted[10..12].copy_from_slice(&sum.to_be_bytes());
+            quoted.extend(&udp);
+            // RFC 1812: the whole error stays within 576 bytes.
+            quoted.truncate(576 - 28);
+            let mut icmp = vec![3, 0, 0, 0, 0, 0, 0, 0];
+            icmp.extend(&quoted);
+            let sum = checksum(&icmp);
+            icmp[2..4].copy_from_slice(&sum.to_be_bytes());
+            let mut ip = vec![0x45, 0, 0, 0, 0, 0, 0, 0, 64, 1, 0, 0];
+            ip[2..4].copy_from_slice(&((20 + icmp.len()) as u16).to_be_bytes());
+            ip.extend(GATEWAY_IP.octets());
+            ip.extend(device.octets());
+            let sum = checksum(&ip);
+            ip[10..12].copy_from_slice(&sum.to_be_bytes());
+            ip.extend(icmp);
+            Some(ip)
+        }
+        (IpAddr::V6(device), IpAddr::V6(dst)) => {
+            let mut quoted = vec![0x60, 0, 0, 0, 0, 0, UDP, 64];
+            quoted[4..6].copy_from_slice(&len);
+            quoted.extend(device.octets());
+            quoted.extend(dst.octets());
+            quoted.extend(&udp);
+            // RFC 4443: as much of the packet as fits in the minimum MTU.
+            quoted.truncate(usize::from(MTU) - 48);
+            let mut icmp = vec![1, 0, 0, 0, 0, 0, 0, 0];
+            icmp.extend(&quoted);
+            let icmp_len = icmp.len() as u16;
+            let mut pseudo = [&GATEWAY_V6.octets()[..], &device.octets()].concat();
+            pseudo.extend(u32::from(icmp_len).to_be_bytes());
+            pseudo.extend([0, 0, 0, 58]);
+            pseudo.extend(&icmp);
+            icmp[2..4].copy_from_slice(&checksum(&pseudo).to_be_bytes());
+            let mut ip = vec![0x60, 0, 0, 0, 0, 0, 58, 64];
+            ip[4..6].copy_from_slice(&icmp_len.to_be_bytes());
+            ip.extend(GATEWAY_V6.octets());
+            ip.extend(device.octets());
+            ip.extend(icmp);
+            Some(ip)
+        }
+        _ => None,
+    }
+}
+
 /// The enrolled peer a packet returning through the tunnel is addressed to.
 pub fn tunnel_peer(packet: &[u8]) -> Option<Ipv4Addr> {
-    match parse(packet)?.dst {
-        IpAddr::V4(ip) => Some(ip),
-        IpAddr::V6(ip) => peer_v4(ip),
+    match packet.first()? >> 4 {
+        4 => Some(Ipv4Addr::from(
+            <[u8; 4]>::try_from(packet.get(16..20)?).ok()?,
+        )),
+        6 => peer_v4(Ipv6Addr::from(
+            <[u8; 16]>::try_from(packet.get(24..40)?).ok()?,
+        )),
+        _ => None,
     }
 }
 
@@ -484,6 +567,45 @@ mod tests {
         pseudo.extend([0, 0, 0, 20, 0, 0, 0, TCP]);
         pseudo.extend(&reset[40..]);
         assert_eq!(checksum(&pseudo), 0, "TCP checksum is valid");
+    }
+
+    #[test]
+    fn reports_undeliverable_datagrams_as_unreachable() {
+        let device: SocketAddr = "10.77.0.2:50000".parse().unwrap();
+        let dst: SocketAddr = "93.184.216.34:443".parse().unwrap();
+        let error = unreachable(device, dst, b"quic").unwrap();
+        assert_eq!(error.len(), 20 + 8 + 20 + 8 + 4);
+        assert_eq!(error[9], 1, "ICMP");
+        assert_eq!(&error[12..20], &[10, 77, 0, 1, 10, 77, 0, 2]);
+        assert_eq!(checksum(&error[..20]), 0, "IPv4 header checksum is valid");
+        assert_eq!((error[20], error[21]), (3, 0), "network unreachable");
+        assert_eq!(checksum(&error[20..]), 0, "ICMP checksum is valid");
+        let quoted = &error[28..];
+        assert_eq!(&quoted[12..20], &[10, 77, 0, 2, 93, 184, 216, 34]);
+        assert_eq!(&quoted[20..24], &[0xc3, 0x50, 1, 187]);
+        let mut pseudo = quoted[12..20].to_vec();
+        pseudo.extend([0, UDP, 0, 12]);
+        pseudo.extend(&quoted[20..]);
+        assert_eq!(checksum(&pseudo), 0, "quoted UDP checksum is valid");
+
+        let device: SocketAddr = "[fd77::2]:50000".parse().unwrap();
+        let dst: SocketAddr = "[2001:db8::1]:443".parse().unwrap();
+        let error = unreachable(device, dst, &[7; 2000]).unwrap();
+        assert_eq!(error.len(), usize::from(MTU), "fits the minimum MTU");
+        assert_eq!(tunnel_peer(&error), Some(Ipv4Addr::new(10, 77, 0, 2)));
+        assert_eq!(error[6], 58, "ICMPv6");
+        assert_eq!((error[40], error[41]), (1, 0), "no route to destination");
+        let mut pseudo = error[8..40].to_vec();
+        pseudo.extend((error.len() as u32 - 40).to_be_bytes());
+        pseudo.extend([0, 0, 0, 58]);
+        pseudo.extend(&error[40..]);
+        assert_eq!(checksum(&pseudo), 0, "ICMPv6 checksum is valid");
+        let quoted_src: Ipv6Addr = "fd77::2".parse().unwrap();
+        assert_eq!(
+            &error[56..72],
+            &quoted_src.octets(),
+            "quotes the device's datagram"
+        );
     }
 
     #[test]

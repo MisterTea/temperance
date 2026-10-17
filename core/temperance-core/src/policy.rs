@@ -71,6 +71,7 @@ pub const CATALOG: &[(&str, &[&str])] = &[
             "disneystreaming.com",
             "dssott.com",
             "bamgrid.com",
+            "dssedge.com",
             "hulu.com",
             "hulustream.com",
             "huluim.com",
