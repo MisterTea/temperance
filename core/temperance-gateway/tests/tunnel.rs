@@ -698,6 +698,13 @@ fn unreachable_destinations_are_refused_at_once() {
     let gateway_key = generate_private_key();
     let phone_key = generate_private_key();
     let phone_public = public_key(&phone_key).unwrap();
+    // Datagrams there fail to send like a missing route: Linux and macOS need
+    // SO_BROADCAST for broadcast, and Windows refuses the unspecified address.
+    let undeliverable = if cfg!(windows) {
+        "0.0.0.0"
+    } else {
+        "255.255.255.255"
+    };
     let config: Config = serde_json::from_value(json!({
         "listen": "127.0.0.1:0",
         "private_key": gateway_key,
@@ -706,9 +713,8 @@ fn unreachable_destinations_are_refused_at_once() {
         "connect_map": {
             ALLOWED_V6.to_string(): "::1",
             ALLOWED.to_string(): "127.0.0.1",
-            // Sending to broadcast without SO_BROADCAST fails like a missing route.
-            "2001:db8::b": "255.255.255.255",
-            "203.0.113.11": "255.255.255.255",
+            "2001:db8::b": undeliverable,
+            "203.0.113.11": undeliverable,
         },
     }))
     .unwrap();
