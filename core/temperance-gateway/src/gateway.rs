@@ -687,13 +687,23 @@ async fn handle_udp(shared: Arc<Shared>, mut stream: IpStackUdpStream) {
         return;
     };
     let relay = async {
-        let bind = if target(&shared, dst).is_ipv4() {
-            "0.0.0.0:0"
-        } else {
-            "[::]:0"
+        let Ok(first @ 1..) = stream.read(&mut inbound).await else {
+            return None;
         };
-        let sock = UdpSocket::bind(bind).await.ok()?;
-        sock.connect(target(&shared, dst)).await.ok()?;
+        let to = target(&shared, dst);
+        let opened = async {
+            let sock = UdpSocket::bind(if to.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" }).await?;
+            sock.connect(to).await?;
+            sock.send(&inbound[..first]).await?;
+            io::Result::Ok(sock)
+        };
+        let Ok(sock) = opened.await else {
+            if let Some(error) = net::unreachable(src, dst, &inbound[..first]) {
+                shared.wg.send(&error).await;
+            }
+            return None;
+        };
+        shared.touch(&flow, first as u64);
         let close = closed(Some(flow.close.subscribe()));
         tokio::pin!(close);
         let mut outbound = vec![0; 65536];
