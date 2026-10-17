@@ -23,6 +23,6 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"
 serde_json.workspace = true
-base64 = "0.22"
+base64 = "0.23"
 url = "2"
 tiny_http = "0.12"
