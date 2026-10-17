@@ -1,5 +1,6 @@
 //! The running gateway: WireGuard in, a userspace TCP/UDP stack, policy per
 //! flow, and relays to the real network with per-bucket accounting.
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -131,6 +132,9 @@ pub struct Shared {
     usage: Mutex<BTreeMap<(String, i64), MinuteUse>>,
     flows: Mutex<HashMap<u64, Arc<Flow>>>,
     next_flow: AtomicU64,
+    /// Upstream connections for SYNs held back from the stack, by (device, destination);
+    /// `None` while still connecting.
+    dialing: Mutex<HashMap<(SocketAddr, SocketAddr), Option<TcpStream>>>,
     router_counters: Mutex<(home::Counters, home::Seen)>,
     reach: Mutex<Option<std::sync::mpsc::Sender<reach::Command>>>,
     reach_report: Arc<Mutex<reach::Report>>,
@@ -465,27 +469,73 @@ impl AsyncWrite for Device {
 
 /// Decide at the packet level what reaches the stack: TCP/UDP from the
 /// peer's own tunnel address, DNS, the dashboard, and connections policy allows.
-fn admit(shared: &Shared, peer: Ipv4Addr, packet: &mut [u8]) -> bool {
-    let Some(h) = net::parse(packet) else {
-        return false;
-    };
+fn admit(shared: &Shared, peer: Ipv4Addr, packet: &mut [u8]) -> Option<net::Header> {
+    let h = net::parse(packet)?;
     let own = match h.src {
         IpAddr::V4(ip) => ip == peer,
         IpAddr::V6(ip) => net::peer_v6(peer) == Some(ip),
     };
     if !own || (h.protocol != TCP && h.protocol != UDP) {
-        return false;
+        return None;
     }
     if h.syn {
         net::clamp_mss(packet, &h);
     }
-    if h.dst_port == 53 {
-        return true;
+    let admitted = if h.dst_port == 53 {
+        true
+    } else if h.dst == IpAddr::V4(GATEWAY_IP) {
+        h.protocol == TCP && h.dst_port == 80 && shared.config.web.is_some()
+    } else {
+        !h.syn || shared.verdict(peer, h.dst, h.dst_port).0 != Verdict::Drop
+    };
+    admitted.then_some(h)
+}
+
+/// The stack answers a SYN at once, so it only sees one after the upstream
+/// connection is open. An unreachable destination gets a RST instead, and the
+/// device moves on to its next address rather than waiting on a dead connection.
+fn dial(
+    shared: &Arc<Shared>,
+    h: net::Header,
+    syn: Vec<u8>,
+    stack: &mpsc::Sender<Vec<u8>>,
+    device: &mpsc::UnboundedSender<Vec<u8>>,
+) {
+    let key = (
+        SocketAddr::new(h.src, h.src_port),
+        SocketAddr::new(h.dst, h.dst_port),
+    );
+    match shared.dialing.lock().expect("dialing lock").entry(key) {
+        // A retransmitted SYN while the first one is still being dialed.
+        Entry::Occupied(_) => return,
+        Entry::Vacant(e) => {
+            e.insert(None);
+        }
     }
-    if h.dst == IpAddr::V4(GATEWAY_IP) {
-        return h.protocol == TCP && h.dst_port == 80 && shared.config.web.is_some();
-    }
-    !h.syn || shared.verdict(peer, h.dst, h.dst_port).0 != Verdict::Drop
+    let (shared, stack, device) = (shared.clone(), stack.clone(), device.clone());
+    tokio::spawn(async move {
+        let Some(upstream) = connect(target(&shared, key.1)).await else {
+            shared.dialing.lock().expect("dialing lock").remove(&key);
+            if let Some(reset) = net::refuse(&syn) {
+                let _ = device.send(reset);
+            }
+            return;
+        };
+        shared
+            .dialing
+            .lock()
+            .expect("dialing lock")
+            .insert(key, Some(upstream));
+        if stack.send(syn).await.is_err() {
+            return;
+        }
+        // The stack opens no new stream for a SYN on a connection it already has.
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        let mut dialing = shared.dialing.lock().expect("dialing lock");
+        if matches!(dialing.get(&key), Some(Some(_))) {
+            dialing.remove(&key);
+        }
+    });
 }
 
 /// Policy and DNS attribution key off the peer's IPv4 tunnel address.
@@ -592,10 +642,20 @@ async fn handle_tcp(shared: Arc<Shared>, stream: IpStackTcpStream) {
         }
         return;
     }
+    let dialed = shared
+        .dialing
+        .lock()
+        .expect("dialing lock")
+        .remove(&(src, dst))
+        .flatten();
     let Some((id, flow)) = shared.open(client, dst.ip(), dst.port()) else {
         return;
     };
-    if let Some(upstream) = connect(target(&shared, dst)).await {
+    let upstream = match dialed {
+        Some(upstream) => Some(upstream),
+        None => connect(target(&shared, dst)).await,
+    };
+    if let Some(upstream) = upstream {
         let rx = flow.close.subscribe();
         splice(
             stream,
@@ -695,9 +755,16 @@ async fn run(shared: Arc<Shared>) {
         }
     });
     let admitting = shared.clone();
+    let refusals = outbound_tx.clone();
     tokio::spawn(async move {
         while let Some((peer, mut packet)) = inbound_rx.recv().await {
-            if admit(&admitting, peer, &mut packet) && stack_tx.send(packet).await.is_err() {
+            let Some(h) = admit(&admitting, peer, &mut packet) else {
+                continue;
+            };
+            let relayed = h.dst_port != 53 && h.dst != IpAddr::V4(GATEWAY_IP);
+            if h.protocol == TCP && h.syn && relayed {
+                dial(&admitting, h, packet, &stack_tx, &refusals);
+            } else if stack_tx.send(packet).await.is_err() {
                 return;
             }
         }
@@ -817,6 +884,7 @@ impl Gateway {
             usage: Mutex::default(),
             flows: Mutex::default(),
             next_flow: AtomicU64::new(1),
+            dialing: Mutex::default(),
             router_counters: Mutex::default(),
             reach: Mutex::new(Some(reach_tx)),
             reach_report,
