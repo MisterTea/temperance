@@ -51,6 +51,8 @@ rfkill unblock wifi >/dev/null 2>&1 || true
 mkdir -p /run/temperance
 chmod 700 /run/temperance
 umask 077
+# 80 MHz at channel 36. Channel 165 is 20 MHz only, and 149–161 is the block
+# home routers usually occupy.
 cat > "$conf" <<EOF
 interface=$iface
 driver=nl80211
@@ -58,9 +60,13 @@ ssid=$ssid
 country_code=US
 ieee80211d=1
 hw_mode=a
-channel=165
+channel=36
 ieee80211n=1
-ht_capab=[SHORT-GI-20]
+ieee80211ac=1
+ht_capab=[HT40+][SHORT-GI-20][SHORT-GI-40]
+vht_capab=[SHORT-GI-80]
+vht_oper_chwidth=1
+vht_oper_centr_freq_seg0_idx=42
 wmm_enabled=1
 wpa=2
 wpa_key_mgmt=WPA-PSK
