@@ -6,7 +6,7 @@ import { mutate, repository, type Repository } from "./database";
 import * as service from "./service";
 import * as updates from "./updates";
 import type { Parent, State } from "./model";
-import { localTime } from "./policy";
+import { localDaySpan } from "./policy";
 
 const FORWARDED = "x-temperance-forwarded";
 // Non-zero: the Windows service (WinSW) restarts only on failure; systemd, launchd and Docker restart on any exit.
@@ -157,17 +157,16 @@ export async function handle(
             start = date(url.searchParams.get("start"), today),
             end = date(url.searchParams.get("end"), today),
             blocked = url.searchParams.get("blocked");
+          const [from, until] = localDaySpan(start, end, service.timezone());
           const rows = state.history
-            .filter((h) => {
-              const day = localTime(h.at, service.timezone()).day;
-              return (
+            .filter(
+              (h) =>
                 (!pid || String(h.profile_id) === pid) &&
                 (!device || h.device_id === device) &&
-                day >= start &&
-                day <= end &&
-                (blocked === null || h.blocked === (blocked === "true"))
-              );
-            })
+                h.at >= from &&
+                h.at < until &&
+                (blocked === null || h.blocked === (blocked === "true")),
+            )
             .reverse();
           if (url.searchParams.get("format") === "csv") {
             const escape = (v: unknown) => {

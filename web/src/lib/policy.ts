@@ -367,20 +367,55 @@ export interface Reward {
 export interface Usage {
   [day: string]: { [profile: string]: { [bucket: string]: number[] } };
 }
+const localFormatters = new Map<string, Intl.DateTimeFormat>();
+function localFormatter(zone: string) {
+  let formatter = localFormatters.get(zone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    localFormatters.set(zone, formatter);
+  }
+  return formatter;
+}
 export function localTime(at: number, zone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: zone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(at * 1000));
+  const parts = localFormatter(zone).formatToParts(new Date(at * 1000));
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
   const day = `${map.year}-${map.month}-${map.day}`,
     clock = `${map.hour}:${map.minute}`;
   return { day, clock, weekday: new Date(day + "T12:00:00Z").getUTCDay() };
+}
+/** First unix second of the local calendar day `day` (`YYYY-MM-DD`) in `zone`. */
+export function localDayStart(day: string, zone: string) {
+  const utcMidnight = Date.parse(`${day}T00:00:00Z`) / 1000;
+  // IANA offsets span UTC-12 to UTC+14, so local midnight falls in this window.
+  let lo = utcMidnight - 16 * 3600;
+  let hi = utcMidnight + 16 * 3600;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (localTime(mid, zone).day < day) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+function shiftDay(day: string, days: number) {
+  const [year, month, date] = day.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, date + days))
+    .toISOString()
+    .slice(0, 10);
+}
+/** Unix seconds `[from, until)` covering local days `start` through `end`, inclusive. */
+export function localDaySpan(start: string, end: string, zone: string) {
+  return [
+    localDayStart(start, zone),
+    localDayStart(shiftDay(end, 1), zone),
+  ] as const;
 }
 export function used(usage: Usage, day: string, id: number, bucket = "total") {
   return usage[day]?.[id]?.[bucket]?.length ?? 0;

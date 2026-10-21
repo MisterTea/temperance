@@ -17,6 +17,7 @@ import {
   CATALOG,
   classify,
   dailyLimit,
+  localDayStart,
   localTime,
   normalizeDomain,
   profileSchema,
@@ -42,24 +43,30 @@ const publicDevice = (d: Device) => ({
   diagnostics: d.diagnostics,
 });
 export function prune(state: State, at = now()) {
-  const cutoff = localTime(at - state.retention_days * 86400, timezone()).day;
+  const zone = timezone();
+  const cutoff = localTime(at - state.retention_days * 86400, zone).day;
+  // A local day only moves forward, so the cutoff is one timestamp, not a formatter per row.
+  const earliest = localDayStart(cutoff, zone);
   state.history = state.history
-    .filter((h) => localTime(h.at, timezone()).day >= cutoff)
+    .filter((h) => h.at >= earliest)
     .slice(-20000);
   for (const day of Object.keys(state.usage))
     if (day < cutoff) delete state.usage[day];
-  state.rewards = state.rewards.filter(
-    (r) => r.day >= localTime(at - 86400, timezone()).day,
-  );
+  const rewardDay = localTime(at - 86400, zone).day;
+  state.rewards = state.rewards.filter((r) => r.day >= rewardDay);
   state.codes = state.codes.filter((c) => c.expires > at);
   if (state.parent_codes)
     state.parent_codes = state.parent_codes.filter((c) => c.expires > at);
   state.events = state.events.slice(-500);
   state.requests = state.requests.slice(-500);
 }
+let validatedZone: string | undefined;
 export function timezone() {
   const zone = process.env.TEMPERANCE_TIMEZONE ?? "UTC";
-  new Intl.DateTimeFormat("en", { timeZone: zone });
+  if (zone !== validatedZone) {
+    new Intl.DateTimeFormat("en", { timeZone: zone });
+    validatedZone = zone;
+  }
   return zone;
 }
 /** Today's rewards, plus a late bedtime for a night that started yesterday. */
