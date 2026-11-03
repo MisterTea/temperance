@@ -343,7 +343,7 @@ jobs:
             type=raw,value=stable,enable=${{ needs.qualify.outputs.newest_of_kind == 'true' && !contains(github.ref_name, '-') }}
             type=raw,value=beta,enable=${{ needs.qualify.outputs.newest_of_kind == 'true' && contains(github.ref_name, '-beta.') }}
             type=sha
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.release
