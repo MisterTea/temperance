@@ -727,8 +727,10 @@ fn unreachable_destinations_are_refused_at_once() {
 
     let v6 = phone.connect_v6(ALLOWED_V6, dead_port);
     let v4 = phone.connect(ALLOWED, dead_port);
-    // Windows retries a refused loopback connect for about 2 s before failing it.
-    let refused = phone.until(5, |p| {
+    // A refused loopback connect is usually quick, but a Windows runner can
+    // black-hole the ephemeral port. The gateway then waits out its 10 s
+    // connect timeout before it answers the SYN with a reset.
+    let refused = phone.until(12, |p| {
         (p.tcp(v6).state() == tcp::State::Closed && p.tcp(v4).state() == tcp::State::Closed)
             .then_some(())
     });
