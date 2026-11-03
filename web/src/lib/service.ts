@@ -980,23 +980,38 @@ function networkSettings(
   if (!password) throw new Error("Enter the Dynu IP update password");
   return { upnp: input.upnp, ddns: { ...input.ddns, password } };
 }
+/** Local clock hour of a stored usage minute. Some engines report midnight as 24. */
+function hourOf(minute: number, zone: string) {
+  const hour = Number(localTime(minute * 60, zone).clock.slice(0, 2));
+  return hour === 24 ? 0 : hour;
+}
 export function usageSummary(state: State, start: string, end: string) {
+  const zone = timezone();
   return Object.entries(state.usage)
     .filter(([day]) => day >= start && day <= end)
-    .map(([day, profiles]) => ({
-      day,
-      profiles: Object.fromEntries(
-        Object.entries(profiles).map(([id, buckets]) => [
-          id,
-          Object.fromEntries(
-            Object.entries(buckets).map(([bucket, list]) => [
-              bucket,
-              list.length,
-            ]),
-          ),
-        ]),
-      ),
-    }));
+    .map(([day, profiles]) => {
+      const hours = Array.from({ length: 24 }, () => 0);
+      for (const buckets of Object.values(profiles))
+        for (const minute of buckets.total ?? []) {
+          const hour = hourOf(minute, zone);
+          if (hour >= 0 && hour < 24) hours[hour] += 1;
+        }
+      return {
+        day,
+        hours,
+        profiles: Object.fromEntries(
+          Object.entries(profiles).map(([id, buckets]) => [
+            id,
+            Object.fromEntries(
+              Object.entries(buckets).map(([bucket, list]) => [
+                bucket,
+                list.length,
+              ]),
+            ),
+          ]),
+        ),
+      };
+    });
 }
 export function addFeed(state: State, input: unknown) {
   const data = z

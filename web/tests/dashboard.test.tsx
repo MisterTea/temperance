@@ -967,8 +967,10 @@ describe("usage and history", () => {
       "Video & streaming 30 min",
     );
     expect(
-      screen.getByRole("img", { name: /Overall usage, 30 minutes/ }),
-    ).toBeTruthy();
+      screen
+        .getByRole("img", { name: /Overall usage, 30 minutes/ })
+        .getAttribute("aria-label"),
+    ).toMatch(/to .+, 1 PM$/);
     expect(
       screen.getByRole("img", { name: /youtube\.com 30 minutes/ }),
     ).toBeTruthy();

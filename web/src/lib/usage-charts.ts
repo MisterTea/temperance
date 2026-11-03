@@ -1,6 +1,8 @@
 export type UsageDay = {
   day: string;
   profiles: Record<string, Record<string, number>>;
+  /** Family total minutes in each local hour, index 0 through 23. */
+  hours?: number[];
 };
 
 /** Show this many named domains, followed by an aggregate of the rest. */
@@ -16,16 +18,48 @@ export function eachDay(start: string, end: string) {
   return days;
 }
 
-/** Family total for every day in the period, including days with no activity. */
-export function dailyTotals(days: UsageDay[], start: string, end: string) {
-  const byDay = new Map(days.map((day) => [day.day, day]));
-  return eachDay(start, end).map((day) => ({
-    day,
-    minutes: Object.values(byDay.get(day)?.profiles ?? {}).reduce(
-      (sum, buckets) => sum + (buckets.total ?? 0),
-      0,
-    ),
-  }));
+/** Calendar day (`YYYY-MM-DD`) and hour in an IANA timezone. */
+export function zonedNow(zone: string, at = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(at);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const hour = Number(map.hour);
+  return {
+    day: `${map.year}-${map.month}-${map.day}`,
+    hour: hour === 24 ? 0 : hour,
+  };
+}
+
+/**
+ * Family total for every local hour in the period, including hours with no
+ * activity. The current local day stops at `now.hour` so later hours, which
+ * have not happened yet, are left off the line.
+ */
+export function hourlyTotals(
+  days: UsageDay[],
+  start: string,
+  end: string,
+  now?: { day: string; hour: number },
+) {
+  const byDay = new Map(days.map((day) => [day.day, day.hours ?? []]));
+  const points: { hour: string; minutes: number }[] = [];
+  for (const day of eachDay(start, end)) {
+    const counts = byDay.get(day) ?? [];
+    const last =
+      now && day === now.day ? Math.min(23, Math.max(0, now.hour)) : 23;
+    for (let hour = 0; hour <= last; hour++)
+      points.push({
+        hour: `${day}T${String(hour).padStart(2, "0")}`,
+        minutes: counts[hour] ?? 0,
+      });
+  }
+  return points;
 }
 
 /** Site minutes in the period, keeping every minute in the pie. */

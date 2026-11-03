@@ -8,6 +8,7 @@ import type { History } from "@/lib/model";
 import type { UpdateStatus } from "@/lib/updates";
 import { ProfileEditor } from "./profile-editor";
 import { UsageCharts } from "./usage-charts";
+import { zonedNow, type UsageDay } from "@/lib/usage-charts";
 import { Onboarding } from "./onboarding";
 import { Operations } from "./operations";
 import { api } from "./api";
@@ -661,9 +662,7 @@ export function Dashboard() {
   const [date, setDate] = useState("");
   const [blocked, setBlocked] = useState("all");
   const [historyProfile, setHistoryProfile] = useState("");
-  const [usage, setUsage] = useState<
-    { day: string; profiles: Record<string, Record<string, number>> }[]
-  >([]);
+  const [usage, setUsage] = useState<UsageDay[]>([]);
   const [period, setPeriod] = useState(7);
   const [restarting, setRestarting] = useState(false);
   const [update, setUpdate] = useState<UpdateStatus>();
@@ -1664,7 +1663,7 @@ export function Dashboard() {
           <>
             <div className="section-title">
               <div>
-                <h2>Observed usage by day</h2>
+                <h2>Observed usage</h2>
                 <p>
                   Distinct allowed traffic minutes, shared across each client’s
                   devices.
@@ -1684,6 +1683,7 @@ export function Dashboard() {
               days={currentUsage}
               start={usageStart.toISOString().slice(0, 10)}
               end={state.day}
+              now={zonedNow(state.timezone)}
             />
             <section className="comparison">
               {state.profiles.map((p) => {

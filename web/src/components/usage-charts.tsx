@@ -1,7 +1,7 @@
 import {
-  dailyTotals,
   DOMAIN_SLICE_LIMIT,
   domainShares,
+  hourlyTotals,
   type UsageDay,
 } from "@/lib/usage-charts";
 
@@ -23,14 +23,94 @@ const dayLabel = (day: string) =>
     timeZone: "UTC",
   });
 
+const clockLabel = (hour: number) =>
+  `${hour % 12 || 12} ${hour < 12 ? "AM" : "PM"}`;
+
+/** `YYYY-MM-DDTHH` → a short axis or tooltip label. */
+function formatHour(stamp: string, withDate: boolean) {
+  const [day, hh] = stamp.split("T");
+  const hour = Number(hh);
+  const clock = clockLabel(hour);
+  if (!withDate) return clock;
+  return hour === 0 ? dayLabel(day) : `${dayLabel(day)}, ${clock}`;
+}
+
+function formatHourExact(stamp: string) {
+  const [day, hh] = stamp.split("T");
+  return `${dayLabel(day)}, ${clockLabel(Number(hh))}`;
+}
+
+/** About six axis labels, snapped to a readable hour on longer ranges. */
+function labelEvery(count: number) {
+  if (count <= 1) return 1;
+  if (count <= 36) return Math.ceil(count / 6);
+  return Math.max(6, Math.round(Math.ceil(count / 6) / 6) * 6);
+}
+
+const CHART_WIDTH = 640;
+const CHART_PAD = { left: 40, right: 12 };
+
+/** Rough width of an 11px axis label in chart units. */
+function labelWidth(text: string) {
+  return text.length * 6.4;
+}
+
+function axisAnchor(index: number, count: number) {
+  if (count === 1) return "middle";
+  if (index === 0) return "start";
+  if (index === count - 1) return "end";
+  return "middle";
+}
+
+/** Tick labels that do not collide, keeping the first and last hour when they fit. */
+function axisLabels(
+  series: { hour: string }[],
+  step: number,
+  multiDay: boolean,
+) {
+  const plot = CHART_WIDTH - CHART_PAD.left - CHART_PAD.right;
+  const x = (index: number) =>
+    series.length === 1
+      ? CHART_PAD.left + plot / 2
+      : CHART_PAD.left + (index / (series.length - 1)) * plot;
+  const bounds = (index: number, text: string) => {
+    const width = labelWidth(text);
+    const anchor = axisAnchor(index, series.length);
+    const left =
+      anchor === "start"
+        ? x(index)
+        : anchor === "end"
+          ? x(index) - width
+          : x(index) - width / 2;
+    return [left, left + width] as const;
+  };
+  const overlaps = (
+    a: { index: number; text: string },
+    b: { index: number; text: string },
+  ) => bounds(a.index, a.text)[1] + 8 > bounds(b.index, b.text)[0];
+  const candidates = series.flatMap((point, index) =>
+    index % step === 0 || index === series.length - 1
+      ? [{ index, text: formatHour(point.hour, multiDay) }]
+      : [],
+  );
+  const kept: { index: number; text: string }[] = [];
+  for (const candidate of candidates) {
+    if (candidate.index === series.length - 1)
+      while (kept.length > 1 && overlaps(kept.at(-1)!, candidate)) kept.pop();
+    if (kept.length && overlaps(kept.at(-1)!, candidate)) continue;
+    kept.push(candidate);
+  }
+  return kept;
+}
+
 function UsageTrend({
   series,
 }: {
-  series: { day: string; minutes: number }[];
+  series: { hour: string; minutes: number }[];
 }) {
-  const width = 640;
+  const width = CHART_WIDTH;
   const height = 220;
-  const pad = { left: 40, right: 12, top: 16, bottom: 32 };
+  const pad = { ...CHART_PAD, top: 16, bottom: 32 };
   const max = Math.max(1, ...series.map((point) => point.minutes));
   const x = (index: number) =>
     series.length === 1
@@ -45,13 +125,21 @@ function UsageTrend({
     )
     .join(" ");
   const area = `${line} L${x(series.length - 1)},${y(0)} L${x(0)},${y(0)} Z`;
-  const labelEvery = Math.max(1, Math.ceil(series.length / 6));
+  const labelStep = labelEvery(series.length);
+  const multiDay =
+    series[0].hour.slice(0, 10) !== series.at(-1)!.hour.slice(0, 10);
+  const ticks = axisLabels(series, labelStep, multiDay);
+  const marked =
+    series.length <= 36
+      ? series.map((_, index) => index)
+      : series.flatMap((point, index) => (point.minutes > 0 ? [index] : []));
+  const showMarks = marked.length > 0 && marked.length <= 48;
   const total = series.reduce((sum, point) => sum + point.minutes, 0);
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label={`Overall usage, ${total} minutes from ${dayLabel(series[0].day)} to ${dayLabel(series.at(-1)!.day)}`}
+      aria-label={`Overall usage, ${total} minutes from ${formatHourExact(series[0].hour)} to ${formatHourExact(series.at(-1)!.hour)}`}
     >
       {[0, 0.5, 1].map((step) => (
         <g key={step}>
@@ -75,33 +163,36 @@ function UsageTrend({
       ))}
       <path d={area} fill="#2B3675" opacity="0.15" />
       <path d={line} fill="none" stroke="#2B3675" strokeWidth="2.5" />
-      {series.map((point, index) => (
-        <circle
-          key={point.day}
-          cx={x(index)}
-          cy={y(point.minutes)}
-          r="3.5"
-          fill="#2B3675"
+      {showMarks
+        ? marked.map((index) => {
+            const point = series[index];
+            return (
+              <circle
+                key={point.hour}
+                cx={x(index)}
+                cy={y(point.minutes)}
+                r="3.5"
+                fill="#2B3675"
+              >
+                <title>
+                  {formatHourExact(point.hour)}: {point.minutes} min
+                </title>
+              </circle>
+            );
+          })
+        : null}
+      {ticks.map((tick) => (
+        <text
+          key={series[tick.index].hour}
+          x={x(tick.index)}
+          y={height - 8}
+          textAnchor={axisAnchor(tick.index, series.length)}
+          fill="#626b85"
+          fontSize="11"
         >
-          <title>
-            {dayLabel(point.day)}: {point.minutes} min
-          </title>
-        </circle>
+          {tick.text}
+        </text>
       ))}
-      {series.map((point, index) =>
-        index % labelEvery === 0 || index === series.length - 1 ? (
-          <text
-            key={point.day}
-            x={x(index)}
-            y={height - 8}
-            textAnchor="middle"
-            fill="#626b85"
-            fontSize="11"
-          >
-            {dayLabel(point.day)}
-          </text>
-        ) : null,
-      )}
     </svg>
   );
 }
@@ -165,20 +256,22 @@ export function UsageCharts({
   days,
   start,
   end,
+  now,
 }: {
   days: UsageDay[];
   start: string;
   end: string;
+  now?: { day: string; hour: number };
 }) {
-  const series = dailyTotals(days, start, end);
+  const series = hourlyTotals(days, start, end, now);
   const total = series.reduce((sum, point) => sum + point.minutes, 0);
   if (!total) return null;
   const { slices, grouped } = domainShares(days);
   return (
     <div className="usage-charts">
       <article>
-        <h3>Overall usage</h3>
-        <p>{total} minutes in this period.</p>
+        <h3>Usage by hour</h3>
+        <p>{total} minutes in this period, counted by hour.</p>
         <UsageTrend series={series} />
       </article>
       <article>

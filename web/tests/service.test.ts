@@ -195,6 +195,26 @@ describe("authoritative policy and enrollment", () => {
       "category:youtube": 1,
     });
   });
+  it("buckets a day's minutes into local hours without dropping the daily counts", () => {
+    const state = emptyState();
+    const minute = Math.floor(Date.parse("2026-10-11T18:00:00Z") / 60000);
+    state.usage = {
+      "2026-10-11": {
+        "1": { total: [minute, minute - 30], "site:youtube.com": [minute] },
+        "2": { total: [minute] },
+      },
+      "2026-10-01": { "1": { total: [minute - 20 * 1440] } },
+    };
+    const summary = service.usageSummary(state, "2026-10-11", "2026-10-11");
+    expect(summary).toHaveLength(1);
+    expect(summary[0].profiles).toEqual({
+      "1": { total: 2, "site:youtube.com": 1 },
+      "2": { total: 1 },
+    });
+    expect(summary[0].hours[12]).toBe(1);
+    expect(summary[0].hours[13]).toBe(2);
+    expect(summary[0].hours.reduce((sum, n) => sum + n, 0)).toBe(3);
+  });
   it("supports child requests, approval, cancellation and revocation", async () => {
     const repo = new TestRepository(),
       device = await enrollFixture(repo);

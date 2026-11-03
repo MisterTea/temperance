@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  dailyTotals,
+  hourlyTotals,
   domainShares,
+  zonedNow,
   type UsageDay,
 } from "../src/lib/usage-charts";
 
@@ -22,12 +23,34 @@ const days: UsageDay[] = [
 ];
 
 describe("usage charts", () => {
-  it("fills the period with a daily family total", () => {
-    expect(dailyTotals(days, "2026-10-09", "2026-10-11")).toEqual([
-      { day: "2026-10-09", minutes: 0 },
-      { day: "2026-10-10", minutes: 0 },
-      { day: "2026-10-11", minutes: 100 },
-    ]);
+  it("reads the current hour in the household timezone", () => {
+    const at = new Date("2026-10-11T18:00:00Z");
+    expect(zonedNow("America/Chicago", at)).toEqual({
+      day: "2026-10-11",
+      hour: 13,
+    });
+    expect(zonedNow("UTC", at)).toEqual({ day: "2026-10-11", hour: 18 });
+    expect(zonedNow("America/Chicago", new Date("2026-10-11T05:00:00Z"))).toEqual({
+      day: "2026-10-11",
+      hour: 0,
+    });
+  });
+
+  it("fills the period with an hourly family total through the current hour", () => {
+    const hours = Array.from({ length: 24 }, (_, hour) =>
+      hour === 13 ? 100 : 0,
+    );
+    const series = hourlyTotals(
+      [{ ...days[0], hours }],
+      "2026-10-10",
+      "2026-10-11",
+      { day: "2026-10-11", hour: 14 },
+    );
+    expect(series).toHaveLength(24 + 15);
+    expect(series[0]).toEqual({ hour: "2026-10-10T00", minutes: 0 });
+    expect(series[13 + 24]).toEqual({ hour: "2026-10-11T13", minutes: 100 });
+    expect(series.at(-1)).toEqual({ hour: "2026-10-11T14", minutes: 0 });
+    expect(hourlyTotals(days, "2026-10-11", "2026-10-11")).toHaveLength(24);
   });
 
   it("keeps small domains when they fit within the top five", () => {
