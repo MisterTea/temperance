@@ -803,6 +803,30 @@ fn home_dns_withholds_ipv6_answers() {
 }
 
 #[test]
+fn tunnel_withholds_ipv6_when_disabled() {
+    let gateway_key = generate_private_key();
+    let phone_key = generate_private_key();
+    let phone_public = public_key(&phone_key).unwrap();
+    let config: Config = serde_json::from_value(json!({
+        "listen": "127.0.0.1:0",
+        "private_key": gateway_key,
+        "dns_upstream": dns_dual().to_string(),
+        "idle_bytes": 0,
+        "ipv6": false,
+    }))
+    .unwrap();
+    let mut gateway = Gateway::start(config).unwrap();
+    gateway
+        .apply_state(&state(&phone_public, 0, json!([])))
+        .unwrap();
+    let mut phone = Phone::new(&phone_key, &gateway.public_key(), gateway.local_addr());
+    phone.enable_v6();
+
+    assert_eq!(phone.resolve_aaaa("v6.test"), (0, None));
+    gateway.stop();
+}
+
+#[test]
 fn the_server_closing_reaches_the_device() {
     let reply = b"HTTP/1.0 200 OK\r\n\r\nclose-delimited body";
     let port = reply_server(reply);

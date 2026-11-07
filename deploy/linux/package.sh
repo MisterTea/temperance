@@ -39,8 +39,10 @@ mkdir -p "$root/app/scripts"
 cp "$web/scripts/recovery.cjs" "$root/app/scripts/recovery.cjs"
 cp "$web/scripts/acceptance.mjs" "$root/app/scripts/acceptance.mjs"
 # sharp (Next's image optimizer, unused) is the only other native code in the bundle.
-rm -rf "$root/app/.env"* "$root/app/node_modules/@temperance/gateway-addon/"*.node \
-  "$root/app/node_modules/sharp" "$root/app/node_modules/@img"
+rm -rf "$root/app/.env"* "$root/app/node_modules/@temperance/gateway-addon" \
+  "$root/app/gateway-addon" "$root/app/node_modules/sharp" "$root/app/node_modules/@img"
+mkdir -p "$root/app/node_modules/@temperance/gateway-addon"
+cp "$web/gateway-addon/package.json" "$web/gateway-addon/index.js" "$root/app/node_modules/@temperance/gateway-addon/"
 cp -R "$web/.next/static" "$root/app/.next/static"
 [ -d "$web/public" ] && cp -R "$web/public" "$root/app/public"
 cp "$addon" "$root/app/node_modules/@temperance/gateway-addon/temperance-gateway.linux-$arch.node"

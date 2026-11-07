@@ -127,6 +127,7 @@ mod tests {
             remote: None,
             ap: Some(ap()),
             destinations_file: None,
+            ipv6: None,
         };
         configure(&mut config).unwrap();
         assert_eq!(config.home_dns, Some("192.168.50.1:53".parse().unwrap()));
@@ -158,6 +159,7 @@ mod tests {
             remote: None,
             ap: Some(AccessPoint { dns: false, ..ap() }),
             destinations_file: None,
+            ipv6: None,
         };
         configure(&mut config).unwrap();
         assert!(config.home_dns.is_none());

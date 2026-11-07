@@ -83,6 +83,9 @@ pub struct Config {
     /// Where the hosts each device resolved are kept across restarts.
     #[serde(default)]
     pub destinations_file: Option<std::path::PathBuf>,
+    /// Whether IPv6 egress is supported. If None, auto-detected from host routing table.
+    #[serde(default)]
+    pub ipv6: Option<bool>,
 }
 
 pub struct Flow {
@@ -139,9 +142,14 @@ pub struct Shared {
     reach: Mutex<Option<std::sync::mpsc::Sender<reach::Command>>>,
     reach_report: Arc<Mutex<reach::Report>>,
     parents: Option<Arc<Parents>>,
+    has_ipv6: bool,
 }
 
 impl Shared {
+    pub fn has_ipv6(&self) -> bool {
+        self.has_ipv6
+    }
+
     fn live(&self) -> bool {
         self.applied
             .lock()
@@ -598,6 +606,11 @@ async fn closed(rx: Option<watch::Receiver<bool>>) {
     }
 }
 
+#[cfg(test)]
+const HALF_CLOSE_TIMEOUT: Duration = Duration::from_millis(50);
+#[cfg(not(test))]
+const HALF_CLOSE_TIMEOUT: Duration = Duration::from_secs(15);
+
 async fn splice<C, U>(
     client: C,
     upstream: U,
@@ -610,8 +623,19 @@ async fn splice<C, U>(
     let (mut cr, mut cw) = tokio::io::split(client);
     let (mut ur, mut uw) = tokio::io::split(upstream);
     let revoked = tokio::select! {
-        _ = async { tokio::join!(pipe(&mut cr, &mut uw, touch), pipe(&mut ur, &mut cw, touch)) } => false,
-        _ = closed(close) => true,
+        _ = closed(close.clone()) => true,
+        _ = async {
+            let mut client_to_upstream = std::pin::pin!(pipe(&mut cr, &mut uw, touch));
+            let mut upstream_to_client = std::pin::pin!(pipe(&mut ur, &mut cw, touch));
+            tokio::select! {
+                _ = &mut client_to_upstream => {
+                    let _ = timeout(HALF_CLOSE_TIMEOUT, &mut upstream_to_client).await;
+                }
+                _ = &mut upstream_to_client => {
+                    let _ = timeout(HALF_CLOSE_TIMEOUT, &mut client_to_upstream).await;
+                }
+            }
+        } => false,
     };
     if revoked {
         // Dropping the stream alone is silent until the device sends again.
@@ -883,6 +907,9 @@ impl Gateway {
             .as_deref()
             .map(|path| Destinations::load(path, Instant::now(), crate::now()))
             .unwrap_or_default();
+        let has_ipv6 = config.ipv6.unwrap_or_else(|| {
+            config.connect_map.keys().any(|ip| ip.is_ipv6()) || has_ipv6_route()
+        });
         let shared = Arc::new(Shared {
             wg,
             parents,
@@ -898,6 +925,7 @@ impl Gateway {
             router_counters: Mutex::default(),
             reach: Mutex::new(Some(reach_tx)),
             reach_report,
+            has_ipv6,
         });
         runtime.spawn(run(shared.clone()));
         if let Some((udp, tcp)) = home_dns {
@@ -962,6 +990,14 @@ impl Drop for Gateway {
     }
 }
 
+fn has_ipv6_route() -> bool {
+    let socket = match std::net::UdpSocket::bind("[::]:0") {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    socket.connect("[2606:4700:4700::1111]:53").is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1000,5 +1036,26 @@ mod tests {
         ] {
             assert!(!valid_bucket(bad), "{bad}");
         }
+    }
+
+    #[tokio::test]
+    async fn splice_half_close_times_out_lingering_upstream() {
+        let (mut client_app, client_tun) = tokio::io::duplex(64);
+        let (upstream_tun, mut upstream_srv) = tokio::io::duplex(64);
+
+        let splice_task = tokio::spawn(async move {
+            splice(client_tun, upstream_tun, &|_| {}, None).await;
+        });
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        client_app.write_all(b"ping").await.unwrap();
+        client_app.shutdown().await.unwrap();
+
+        let mut buf = [0u8; 4];
+        upstream_srv.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"ping");
+
+        let res = tokio::time::timeout(Duration::from_millis(200), splice_task).await;
+        assert!(res.is_ok());
     }
 }

@@ -115,6 +115,11 @@ export function gatewayConfig(env: Env, privateKey: string) {
       : null,
     ap: ap ? { ...ap, dns: dnsSetting !== "off" } : null,
     destinations_file: path.join(dataDir(env), "destinations.json"),
+    ipv6:
+      env.TEMPERANCE_GATEWAY_IPV6 !== undefined
+        ? env.TEMPERANCE_GATEWAY_IPV6 === "true" ||
+          env.TEMPERANCE_GATEWAY_IPV6 === "1"
+        : undefined,
   };
 }
 

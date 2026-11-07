@@ -399,8 +399,8 @@ pub async fn resolve(shared: &Shared, packet: &[u8], ip: Ipv4Addr, tcp: bool) ->
     }
     // Home-network devices are enforced with IPv4 rules. An AAAA answer would
     // send them around those rules, so they get an empty reply and use IPv4.
-    // Tunnel clients are forwarded: their IPv6 flows pass through this gateway.
-    if u16_at(packet, end - 4) == Some(AAAA) && !TUNNEL.contains(ip) {
+    // Tunnel clients only receive AAAA answers when the gateway host can route IPv6.
+    if u16_at(packet, end - 4) == Some(AAAA) && (!TUNNEL.contains(ip) || !shared.has_ipv6()) {
         return failure(packet, NOERROR, Some(end));
     }
     match timeout(
